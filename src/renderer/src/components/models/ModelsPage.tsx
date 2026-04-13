@@ -9,6 +9,7 @@ import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui
 import { ModelCards } from './ModelCards';
 import { GrammarModelCard } from './GrammarModelCard';
 import { ParakeetModelCard } from './ParakeetModelCard';
+import { AudiobookModelsTab } from './AudiobookModelsTab';
 import { useModels } from '@/hooks/use-models';
 import { useParakeet } from '@/hooks/use-parakeet';
 import type { AppConfig, TranscriptionEngine } from '@/lib/ipc';
@@ -84,7 +85,7 @@ const MODEL_META: Record<string, { params: string; speed: string }> = {
 
 const PARAKEET_KEY = 'parakeet';
 
-type Tab = 'models' | 'grammar';
+type Tab = 'models' | 'grammar' | 'audiobooks';
 
 interface ModelsPageProps {
   config: AppConfig;
@@ -253,6 +254,7 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
         <div className="flex gap-5 border-b border-border/50 mt-3">
           <Tab label="Transcription" active={activeTab === 'models'} onClick={() => setActiveTab('models')} />
           <Tab label="AI Grammar" active={activeTab === 'grammar'} onClick={() => setActiveTab('grammar')} />
+          <Tab label="Audio Books" active={activeTab === 'audiobooks'} onClick={() => setActiveTab('audiobooks')} />
         </div>
       </div>
 
@@ -381,6 +383,10 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
               activeGrammarModel={config.grammarModel}
               onSetGrammarEnabled={setGrammarEnabled}
             />
+          )}
+
+          {activeTab === 'audiobooks' && (
+            <AudiobookModelsTab />
           )}
         </div>
       </ScrollArea>

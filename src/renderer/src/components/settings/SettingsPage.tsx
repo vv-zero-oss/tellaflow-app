@@ -14,7 +14,7 @@ import { GeneralSettings } from './GeneralSettings';
 import { PermissionsSettings } from './PermissionsSettings';
 import { SystemSettings } from './SystemSettings';
 import { usePermissions } from '@/hooks/use-permissions';
-import type { AppConfig, Theme } from '@/lib/ipc';
+import type { AppConfig, Theme, HistoryEntry } from '@/lib/ipc';
 import { Check } from 'lucide-react';
 
 interface SettingsPageProps {
@@ -126,6 +126,43 @@ export function SettingsPage({
     setConfirmOpen(false);
   };
 
+  const handleExport = async (format: 'txt' | 'json') => {
+    const entries: HistoryEntry[] = await window.tellaflow.getHistory();
+    if (!entries.length) return;
+
+    let content: string;
+    let filename: string;
+    let mime: string;
+
+    if (format === 'json') {
+      content = JSON.stringify(
+        entries.map((e) => ({
+          id: e.id,
+          text: e.text,
+          timestamp: e.timestamp,
+        })),
+        null,
+        2,
+      );
+      filename = `transcripts-${new Date().toISOString().slice(0, 10)}.json`;
+      mime = 'application/json';
+    } else {
+      content = entries
+        .map((e) => `[${new Date(e.timestamp).toLocaleString()}]\n${e.text}`)
+        .join('\n\n---\n\n');
+      filename = `transcripts-${new Date().toISOString().slice(0, 10)}.txt`;
+      mime = 'text/plain';
+    }
+
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const allSelected = RESET_OPTIONS.every((o) => resetSelections[o.key]);
   const someSelected = RESET_OPTIONS.some((o) => resetSelections[o.key]);
 
@@ -233,6 +270,24 @@ export function SettingsPage({
               <WellTitle>Data</WellTitle>
             </WellHeader>
             <WellCard>
+              <WellItem>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-sm">Export transcripts</span>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Download your transcription history as a file
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={() => handleExport('txt')}>
+                      TXT
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => handleExport('json')}>
+                      JSON
+                    </Button>
+                  </div>
+                </div>
+              </WellItem>
               <WellItem>
                 <div className="flex items-center justify-between">
                   <div>

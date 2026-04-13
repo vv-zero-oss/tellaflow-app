@@ -8,6 +8,7 @@ import { SnippetsPage } from '@/components/snippets/SnippetsPage';
 import { DictionaryPage } from '@/components/dictionary/DictionaryPage';
 import { SettingsPage } from '@/components/settings/SettingsPage';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
+import { AudiobookPage } from '@/components/audiobook/AudiobookPage';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useHistory } from '@/hooks/use-history';
 import { useStatus } from '@/hooks/use-status';
@@ -73,6 +74,19 @@ export default function App() {
               className="flex flex-col flex-1 overflow-hidden"
             >
               <DashboardPage />
+            </motion.div>
+          )}
+          {page === 'audiobooks' && (
+            <motion.div
+              key="audiobooks"
+              variants={pageVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+              className="flex flex-col flex-1 overflow-hidden"
+            >
+              <AudiobookPage onNavigateModels={() => setPage('models')} />
             </motion.div>
           )}
           {page === 'models' && (

@@ -98,6 +98,52 @@ export type GrammarModels = Record<string, GrammarModelInfo>;
 /** @deprecated use GrammarModels */
 export type GrammarModelStatus = GrammarModelInfo;
 
+// ─── NeuTTS model types ──────────────────────────────────────────────────────
+
+export interface NeuTTSFileStatus {
+  key: string;
+  label: string;
+  filename: string;
+  size: string;
+  bytes: number;
+  available: boolean;
+  status: 'downloaded' | 'not_downloaded' | 'downloading' | 'paused';
+  downloaded: number;
+  total: number;
+}
+
+export interface NeuTTSStatus {
+  backbone: NeuTTSFileStatus;
+  decoder: NeuTTSFileStatus;
+  ready: boolean;
+}
+
+// ─── Audiobook types ─────────────────────────────────────────────────────────
+
+export interface AudiobookRecord {
+  id: number;
+  title: string;
+  author: string;
+  filePath: string | null;
+  sourceUrl: string | null;
+  totalChunks: number;
+  currentChunk: number;
+  voiceId: string;
+  engine: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AudiobookChunk {
+  id: number;
+  bookId: number;
+  chunkIndex: number;
+  text: string;
+  audioPath: string | null;
+  isChapterStart: boolean;
+  chapterTitle: string | null;
+}
+
 interface TellaflowAPI {
   onStartRecording: (cb: () => void) => void;
   onStopRecording: (cb: () => void) => void;
@@ -212,6 +258,29 @@ interface TellaflowAPI {
   clearSnippets: () => Promise<SnippetEntry[]>;
   clearDictionary: () => Promise<DictionaryEntry[]>;
   resetPermissions: () => Promise<boolean>;
+
+  // NeuTTS model management
+  getNeuTTSStatus: () => Promise<NeuTTSStatus>;
+  getNeuTTSDecoderInfo: () => Promise<{ isLegacy: boolean; decoderPath: string }>;
+  upgradeNeuTTSDecoder: () => Promise<{ started: boolean }>;
+  startNeuTTSDownload: () => void;
+  pauseNeuTTSDownload: (key?: string) => void;
+  cancelNeuTTSDownload: (key?: string) => void;
+  deleteNeuTTSModel: (key?: string) => void;
+  onNeuTTSProgress: (cb: (p: { key: string; downloaded: number; total: number }) => void) => () => void;
+  onNeuTTSStatusChanged: (cb: (s: NeuTTSStatus) => void) => () => void;
+  onNeuTTSError: (cb: (e: { key: string; error: string }) => void) => () => void;
+
+  // Audiobook management
+  getAudiobooks: () => Promise<AudiobookRecord[]>;
+  createAudiobook: (opts: { title: string; author: string; text: string; filePath?: string; sourceUrl?: string; voiceId: string; engine: string }) => Promise<AudiobookRecord>;
+  deleteAudiobook: (id: number) => Promise<void>;
+  getAudiobookChunks: (bookId: number) => Promise<AudiobookChunk[]>;
+  updateAudiobookProgress: (bookId: number, chunkIndex: number) => Promise<void>;
+  pickPdfFile: () => Promise<{ title: string; author: string; text: string; filePath: string } | null>;
+  fetchUrlText: (url: string) => Promise<{ title: string; author: string; text: string } | null>;
+  synthesizeChunk: (opts: { text: string; voiceName: string }) => Promise<{ pcmBase64: string; sampleRate: number }>;
+  onAudiobooksChanged: (cb: (books: AudiobookRecord[]) => void) => () => void;
 
   onStatusChange: (cb: (status: string) => void) => () => void;
   onShowRestartBanner: (cb: () => void) => () => void;

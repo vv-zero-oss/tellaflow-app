@@ -33,6 +33,8 @@ const history = require('./history');
 const { closeDb } = require('./db');
 const sounds = require('./sounds');
 const { runStartupSmokeTest } = require('./startup-smoke-test');
+const audiobook = require('./audiobook');
+const neutts = require('./neutts');
 
 // Whisper outputs non-speech annotations in several forms — strip them all
 // so they never reach history or clipboard.
@@ -1038,6 +1040,10 @@ function registerIPC() {
   ipcMain.handle('get-app-version', () => {
     return app.getVersion();
   });
+
+  // Audiobook + NeuTTS feature
+  audiobook.registerIpc();
+  neutts.registerIpc();
 
   ipcMain.on('open-test-wav', async () => {
     const result = await dialog.showOpenDialog({

@@ -47,6 +47,26 @@ function DictionaryIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+function AudiobooksIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" fill="none" {...props}>
+      <path
+        d="M3.5 2.5C3.5 1.94772 3.94772 1.5 4.5 1.5H11.5L14.5 4.5V15.5C14.5 16.0523 14.0523 16.5 13.5 16.5H4.5C3.94772 16.5 3.5 16.0523 3.5 15.5V2.5Z"
+        fill="currentColor"
+        fillOpacity="0.25"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path d="M11.5 1.5V4.5H14.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M7 9.5C7 8.94772 7.44772 8.5 8 8.5H10.5L11.5 9.5V12C11.5 12.2761 11.2761 12.5 11 12.5H8C7.44772 12.5 7 12.0523 7 11.5V9.5Z" fill="currentColor" fillOpacity="0.5" />
+      <circle cx="8" cy="12.5" r="1" fill="currentColor" />
+      <circle cx="11" cy="12" r="1" fill="currentColor" />
+      <path d="M9 12.5V9.5L12 9V12" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function DashboardIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" fill="none" {...props}>
@@ -102,6 +122,7 @@ interface SidebarProps {
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon },
   { id: 'transcripts', label: 'Transcripts', icon: HomeIcon },
+  { id: 'audiobooks', label: 'Audiobooks', icon: AudiobooksIcon },
   { id: 'snippets', label: 'Snippets', icon: SnippetsIcon },
   { id: 'dictionary', label: 'Dictionary', icon: DictionaryIcon },
   { id: 'models', label: 'Models', icon: ModelsIcon },

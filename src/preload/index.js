@@ -131,6 +131,29 @@ contextBridge.exposeInMainWorld('tellaflow', {
   clearDictionary: () => ipcRenderer.invoke('clear-dictionary'),
   resetPermissions: () => ipcRenderer.invoke('reset-permissions'),
 
+  // NeuTTS model management
+  getNeuTTSStatus: () => ipcRenderer.invoke('get-neutts-status'),
+  startNeuTTSDownload: () => ipcRenderer.send('start-neutts-download'),
+  pauseNeuTTSDownload: (key) => ipcRenderer.send('pause-neutts-download', key),
+  cancelNeuTTSDownload: (key) => ipcRenderer.send('cancel-neutts-download', key),
+  deleteNeuTTSModel: (key) => ipcRenderer.send('delete-neutts-model', key),
+  onNeuTTSProgress: (cb) => { const h = (_, p) => cb(p); ipcRenderer.on('neutts-download-progress', h); return () => ipcRenderer.removeListener('neutts-download-progress', h); },
+  onNeuTTSStatusChanged: (cb) => { const h = (_, s) => cb(s); ipcRenderer.on('neutts-status-changed', h); return () => ipcRenderer.removeListener('neutts-status-changed', h); },
+  onNeuTTSError: (cb) => { const h = (_, e) => cb(e); ipcRenderer.on('neutts-download-error', h); return () => ipcRenderer.removeListener('neutts-download-error', h); },
+  getNeuTTSDecoderInfo: () => ipcRenderer.invoke('neutts-decoder-info'),
+  upgradeNeuTTSDecoder: () => ipcRenderer.invoke('neutts-upgrade-decoder'),
+
+  // Audiobook management
+  getAudiobooks: () => ipcRenderer.invoke('get-audiobooks'),
+  createAudiobook: (opts) => ipcRenderer.invoke('create-audiobook', opts),
+  deleteAudiobook: (id) => ipcRenderer.invoke('delete-audiobook', id),
+  getAudiobookChunks: (bookId) => ipcRenderer.invoke('get-audiobook-chunks', bookId),
+  updateAudiobookProgress: (bookId, chunkIndex) => ipcRenderer.invoke('update-audiobook-progress', { bookId, chunkIndex }),
+  pickPdfFile: () => ipcRenderer.invoke('pick-pdf-file'),
+  fetchUrlText: (url) => ipcRenderer.invoke('fetch-url-text', url),
+  synthesizeChunk: (opts) => ipcRenderer.invoke('synthesize-chunk', opts),
+  onAudiobooksChanged: (cb) => { const h = (_, books) => cb(books); ipcRenderer.on('audiobooks-changed', h); return () => ipcRenderer.removeListener('audiobooks-changed', h); },
+
   // Open external URL in default browser
   openExternal: (url) => ipcRenderer.send('open-external', url),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
