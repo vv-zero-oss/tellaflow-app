@@ -1,0 +1,58 @@
+appId: com.tellaflow.app
+productName: Tellaflow
+afterSign: scripts/after-sign.js
+mac:
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  icon: resources/icon.png
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: "Tellaflow needs microphone access to transcribe your speech."
+    NSAccessibilityUsageDescription: "Tellaflow needs accessibility access to detect your hotkey and paste transcribed text."
+dmg:
+  window:
+    width: 540
+    height: 320
+  contents:
+    - x: 160
+      y: 140
+      type: file
+    - x: 380
+      y: 140
+      type: link
+      path: /Applications
+extraResources:
+  - from: resources/models/
+    to: models/
+    filter:
+      - "ggml-*.bin"
+  - from: resources/trayIconTemplate.png
+    to: trayIconTemplate.png
+  - from: resources/trayIconTemplate@2x.png
+    to: trayIconTemplate@2x.png
+files:
+  - src/main/**/*
+  - src/preload/**/*
+  - src/renderer/audio-capture.html
+  - src/renderer/panel.html
+  - dist/renderer/**/*
+  - node_modules/**/*
+asarUnpack:
+  - node_modules/@kutalia/whisper-node-addon/**/*
+  - node_modules/node-llama-cpp/**/*
+  - node_modules/@node-llama-cpp/**/*
+  - node_modules/better-sqlite3/**/*
+  - src/main/grammar-worker.js
+  - dist/renderer/*.mp4
+  - dist/renderer/*.png
+  - dist/renderer/*.svg
+  - dist/renderer/*.woff2

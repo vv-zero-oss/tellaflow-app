@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head><title>Audio Capture</title></head>
+<body>
+<script>
+let audioCtx = null;
+let mediaStream = null;
+let scriptNode = null;
+let pcmChunks = [];
+let isCapturing = false;
+let stopRequested = false;
+let startingUp = false;
+
+const TARGET_SAMPLE_RATE = 16000;
+
+async function startCapture() {
+  if (isCapturing || startingUp) return;
+  startingUp = true;
+  stopRequested = false;
+  pcmChunks = [];
+
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { sampleRate: { ideal: TARGET_SAMPLE_RATE }, channelCount: 1, echoCancellation: true }
+    });
+
+    if (stopRequested) {
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
+      startingUp = false;
+      console.log('Stop was requested during mic init — sending empty audio.');
+      window.tellaflow.sendAudio([]);
+      return;
+    }
+
+    audioCtx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+    const source = audioCtx.createMediaStreamSource(mediaStream);
+
+    scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
+    scriptNode.onaudioprocess = (e) => {
+      if (!isCapturing) return;
+      const input = e.inputBuffer.getChannelData(0);
+      pcmChunks.push(new Float32Array(input));
+
+      let sum = 0;
+      for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+      const rms = Math.sqrt(sum / input.length);
+      window.tellaflow.sendAudioLevel(rms);
+    };
+
+    source.connect(scriptNode);
+    scriptNode.connect(audioCtx.destination);
+
+    isCapturing = true;
+    startingUp = false;
+
+    if (stopRequested) {
+      stopCapture();
+    }
+  } catch (err) {
+    console.error('Microphone capture failed:', err);
+    startingUp = false;
+    isCapturing = false;
+  }
+}
+
+function stopCapture() {
+  if (startingUp) {
+    console.log('Stop requested while mic is starting up — will stop after init.');
+    stopRequested = true;
+    return;
+  }
+
+  if (!isCapturing) return;
+  isCapturing = false;
+
+  if (scriptNode) {
+    scriptNode.disconnect();
+    scriptNode = null;
+  }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+
+  const totalLength = pcmChunks.reduce((sum, c) => sum + c.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  for (const chunk of pcmChunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  pcmChunks = [];
+
+  if (audioCtx) {
+    audioCtx.close();
+    audioCtx = null;
+  }
+
+  let rms = 0;
+  for (let i = 0; i < merged.length; i++) {
+    rms += merged[i] * merged[i];
+  }
+  rms = Math.sqrt(rms / (merged.length || 1));
+
+  if (rms < 0.005) {
+    console.log('No speech detected (RMS too low). Sending empty audio for cleanup.');
+    window.tellaflow.sendAudio([]);
+    return;
+  }
+
+  window.tellaflow.sendAudio(Array.from(merged));
+}
+
+window.tellaflow.onStartRecording(() => startCapture());
+window.tellaflow.onStopRecording(() => stopCapture());
+
+window.tellaflow.sendCaptureReady();
+</script>
+</body>
+</html>

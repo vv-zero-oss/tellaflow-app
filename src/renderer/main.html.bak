@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Whisper Studio</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --sidebar-bg: #1a1a1e;
+  --sidebar-w: 220px;
+  --bg: #222226;
+  --surface: rgba(255,255,255,0.04);
+  --surface-hover: rgba(255,255,255,0.07);
+  --surface-active: rgba(255,255,255,0.10);
+  --border: rgba(255,255,255,0.06);
+  --text: #e8e5e0;
+  --text-secondary: #a09d96;
+  --text-dim: #6b6862;
+  --accent: #d4a24e;
+  --accent-dim: rgba(212,162,78,0.15);
+  --green: #4a9e6d;
+  --red: #c44;
+  --blue: #4a8ec4;
+  --radius: 10px;
+  --radius-sm: 6px;
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.layout { display: flex; height: 100%; }
+
+/* ── Sidebar ── */
+.sidebar {
+  width: var(--sidebar-w); min-width: var(--sidebar-w);
+  background: var(--sidebar-bg);
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--border);
+  -webkit-app-region: drag; user-select: none;
+}
+.sidebar-header { padding: 52px 20px 16px; }
+.sidebar-header h1 { font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
+.sidebar-header .subtitle { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.sidebar-nav { flex: 1; padding: 4px 10px; -webkit-app-region: no-drag; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 500; color: var(--text-secondary);
+  cursor: pointer; transition: all 0.15s;
+}
+.nav-item:hover { background: var(--surface-hover); color: var(--text); }
+.nav-item.active { background: var(--surface-active); color: var(--text); }
+.nav-item svg {
+  width: 18px; height: 18px; stroke: currentColor; fill: none;
+  stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0;
+}
+.sidebar-footer { padding: 12px 10px 16px; border-top: 1px solid var(--border); -webkit-app-region: no-drag; }
+.status-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-size: 12px; color: var(--text-dim); }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+.status-dot.loading { background: var(--accent); animation: pulse 1.5s infinite; }
+.status-dot.error { background: var(--red); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ── Main Content ── */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.main-header {
+  padding: 20px 28px 16px; border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag; padding-top: 48px;
+}
+.welcome-row { display: flex; align-items: center; justify-content: space-between; }
+.welcome-row h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+.stats-row { display: flex; gap: 20px; margin-top: 10px; }
+.stat { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.stat svg { width: 14px; height: 14px; stroke: var(--accent); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.stat strong { color: var(--text); font-weight: 600; }
+.header-actions { display: flex; gap: 8px; -webkit-app-region: no-drag; }
+.btn-icon {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text-secondary); cursor: pointer; padding: 7px;
+  border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.btn-icon:hover { background: var(--surface-hover); color: var(--text); }
+.btn-icon svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── Section labels ── */
+.section-label {
+  padding: 14px 28px 8px; font-size: 11px; font-weight: 600;
+  color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+/* ── Entries ── */
+.entries { flex: 1; overflow-y: auto; padding-bottom: 20px; }
+.entries::-webkit-scrollbar { width: 6px; }
+.entries::-webkit-scrollbar-track { background: transparent; }
+.entries::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+.entry {
+  display: flex; align-items: flex-start; gap: 16px;
+  padding: 14px 28px; cursor: default; transition: background 0.15s;
+  border-bottom: 1px solid var(--border);
+}
+.entry:hover { background: var(--surface-hover); }
+.entry-time { flex-shrink: 0; font-size: 12px; font-weight: 500; color: var(--text-dim); min-width: 76px; padding-top: 2px; font-variant-numeric: tabular-nums; }
+.entry-body { flex: 1; min-width: 0; }
+.entry-text { font-size: 13.5px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.entry-actions { display: flex; gap: 4px; flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
+.entry:hover .entry-actions { opacity: 1; }
+.entry-action {
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  padding: 4px; border-radius: 4px; display: flex; align-items: center; justify-content: center;
+}
+.entry-action:hover { background: var(--surface-hover); color: var(--text); }
+.entry-action svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── Empty State ── */
+.empty-state {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 12px; color: var(--text-dim); padding: 40px;
+}
+.empty-state svg { width: 48px; height: 48px; stroke: var(--text-dim); fill: none; stroke-width: 1.2; opacity: 0.35; }
+.empty-state p { font-size: 14px; }
+.empty-state .hint { font-size: 12px; opacity: 0.6; }
+
+/* ── Pages ── */
+.page { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+.page.active { display: flex; }
+
+/* ── Settings ── */
+.settings-content { flex: 1; overflow-y: auto; padding: 24px 28px; }
+.settings-content::-webkit-scrollbar { width: 6px; }
+.settings-content::-webkit-scrollbar-track { background: transparent; }
+.settings-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+.settings-group { margin-bottom: 28px; }
+.settings-group h3 {
+  font-size: 11px; font-weight: 600; color: var(--text-dim);
+  margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+}
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.setting-label { font-size: 13px; color: var(--text); }
+.setting-value { font-size: 13px; color: var(--text-secondary); }
+
+.toggle {
+  position: relative; width: 38px; height: 22px;
+  background: rgba(255,255,255,0.12); border: none;
+  border-radius: 11px; cursor: pointer; transition: background 0.2s;
+}
+.toggle.on { background: var(--accent); }
+.toggle::after {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 16px; height: 16px; background: white;
+  border-radius: 50%; transition: transform 0.2s;
+}
+.toggle.on::after { transform: translateX(16px); }
+
+select.setting-select {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); font-size: 13px; padding: 6px 10px;
+  border-radius: var(--radius-sm); outline: none; cursor: pointer;
+}
+select.setting-select option { background: var(--sidebar-bg); color: var(--text); }
+
+/* ── Small buttons ── */
+.btn-sm {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text-secondary); font-size: 12px; font-weight: 500;
+  padding: 5px 12px; border-radius: var(--radius-sm);
+  cursor: pointer; transition: all 0.15s;
+}
+.btn-sm:hover { background: var(--surface-hover); color: var(--text); }
+.btn-sm.accent { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.btn-sm.accent:hover { background: var(--accent); color: #000; }
+.btn-sm.green { color: var(--green); border-color: var(--green); }
+.btn-sm.green:hover { background: var(--green); color: #fff; }
+
+/* ── Permission row ── */
+.perm-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.perm-info { display: flex; align-items: center; gap: 10px; }
+.perm-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.perm-dot.granted { background: var(--green); }
+.perm-dot.denied { background: var(--red); }
+.perm-label { font-size: 13px; color: var(--text); }
+
+/* ── Restart row ── */
+.restart-row {
+  display: none; align-items: center; justify-content: space-between;
+  padding: 12px 14px; margin-top: 10px;
+  background: rgba(74,158,109,0.08); border: 1px solid rgba(74,158,109,0.25);
+  border-radius: var(--radius-sm);
+}
+.restart-row.visible { display: flex; }
+.restart-row-inner { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+.restart-row-icon {
+  width: 16px; height: 16px; flex-shrink: 0;
+  stroke: var(--green); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* ── Dictionary ── */
+.dict-entry {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.dict-from, .dict-to {
+  flex: 1; background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); font-size: 13px; padding: 6px 10px;
+  border-radius: var(--radius-sm); outline: none;
+  font-family: inherit;
+}
+.dict-from:focus, .dict-to:focus { border-color: var(--accent); }
+.dict-arrow { color: var(--text-dim); font-size: 14px; flex-shrink: 0; }
+.dict-remove {
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  padding: 4px; border-radius: 4px; display: flex; align-items: center;
+  justify-content: center; flex-shrink: 0; transition: all 0.15s;
+}
+.dict-remove:hover { background: rgba(204,68,68,0.15); color: var(--red); }
+.dict-remove svg {
+  width: 15px; height: 15px; stroke: currentColor; fill: none;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+.dict-add-row {
+  display: flex; align-items: center; gap: 8px; padding: 10px 0;
+}
+.dict-empty {
+  font-size: 12px; color: var(--text-dim); padding: 8px 0;
+}
+.dict-hint {
+  font-size: 11px; color: var(--text-dim); margin-bottom: 10px;
+}
+
+/* ── Model cards ── */
+.model-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px;
+  transition: border-color 0.15s;
+}
+.model-card.active-model { border-color: var(--accent); }
+.model-top {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.model-info { display: flex; align-items: center; gap: 10px; }
+.model-name { font-size: 13px; font-weight: 600; color: var(--text); text-transform: capitalize; }
+.model-badge {
+  font-size: 10px; font-weight: 600; padding: 2px 7px;
+  border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.model-badge.downloaded { background: rgba(74,158,109,0.15); color: var(--green); }
+.model-badge.bundled { background: var(--accent-dim); color: var(--accent); }
+.model-badge.active { background: var(--accent); color: #000; }
+.model-meta {
+  display: flex; gap: 14px; margin-top: 6px; font-size: 12px; color: var(--text-dim);
+}
+.model-actions { display: flex; gap: 6px; align-items: center; }
+
+/* ── Progress bar ── */
+.progress-wrap { margin-top: 10px; }
+.progress-bar {
+  width: 100%; height: 4px; background: rgba(255,255,255,0.08);
+  border-radius: 2px; overflow: hidden;
+}
+.progress-fill {
+  height: 100%; background: var(--accent);
+  border-radius: 2px; transition: width 0.3s;
+}
+.progress-label {
+  display: flex; justify-content: space-between;
+  font-size: 11px; color: var(--text-dim); margin-top: 5px;
+}
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h1>Whisper Studio</h1>
+      <div class="subtitle">Speech to text</div>
+    </div>
+    <div class="sidebar-nav">
+      <div class="nav-item active" data-page="home">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Home
+      </div>
+      <div class="nav-item" data-page="settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        Settings
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <div class="status-bar">
+        <div class="status-dot" id="sidebarDot"></div>
+        <span id="sidebarStatus">Ready</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main">
+
+    <!-- Home Page -->
+    <div class="page active" id="page-home">
+      <div class="main-header">
+        <div class="welcome-row">
+          <h2>Transcriptions</h2>
+          <div class="header-actions">
+            <button class="btn-icon" id="clearBtn" title="Clear history">
+              <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+            </button>
+            <button class="btn-icon" id="testWavBtn" title="Test with WAV file">
+              <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="stats-row">
+          <div class="stat">
+            <svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0014 0"/><line x1="12" y1="17" x2="12" y2="22"/></svg>
+            <span><strong id="totalCount">0</strong> transcriptions</span>
+          </div>
+          <div class="stat">
+            <svg viewBox="0 0 24 24"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+            <span><strong id="wordCount">0</strong> words</span>
+          </div>
+        </div>
+      </div>
+      <div class="section-label" id="todayLabel">Today</div>
+      <div class="entries" id="entries"></div>
+      <div class="empty-state" id="emptyState">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="2" width="6" height="12" rx="3"/>
+          <path d="M5 10a7 7 0 0014 0"/>
+          <line x1="12" y1="17" x2="12" y2="22"/>
+          <line x1="8" y1="22" x2="16" y2="22"/>
+        </svg>
+        <p>No transcriptions yet</p>
+        <p class="hint">Hold your hotkey and speak to transcribe</p>
+      </div>
+    </div>
+
+    <!-- Settings Page -->
+    <div class="page" id="page-settings">
+      <div class="main-header">
+        <div class="welcome-row"><h2>Settings</h2></div>
+      </div>
+      <div class="settings-content">
+
+        <!-- General -->
+        <div class="settings-group">
+          <h3>General</h3>
+          <div class="setting-row">
+            <span class="setting-label">Hotkey</span>
+            <span class="setting-value" id="hotkeyDisplay">&mdash;</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Active Model</span>
+            <select class="setting-select" id="activeModelSelect"></select>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Programming Mode</span>
+            <button class="toggle" id="progModeToggle"></button>
+          </div>
+          <div class="setting-row">
+            <div>
+              <span class="setting-label">Grammar Correction</span>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px;">SmolLM2-135M fixes spelling &amp; grammar after transcription</div>
+            </div>
+            <button class="toggle" id="grammarToggle"></button>
+          </div>
+        </div>
+
+        <!-- Dictionary -->
+        <div class="settings-group">
+          <h3>Dictionary</h3>
+          <div class="dict-hint">Add word replacements for commonly misheard words due to accent or pronunciation.</div>
+          <div id="dictEntries"></div>
+          <div class="dict-add-row">
+            <input class="dict-from" id="dictNewFrom" type="text" placeholder="Misheard word" />
+            <span class="dict-arrow">&rarr;</span>
+            <input class="dict-to" id="dictNewTo" type="text" placeholder="Correct word" />
+            <button class="btn-sm accent" id="dictAddBtn">Add</button>
+          </div>
+        </div>
+
+        <!-- Models -->
+        <div class="settings-group">
+          <h3>Models</h3>
+          <div id="modelCards"></div>
+        </div>
+
+        <!-- Permissions -->
+        <div class="settings-group">
+          <h3>Permissions</h3>
+          <div class="perm-row">
+            <div class="perm-info">
+              <div class="perm-dot denied" id="micDot"></div>
+              <span class="perm-label">Microphone</span>
+            </div>
+            <div id="micAction">
+              <button class="btn-sm accent" id="grantMicBtn">Grant Access</button>
+            </div>
+          </div>
+          <div class="perm-row">
+            <div class="perm-info">
+              <div class="perm-dot denied" id="accDot"></div>
+              <span class="perm-label">Accessibility</span>
+            </div>
+            <div id="accAction">
+              <button class="btn-sm accent" id="grantAccBtn">Open Settings</button>
+            </div>
+          </div>
+          <div class="restart-row" id="restartRow">
+            <div class="restart-row-inner">
+              <svg viewBox="0 0 24 24" class="restart-row-icon"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+              <span>Accessibility granted. Restart required for the hotkey to work.</span>
+            </div>
+            <button class="btn-sm green" id="restartBtn">Restart</button>
+          </div>
+        </div>
+
+        <!-- About -->
+        <div class="settings-group">
+          <h3>About</h3>
+          <div class="setting-row">
+            <span class="setting-label">Version</span>
+            <span class="setting-value">1.2.0</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+
+// ── Navigation ──
+$$('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    $$('.nav-item').forEach(n => n.classList.remove('active'));
+    item.classList.add('active');
+    $$('.page').forEach(p => p.classList.remove('active'));
+    const page = $('#page-' + item.dataset.page);
+    if (page) page.classList.add('active');
+    if (item.dataset.page === 'settings') refreshSettings();
+  });
+});
+
+// ══════════════════════════════════════
+//  HOME PAGE
+// ══════════════════════════════════════
+const entriesEl = $('#entries');
+const emptyEl = $('#emptyState');
+const todayLabel = $('#todayLabel');
+
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+function formatDate(ts) {
+  const d = new Date(ts), now = new Date();
+  if (d.toDateString() === now.toDateString()) return 'Today';
+  const y = new Date(now); y.setDate(y.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+}
+function countWords(t) { return t.split(/\s+/).filter(w => w.length > 0).length; }
+
+function renderEntries(entries) {
+  if (!entries || entries.length === 0) {
+    entriesEl.style.display = 'none'; emptyEl.style.display = 'flex';
+    todayLabel.style.display = 'none';
+    $('#totalCount').textContent = '0'; $('#wordCount').textContent = '0';
+    return;
+  }
+  entriesEl.style.display = 'block'; emptyEl.style.display = 'none'; todayLabel.style.display = 'block';
+  $('#totalCount').textContent = entries.length;
+  $('#wordCount').textContent = entries.reduce((s, e) => s + countWords(e.text), 0);
+
+  let lastDate = '', html = '';
+  for (const e of entries) {
+    const date = formatDate(e.timestamp);
+    if (date !== lastDate) { if (lastDate) html += `<div class="section-label" style="padding-top:20px;">${date}</div>`; lastDate = date; }
+    const esc = e.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+    html += `<div class="entry" data-text="${esc}">
+      <div class="entry-time">${formatTime(e.timestamp)}</div>
+      <div class="entry-body"><div class="entry-text">${esc}</div></div>
+      <div class="entry-actions">
+        <button class="entry-action copy-btn" title="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+        <button class="entry-action paste-btn" title="Paste"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></button>
+      </div>
+    </div>`;
+  }
+  todayLabel.textContent = formatDate(entries[0].timestamp);
+  entriesEl.innerHTML = html;
+  entriesEl.querySelectorAll('.copy-btn').forEach(b => b.addEventListener('click', ev => { ev.stopPropagation(); window.whisperStudio.copyToClipboard(b.closest('.entry').dataset.text); }));
+  entriesEl.querySelectorAll('.paste-btn').forEach(b => b.addEventListener('click', ev => { ev.stopPropagation(); window.whisperStudio.pasteText(b.closest('.entry').dataset.text); }));
+}
+
+$('#clearBtn').addEventListener('click', () => { window.whisperStudio.clearHistory(); renderEntries([]); });
+$('#testWavBtn').addEventListener('click', () => window.whisperStudio.openTestWav());
+
+// ══════════════════════════════════════
+//  SETTINGS PAGE
+// ══════════════════════════════════════
+let currentModels = {};
+let currentConfig = {};
+
+function fmtBytes(b) {
+  if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+  if (b >= 1e6) return (b / 1e6).toFixed(0) + ' MB';
+  return (b / 1e3).toFixed(0) + ' KB';
+}
+
+async function refreshSettings() {
+  currentConfig = await window.whisperStudio.getConfig();
+  currentModels = await window.whisperStudio.getModels();
+
+  $('#hotkeyDisplay').textContent = currentConfig.hotkey?.label || '\u2014';
+
+  const toggle = $('#progModeToggle');
+  toggle.classList.toggle('on', !!currentConfig.programmingMode);
+
+  const grammarToggle = $('#grammarToggle');
+  grammarToggle.classList.toggle('on', !!currentConfig.grammarEnabled);
+  grammarToggle.disabled = !currentConfig.grammarModelAvailable;
+  if (!currentConfig.grammarModelAvailable) {
+    grammarToggle.style.opacity = '0.4';
+    grammarToggle.title = 'Grammar model not found';
+  } else {
+    grammarToggle.style.opacity = '';
+    grammarToggle.title = '';
+  }
+
+  renderActiveModelDropdown();
+  renderModelCards();
+  await refreshDictionary();
+  await refreshPermissions();
+}
+
+function renderActiveModelDropdown() {
+  const sel = $('#activeModelSelect');
+  const current = currentConfig.model || 'small';
+  sel.innerHTML = '';
+
+  for (const [key, info] of Object.entries(currentModels)) {
+    if (!info.available) continue;
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = key.charAt(0).toUpperCase() + key.slice(1) + ' (' + info.size + ')';
+    if (key === current) opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+
+function renderModelCards() {
+  const container = $('#modelCards');
+  const current = currentConfig.model || 'small';
+  let html = '';
+
+  for (const [key, info] of Object.entries(currentModels)) {
+    const isActive = key === current;
+    const activeClass = isActive ? ' active-model' : '';
+
+    let badge = '';
+    if (isActive && info.available) badge = '<span class="model-badge active">Active</span>';
+    else if (info.available) badge = '<span class="model-badge downloaded">Downloaded</span>';
+
+    let actions = '';
+    if (info.status === 'downloaded' && !isActive) {
+      actions = `<button class="btn-sm" data-action="delete" data-model="${key}">Remove</button>`;
+    } else if (info.status === 'not_downloaded') {
+      actions = `<button class="btn-sm accent" data-action="download" data-model="${key}">Download</button>`;
+    } else if (info.status === 'downloading') {
+      actions = `<button class="btn-sm" data-action="pause" data-model="${key}">Pause</button>`;
+    } else if (info.status === 'paused') {
+      actions = `<button class="btn-sm accent" data-action="resume" data-model="${key}">Resume</button>
+                 <button class="btn-sm" data-action="cancel" data-model="${key}">Cancel</button>`;
+    }
+
+    let progress = '';
+    if (info.status === 'downloading' || info.status === 'paused') {
+      const pct = info.total > 0 ? Math.round((info.downloaded / info.total) * 100) : 0;
+      const statusLabel = info.status === 'paused' ? 'Paused' : 'Downloading';
+      progress = `<div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="pbar-${key}" style="width:${pct}%"></div></div>
+        <div class="progress-label">
+          <span id="plabel-${key}">${fmtBytes(info.downloaded)} / ${fmtBytes(info.total)}</span>
+          <span>${statusLabel} &middot; ${pct}%</span>
+        </div>
+      </div>`;
+    }
+
+    html += `<div class="model-card${activeClass}" id="mcard-${key}">
+      <div class="model-top">
+        <div>
+          <div class="model-info">
+            <span class="model-name">${key.charAt(0).toUpperCase() + key.slice(1)}</span>
+            ${badge}
+          </div>
+          <div class="model-meta">
+            <span>${info.size}</span>
+            <span>Quality: ${info.quality}</span>
+          </div>
+        </div>
+        <div class="model-actions">${actions}</div>
+      </div>
+      ${progress}
+    </div>`;
+  }
+
+  container.innerHTML = html;
+
+  container.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => handleModelAction(btn.dataset.action, btn.dataset.model));
+  });
+}
+
+function handleModelAction(action, modelKey) {
+  if (action === 'download' || action === 'resume') {
+    currentModels[modelKey].status = 'downloading';
+    currentModels[modelKey].downloaded = currentModels[modelKey].downloaded || 0;
+    renderModelCards();
+    window.whisperStudio.startDownload(modelKey);
+  } else if (action === 'pause') {
+    window.whisperStudio.pauseDownload(modelKey);
+    currentModels[modelKey].status = 'paused';
+    renderModelCards();
+  } else if (action === 'cancel') {
+    window.whisperStudio.cancelDownload(modelKey);
+    currentModels[modelKey].status = 'not_downloaded';
+    currentModels[modelKey].downloaded = 0;
+    renderModelCards();
+  } else if (action === 'delete') {
+    window.whisperStudio.deleteModel(modelKey);
+    currentModels[modelKey].available = false;
+    currentModels[modelKey].status = 'not_downloaded';
+    currentModels[modelKey].downloaded = 0;
+    renderActiveModelDropdown();
+    renderModelCards();
+  }
+}
+
+// Live download progress — update progress bar without re-rendering cards
+window.whisperStudio.onDownloadProgress((p) => {
+  if (currentModels[p.modelKey]) {
+    currentModels[p.modelKey].downloaded = p.downloaded;
+    currentModels[p.modelKey].total = p.total;
+    currentModels[p.modelKey].status = 'downloading';
+  }
+
+  const bar = document.getElementById('pbar-' + p.modelKey);
+  const label = document.getElementById('plabel-' + p.modelKey);
+  if (bar) bar.style.width = p.percent + '%';
+  if (label) label.textContent = fmtBytes(p.downloaded) + ' / ' + fmtBytes(p.total);
+
+  const card = document.getElementById('mcard-' + p.modelKey);
+  if (card) {
+    const pctSpan = card.querySelector('.progress-label span:last-child');
+    if (pctSpan) pctSpan.textContent = 'Downloading \u00B7 ' + p.percent + '%';
+  }
+});
+
+// Download completed or error — full refresh
+window.whisperStudio.onModelsChanged(async (newModels) => {
+  currentModels = newModels || await window.whisperStudio.getModels();
+  renderActiveModelDropdown();
+  renderModelCards();
+});
+
+window.whisperStudio.onDownloadError((e) => {
+  console.error('Download error:', e.modelKey, e.error);
+  if (currentModels[e.modelKey]) {
+    currentModels[e.modelKey].status = 'not_downloaded';
+  }
+  renderModelCards();
+});
+
+$('#activeModelSelect').addEventListener('change', (ev) => {
+  window.whisperStudio.setModel(ev.target.value);
+  currentConfig.model = ev.target.value;
+  renderModelCards();
+});
+
+$('#progModeToggle').addEventListener('click', function() {
+  this.classList.toggle('on');
+  window.whisperStudio.setProgrammingMode(this.classList.contains('on'));
+});
+
+$('#grammarToggle').addEventListener('click', function() {
+  if (this.disabled) return;
+  this.classList.toggle('on');
+  window.whisperStudio.setGrammarEnabled(this.classList.contains('on'));
+});
+
+// ── Dictionary ──
+let dictEntries = [];
+
+async function refreshDictionary() {
+  dictEntries = await window.whisperStudio.getDictionary();
+  renderDictionary();
+}
+
+function renderDictionary() {
+  const container = $('#dictEntries');
+  if (!dictEntries || dictEntries.length === 0) {
+    container.innerHTML = '<div class="dict-empty">No entries yet. Add commonly misheard words above.</div>';
+    return;
+  }
+  let html = '';
+  for (const e of dictEntries) {
+    const fromEsc = (e.from || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+    const toEsc = (e.to || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+    html += `<div class="dict-entry" data-id="${e.id}">
+      <input class="dict-from" type="text" value="${fromEsc}" data-field="from" />
+      <span class="dict-arrow">&rarr;</span>
+      <input class="dict-to" type="text" value="${toEsc}" data-field="to" />
+      <button class="dict-remove" data-id="${e.id}" title="Remove">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>`;
+  }
+  container.innerHTML = html;
+
+  container.querySelectorAll('.dict-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = parseInt(btn.dataset.id);
+      dictEntries = await window.whisperStudio.removeDictionaryEntry(id);
+      renderDictionary();
+    });
+  });
+
+  container.querySelectorAll('.dict-entry input').forEach(input => {
+    input.addEventListener('change', async () => {
+      const row = input.closest('.dict-entry');
+      const id = parseInt(row.dataset.id);
+      const fromVal = row.querySelector('[data-field="from"]').value.trim();
+      const toVal = row.querySelector('[data-field="to"]').value.trim();
+      if (fromVal) {
+        dictEntries = await window.whisperStudio.updateDictionaryEntry(id, fromVal, toVal);
+      }
+    });
+  });
+}
+
+$('#dictAddBtn').addEventListener('click', async () => {
+  const fromInput = $('#dictNewFrom');
+  const toInput = $('#dictNewTo');
+  const from = fromInput.value.trim();
+  const to = toInput.value.trim();
+  if (!from) return;
+  dictEntries = await window.whisperStudio.addDictionaryEntry(from, to);
+  fromInput.value = '';
+  toInput.value = '';
+  renderDictionary();
+});
+
+$('#dictNewTo').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('#dictAddBtn').click();
+});
+$('#dictNewFrom').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('#dictNewTo').focus();
+});
+
+// ── Permissions ──
+let prevAccOk = null;
+
+async function refreshPermissions() {
+  const micOk = await window.whisperStudio.checkMicPermission();
+  const accOk = await window.whisperStudio.checkAccessibility();
+
+  const micDot = $('#micDot');
+  const accDot = $('#accDot');
+  micDot.className = 'perm-dot ' + (micOk ? 'granted' : 'denied');
+  accDot.className = 'perm-dot ' + (accOk ? 'granted' : 'denied');
+
+  $('#micAction').innerHTML = micOk
+    ? '<span class="setting-value" style="color:var(--green)">Granted</span>'
+    : '<button class="btn-sm accent" id="grantMicBtn">Grant Access</button>';
+
+  $('#accAction').innerHTML = accOk
+    ? '<span class="setting-value" style="color:var(--green)">Granted</span>'
+    : '<button class="btn-sm accent" id="grantAccBtn">Open Settings</button><button class="btn-sm" id="recheckAccBtn" style="margin-left:6px">Recheck</button>';
+
+  const needsRestart = await window.whisperStudio.checkNeedsRestart();
+  if (needsRestart) {
+    $('#restartRow').classList.add('visible');
+  } else {
+    $('#restartRow').classList.remove('visible');
+  }
+  prevAccOk = accOk;
+
+  if (!micOk) {
+    document.getElementById('grantMicBtn')?.addEventListener('click', async () => {
+      const granted = await window.whisperStudio.grantMic();
+      if (granted) {
+        refreshPermissions();
+      }
+    });
+  }
+  if (!accOk) {
+    document.getElementById('grantAccBtn')?.addEventListener('click', () => {
+      window.whisperStudio.grantAccessibility();
+    });
+    document.getElementById('recheckAccBtn')?.addEventListener('click', async () => {
+      const ok = await window.whisperStudio.checkAccessibility();
+      if (ok) {
+        window.whisperStudio.retryHotkey();
+      }
+      refreshPermissions();
+    });
+  }
+}
+
+$('#restartBtn').addEventListener('click', () => {
+  window.whisperStudio.restartApp();
+});
+
+// ── Auto-recheck permissions periodically when settings page is open ──
+let permCheckInterval = null;
+function startPermPolling() {
+  stopPermPolling();
+  permCheckInterval = setInterval(refreshPermissions, 5000);
+}
+function stopPermPolling() {
+  if (permCheckInterval) { clearInterval(permCheckInterval); permCheckInterval = null; }
+}
+
+$$('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    if (item.dataset.page === 'settings') startPermPolling();
+    else stopPermPolling();
+  });
+});
+
+// ── IPC listeners ──
+window.whisperStudio.onHistoryUpdate((entries) => renderEntries(entries));
+window.whisperStudio.onStatusChange((status) => {
+  $('#sidebarStatus').textContent = status;
+  const dot = $('#sidebarDot');
+  dot.className = 'status-dot';
+  if (status === 'Ready') {}
+  else if (status.includes('failed') || status.includes('required') || status.includes('not found')) dot.classList.add('error');
+  else dot.classList.add('loading');
+});
+
+window.whisperStudio.onShowRestartBanner(() => {
+  $('#restartRow').classList.add('visible');
+  refreshPermissions();
+});
+
+// ── Init ──
+window.whisperStudio.getHistory().then(entries => renderEntries(entries));
+refreshSettings();
+</script>
+</body>
+</html>

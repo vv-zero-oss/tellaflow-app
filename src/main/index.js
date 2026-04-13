@@ -1,0 +1,1444 @@
+// Safety net: keyspy's native binary can exit abruptly (e.g. fn/Globe key on Apple Silicon),
+// causing a synchronous EPIPE when writing its stdin acknowledgment. Suppress those so
+// Electron doesn't show the fatal error dialog — the onError callback will restart the listener.
+process.on('uncaughtException', (err) => {
+  if (err.code === 'EPIPE') {
+    console.warn('[keyspy] Suppressed uncaught EPIPE – native process likely exited:', err.message);
+    return;
+  }
+  // Re-throw anything else so Electron's default handler shows the dialog.
+  throw err;
+});
+
+const { app, ipcMain, BrowserWindow, Notification, clipboard, dialog, shell } = require('electron');
+const path = require('path');
+const config = require('./config');
+const { createTray, getTray } = require('./tray');
+const { createOnboardingWindow, closeOnboarding, getOnboardingWindow } = require('./onboarding');
+const hotkey = require('./hotkey');
+const whisper = require('./whisper');
+const parakeet = require('./parakeet');
+const { pasteText } = require('./paste');
+const permissions = require('./permissions');
+const models = require('./models');
+const { trimSilence, normalizeVolume } = require('./audio-preprocess');
+const { encodePcmToWav } = require('./audio-utils');
+const { formatTranscription } = require('./formatter');
+const grammar = require('./grammar');
+const { applyDictionary } = require('./dictionary');
+const snippets = require('./snippets');
+const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState } = require('./toast');
+const { showMainWindow, sendToMainWindow, destroyMainWindow, createMainWindow } = require('./main-window');
+const history = require('./history');
+const { closeDb } = require('./db');
+const sounds = require('./sounds');
+const { runStartupSmokeTest } = require('./startup-smoke-test');
+
+// Whisper outputs non-speech annotations in several forms — strip them all
+// so they never reach history or clipboard.
+//   [BLANK_AUDIO], [NOISE], etc.  — bracketed uppercase tokens
+//   (wind blowing), (heartbeat)   — parenthesised sound descriptions
+//   *singing*, *laughing*         — asterisk-wrapped action notes
+const WHISPER_ARTIFACT_RE =
+  /\[\s*(?:BLANK_AUDIO|INAUDIBLE|NOISE|MUSIC|APPLAUSE|LAUGHTER|SILENCE|NO_SPEECH|inaudible|blank_audio)\s*\]|\([^)]+\)|\*[^*]+\*/gi;
+
+function stripWhisperArtifacts(text) {
+  if (!text) return '';
+  const cleaned = text.replace(WHISPER_ARTIFACT_RE, '').trim();
+  return cleaned;
+}
+
+let audioCaptureWindow = null;
+let isQuitting = false;
+let pendingStop = false;
+let recordingTimeout = null;
+const MAX_RECORDING_MS = 60000;
+let accessibilityInitialState = null; // null = not yet checked
+
+// App captured at recording-start (before Electron stole focus).
+// Used as a fallback if Electron is still frontmost when paste fires.
+let clickPasteTargetApp = null;
+
+// Returns the name of the current frontmost application asynchronously.
+// EC2 — resolves null after 800 ms if osascript hangs, preventing the
+// audio-captured handler from stalling indefinitely.
+function getFrontmostApp() {
+  return new Promise((resolve) => {
+    const { execFile } = require('child_process');
+    const timer = setTimeout(() => {
+      console.warn('getFrontmostApp timed out');
+      resolve(null);
+    }, 800);
+    execFile('osascript', [
+      '-e',
+      'tell application "System Events" to get name of first process whose frontmost is true',
+    ], (err, stdout) => {
+      clearTimeout(timer);
+      resolve(err ? null : (stdout.trim() || null));
+    });
+  });
+}
+
+// True when the given app name is our own Electron process (not a real user app).
+function isOwnApp(name) {
+  if (!name) return true;
+  const own = app.getName();
+  return name === 'Electron' || name === own;
+}
+
+// Suppresses the app.on('activate') → showMainWindow() call that fires
+// when the user clicks the toast window and Electron becomes frontmost.
+let suppressActivationShow = false;
+let suppressActivationTimer = null;
+
+function suppressNextActivation() {
+  if (suppressActivationTimer) clearTimeout(suppressActivationTimer);
+  suppressActivationShow = true;
+  suppressActivationTimer = setTimeout(() => {
+    suppressActivationShow = false;
+    suppressActivationTimer = null;
+  }, 5000);
+}
+
+app.setName('Tellaflow');
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  showMainWindow();
+});
+
+function performCleanup() {
+  try { parakeet.free(); } catch (e) { console.error('parakeet.free error:', e); }
+  try { hotkey.stop(); } catch (e) { console.error('hotkey.stop error:', e); }
+  try { grammar.dispose(); } catch (e) { console.error('grammar.dispose error:', e); }
+  try { destroyToast(); } catch (e) { console.error('destroyToast error:', e); }
+  try { destroyAudioCaptureWindow(); } catch (e) { console.error('destroyAudioCaptureWindow error:', e); }
+  try { destroyMainWindow(); } catch (e) { console.error('destroyMainWindow error:', e); }
+  try { closeDb(); } catch (e) { console.error('closeDb error:', e); }
+}
+
+function gracefulQuit() {
+  if (isQuitting) return;
+  isQuitting = true;
+  app.isQuitting = true;
+  performCleanup();
+
+  // Force-exit after 3s if cleanup or app.quit() hangs (e.g. native addon keeps event loop alive)
+  setTimeout(() => {
+    console.warn('Graceful quit timed out, forcing exit.');
+    process.exit(0);
+  }, 3000).unref();
+
+  app.quit();
+}
+
+app.whenReady().then(async () => {
+  createTray({
+    onQuit: gracefulQuit,
+    onChangeHotkeyFn: () => {
+      createOnboardingWindow();
+    },
+    onRetryHotkeyFn: () => {
+      startHotkeyListener();
+    },
+    onTrayClick: () => {
+      showMainWindow();
+    },
+    onStartRecording: () => {
+      // Capture frontmost app synchronously before the menu click steals focus
+      clickPasteTargetApp = null;
+      try {
+        const { execFileSync } = require('child_process');
+        const name = execFileSync('osascript', [
+          '-e',
+          'tell application "System Events" to get name of first process whose frontmost is true',
+        ]).toString().trim();
+        if (name && !isOwnApp(name)) clickPasteTargetApp = name;
+      } catch {}
+      startClickRecording();
+    },
+  });
+
+  accessibilityInitialState = permissions.isTrustedAccessibility();
+  console.log('Accessibility initial state:', accessibilityInitialState);
+
+  // Clean boot: accessibility already granted, so clear any stale "needs restart" flag
+  if (accessibilityInitialState) {
+    config.setAccessibilityGrantedOnce(false);
+  }
+
+  registerIPC();
+
+  // Ensure recordings directory exists
+  const fs = require('fs');
+  const recordingsDir = path.join(app.getPath('userData'), 'recordings');
+  if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
+
+  if (!config.isOnboardingComplete()) {
+    const onboardingWin = createOnboardingWindow();
+    // Safety net: if the onboarding window is closed by any means that bypasses
+    // the IPC handlers (Cmd+W, force-close, etc.) still start the app so it
+    // remains functional in the tray for this session.
+    // complete-onboarding sets onboardingComplete=true BEFORE closing the window,
+    // so the check below correctly skips calling startApp() a second time.
+    onboardingWin.once('closed', () => {
+      if (!config.isOnboardingComplete()) {
+        startApp().catch(err => console.error('[onboarding] startApp after unexpected close:', err));
+      }
+    });
+  } else {
+    await startApp();
+  }
+});
+
+app.on('activate', () => {
+  if (isQuitting) return;
+  // Never show the main window when the toast bar is interactive — the click
+  // that activated Electron came from the floating bar, not the Dock/app icon.
+  // Using the current toast state (not a timer) means this is reliable even
+  // if the user pauses on the bar for longer than any fixed timeout.
+  const toastState = getCurrentToastState();
+  if (toastState === 'floating-idle' || toastState === 'click-recording') return;
+  if (!suppressActivationShow) showMainWindow();
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
+  app.isQuitting = true;
+});
+
+app.on('will-quit', () => {
+  performCleanup();
+
+  // Safety net: force exit if native addons (keyspy, etc.) keep the event loop alive
+  setTimeout(() => {
+    console.warn('will-quit cleanup timed out, forcing exit.');
+    process.exit(0);
+  }, 3000).unref();
+});
+
+app.on('window-all-closed', () => {
+  // On macOS tray apps, don't quit when all windows close — user reopens via tray or dock
+  if (process.platform !== 'darwin') {
+    gracefulQuit();
+  }
+});
+
+async function startApp() {
+  createMainWindow();
+
+  if (app.dock) app.dock.show();
+
+  let modelKey = config.getModel();
+
+  if (!models.isModelAvailable(modelKey)) {
+    const configuredKey = modelKey;
+
+    if (models.isModelAvailable('small')) {
+      // Silently fall back to small and persist the change
+      config.setModel('small');
+      modelKey = 'small';
+      new Notification({
+        title: 'Tellaflow — Model Changed',
+        body: `"${configuredKey}" model not found. Switched to the Small model automatically.`,
+      }).show();
+      broadcastStatus('Switched to Small model');
+      sendToMainWindow('models-changed', models.getModelsStatus());
+    } else {
+      // No model available at all — prompt the user to download one
+      broadcastStatus('No model downloaded');
+      new Notification({
+        title: 'Tellaflow — No Model Found',
+        body: 'No transcription model is available. Please download one from Settings → Models.',
+      }).show();
+    }
+  }
+
+  if (models.isModelAvailable(modelKey)) {
+    broadcastStatus('Loading model...');
+    try {
+      await whisper.loadModel(modelKey);
+      await whisper.warmup();
+      broadcastStatus('Ready');
+
+      // Run first-install smoke test in the background — never blocks startup.
+      const testAudioPath = app.isPackaged
+        ? path.join(process.resourcesPath, 'test.mp3')
+        : path.join(__dirname, '..', '..', 'resources', 'test.mp3');
+
+      runStartupSmokeTest({
+        userDataPath: app.getPath('userData'),
+        audioPath: testAudioPath,
+        transcribeFn: (pcm) => whisper.transcribe(pcm),
+      }).then(() => {
+        console.log('[smoke-test] Test complete.');
+      }).catch((err) => {
+        // Absolute last-resort guard — should never reach here since
+        // runStartupSmokeTest already swallows all internal errors.
+        console.error('[smoke-test] Unexpected error:', err.message);
+      });
+    } catch (err) {
+      console.error('Model load failed:', err);
+      broadcastStatus('Model load failed');
+    }
+  }
+
+  // Pre-load the grammar model in the background so the first correction
+  // doesn't stall waiting for the worker to fork and mmap the GGUF file.
+  if (config.getGrammarEnabled() && grammar.isModelAvailable()) {
+    grammar.warmup().catch(err => console.warn('Grammar warmup failed:', err.message));
+  }
+
+  startHotkeyListener();
+  initFloatingBar();
+
+  // Respect showInDock setting on startup
+  if (!config.getShowInDock()) {
+    if (app.dock) app.dock.hide();
+  }
+}
+
+function broadcastStatus(text) {
+  sendToMainWindow('status-change', text);
+}
+
+function clearRecordingTimeout() {
+  if (recordingTimeout) {
+    clearTimeout(recordingTimeout);
+    recordingTimeout = null;
+  }
+}
+
+function forceStopRecording() {
+  console.warn('Force-stopping recording (safety timeout).');
+  clearRecordingTimeout();
+  pendingStop = false;
+  sounds.unmuteMusic();
+  // EC5 — target captured at start is now up to 60 s stale; discard it so
+  // getFrontmostApp() at paste time picks the correct current window instead.
+  clickPasteTargetApp = null;
+
+  if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+    try { audioCaptureWindow.webContents.send('stop-recording'); } catch {}
+  }
+  setTimeout(() => {
+    destroyAudioCaptureWindow();
+    hideToast();
+    broadcastStatus('Ready');
+  }, 500);
+}
+
+function startClickRecording() {
+  pendingStop = false;
+  clearRecordingTimeout();
+  sounds.playStart();
+  sounds.muteMusic();
+  broadcastStatus('Recording...');
+  showToast('click-recording');
+  createAudioCaptureWindow();
+  recordingTimeout = setTimeout(forceStopRecording, MAX_RECORDING_MS);
+}
+
+function startHotkeyListener() {
+  try {
+    hotkey.start({
+      onStart: () => {
+        // Capture the frontmost app SYNCHRONOUSLY and BEFORE createAudioCaptureWindow().
+        // An async query races with window creation — on macOS, creating a new
+        // BrowserWindow can briefly activate Electron, corrupting a concurrent
+        // osascript query and making it return 'Electron' instead of the user's app.
+        clickPasteTargetApp = null;
+        try {
+          const { execFileSync } = require('child_process');
+          const name = execFileSync('osascript', [
+            '-e',
+            'tell application "System Events" to get name of first process whose frontmost is true',
+          ], { timeout: 500 }).toString().trim();
+          if (name && !isOwnApp(name)) {
+            clickPasteTargetApp = name;
+          }
+        } catch {}
+
+        pendingStop = false;
+        clearRecordingTimeout();
+        sounds.playStart();
+        sounds.muteMusic();
+        broadcastStatus('Recording...');
+        showToast('recording');
+        createAudioCaptureWindow();
+
+        recordingTimeout = setTimeout(forceStopRecording, MAX_RECORDING_MS);
+      },
+      onStop: ({ cancelled, reason }) => {
+        clearRecordingTimeout();
+        sounds.playStop();
+        sounds.unmuteMusic();
+
+        if (cancelled) {
+          pendingStop = false;
+          clickPasteTargetApp = null;
+          destroyAudioCaptureWindow();
+          hideToast();
+          broadcastStatus('Ready');
+          if (reason === 'too_short') {
+            new Notification({
+              title: 'Tellaflow',
+              body: 'Recording too short. Hold the hotkey longer.',
+            }).show();
+          }
+          return;
+        }
+
+        if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+          if (audioCaptureWindow.webContents.isLoading()) {
+            console.log('Audio window still loading — deferring stop.');
+            pendingStop = true;
+          } else {
+            audioCaptureWindow.webContents.send('stop-recording');
+          }
+        } else {
+          hideToast();
+          broadcastStatus('Ready');
+        }
+      },
+    });
+    // Hotkey started successfully.
+    // Only clear the restart-needed flag when accessibility was already trusted at
+    // launch (accessibilityInitialState === true). If accessibility was just granted
+    // mid-session (accessibilityInitialState === false), the native event tap may
+    // not have activated yet on this process — keep the flag so the main window's
+    // restart prompt stays visible and the user is guided to restart.
+    if (accessibilityInitialState) {
+      config.setAccessibilityGrantedOnce(false);
+    } else if (config.getAccessibilityGrantedOnce()) {
+      // Accessibility was granted during this session; the hotkey listener started
+      // but the event tap might not capture keys until the app restarts.
+      broadcastStatus('Restart required');
+      // Slight delay so the main window has time to mount its IPC listeners
+      // before we send the banner event.
+      setTimeout(() => sendToMainWindow('show-restart-banner'), 1500);
+    }
+  } catch (err) {
+    console.warn('Hotkey listener failed:', err.message);
+
+    const accGranted = permissions.isTrustedAccessibility();
+    if (accGranted) {
+      config.setAccessibilityGrantedOnce(true);
+      broadcastStatus('Restart required');
+      sendToMainWindow('show-restart-banner');
+      new Notification({
+        title: 'Tellaflow',
+        body: 'Accessibility is granted but a restart is needed for the hotkey to work.',
+      }).show();
+    } else {
+      broadcastStatus('Accessibility required');
+      new Notification({
+        title: 'Tellaflow',
+        body: 'Grant Accessibility permission to enable the hotkey. Use the tray menu to retry.',
+      }).show();
+    }
+  }
+}
+
+function createAudioCaptureWindow() {
+  if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+    audioCaptureWindow.webContents.send('start-recording');
+    return;
+  }
+
+  audioCaptureWindow = new BrowserWindow({
+    show: false,
+    focusable: false,
+    width: 1,
+    height: 1,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  audioCaptureWindow.loadFile(
+    path.join(__dirname, '..', 'renderer', 'audio-capture.html')
+  );
+}
+
+function destroyAudioCaptureWindow() {
+  pendingStop = false;
+  if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+    audioCaptureWindow.destroy();
+  }
+  audioCaptureWindow = null;
+}
+
+function registerIPC() {
+  // Onboarding
+  ipcMain.on('set-hotkey', (_, hotkeyData) => {
+    config.setHotkey(hotkeyData);
+    // Notify the settings UI so the displayed label updates immediately
+    sendToMainWindow('config-changed', { hotkey: hotkeyData });
+    // Update the floating bar hint label
+    sendToToast('toast-hotkey', hotkeyData?.label || '');
+  });
+
+  ipcMain.handle('request-mic-permission', async () => {
+    return await permissions.requestMicrophone();
+  });
+
+  ipcMain.handle('check-accessibility', () => {
+    const granted = permissions.isTrustedAccessibility();
+    if (accessibilityInitialState === null) {
+      accessibilityInitialState = granted;
+    }
+    // Accessibility was just granted this session (wasn't granted at launch)
+    if (granted && !accessibilityInitialState && !config.getAccessibilityGrantedOnce()) {
+      config.setAccessibilityGrantedOnce(true);
+      // Broadcast to all windows so they can show a restart prompt
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) w.webContents.send('accessibility-granted');
+      });
+    }
+    return granted;
+  });
+
+  ipcMain.handle('check-mic-permission', () => {
+    return permissions.getMicrophoneStatus() === 'granted';
+  });
+
+  ipcMain.on('prompt-accessibility', () => {
+    permissions.promptAccessibility();
+  });
+
+  ipcMain.on('open-accessibility-settings', () => {
+    permissions.openAccessibilityPrefs();
+  });
+
+  ipcMain.on('complete-onboarding', async () => {
+    // Clear playground mode immediately — the onboarding window is about to be
+    // destroyed and its renderer can no longer send 'playground-mode-off', so
+    // we must reset the flag here before startApp() registers the hotkey listener.
+    playgroundMode = false;
+    config.setOnboardingComplete(true);
+    closeOnboarding();
+    await startApp();
+  });
+
+  ipcMain.on('dismiss-onboarding', () => {
+    closeOnboarding();
+  });
+
+  // Triggered by the onboarding renderer when the user reaches the final step.
+  // Loads + warms up the active model in the background using the bundled
+  // test.mp3 so model weights are in memory before the first real dictation.
+  ipcMain.on('warm-up-model', () => {
+    const { warmUpModel } = require('./model-warmup');
+    const { decodeWithFfmpeg } = require('./startup-smoke-test');
+
+    const testAudioPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'test.mp3')
+      : path.join(__dirname, '..', '..', 'resources', 'test.mp3');
+
+    const engine = config.getTranscriptionEngine();
+    const useParakeet = engine === 'parakeet' && parakeet.isAvailable();
+
+    const opts = useParakeet
+      ? {
+          audioPath: testAudioPath,
+          decodeFn: decodeWithFfmpeg,
+          isAvailableFn: () => parakeet.isAvailable(),
+          isLoadedFn: () => parakeet.isLoaded(),
+          loadFn: () => parakeet.loadModel(),
+          transcribeFn: (pcm) => parakeet.transcribe(pcm),
+        }
+      : {
+          audioPath: testAudioPath,
+          decodeFn: decodeWithFfmpeg,
+          isAvailableFn: () => models.isModelAvailable(config.getModel()),
+          isLoadedFn: () => !!require('./whisper').isLoaded?.(),
+          transcribeFn: async (pcm) => {
+            await whisper.loadModel(config.getModel());
+            return whisper.transcribe(pcm);
+          },
+        };
+
+    warmUpModel(opts).catch((err) => {
+      console.error('[warm-up] Unexpected top-level error:', err.message);
+    });
+  });
+
+  // Returns the model test result so the onboarding playground can confirm
+  // the transcription pipeline is working before the user does a live dry-run.
+  // A dedup promise ensures React StrictMode's double-invoke (and any other
+  // rapid-fire calls) share a single in-flight test rather than crashing the
+  // native addon with concurrent transcriptions.
+  let _modelTestPromise = null;
+  ipcMain.handle('run-model-test', async () => {
+    if (_modelTestPromise) return _modelTestPromise;
+
+    const { warmUpModel } = require('./model-warmup');
+    const { decodeWithFfmpeg } = require('./startup-smoke-test');
+
+    const testAudioPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'test.mp3')
+      : path.join(__dirname, '..', '..', 'resources', 'test.mp3');
+
+    const engine = config.getTranscriptionEngine();
+    const useParakeet = engine === 'parakeet' && parakeet.isAvailable();
+
+    const opts = useParakeet
+      ? {
+          audioPath: testAudioPath,
+          decodeFn: decodeWithFfmpeg,
+          isAvailableFn: () => parakeet.isAvailable(),
+          isLoadedFn: () => parakeet.isLoaded(),
+          loadFn: () => parakeet.loadModel(),
+          transcribeFn: (pcm) => parakeet.transcribe(pcm),
+        }
+      : {
+          audioPath: testAudioPath,
+          decodeFn: decodeWithFfmpeg,
+          isAvailableFn: () => models.isModelAvailable(config.getModel()),
+          isLoadedFn: () => !!require('./whisper').isLoaded?.(),
+          transcribeFn: async (pcm) => {
+            await whisper.loadModel(config.getModel());
+            return whisper.transcribe(pcm);
+          },
+        };
+
+    _modelTestPromise = warmUpModel(opts)
+      .catch((err) => ({ skipped: true, reason: 'error', error: err.message }))
+      .finally(() => { _modelTestPromise = null; });
+
+    return _modelTestPromise;
+  });
+
+  // Playground mode: when active, transcription results are routed back to the
+  // onboarding window instead of being pasted into external apps.
+  let playgroundMode = false;
+  ipcMain.on('playground-mode-on',  () => { playgroundMode = true; });
+  ipcMain.on('playground-mode-off', () => { playgroundMode = false; });
+
+  // Settings
+  ipcMain.handle('get-config', () => {
+    return {
+      hotkey: config.getHotkey(),
+      model: config.getModel(),
+      programmingMode: config.getProgrammingMode(),
+      grammarEnabled: config.getGrammarEnabled(),
+      grammarModel: config.getGrammarModel(),
+      grammarTone: config.getGrammarTone(),
+      grammarModelAvailable: grammar.isModelAvailable(),
+      theme: config.getTheme(),
+      floatingBarEnabled: config.getFloatingBarEnabled(),
+      soundsEnabled: config.getSoundsEnabled(),
+      muteWhileDictating: config.getMuteWhileDictating(),
+      showInDock: config.getShowInDock(),
+      launchAtLogin: app.getLoginItemSettings().openAtLogin,
+      translationEnabled: config.getTranslationEnabled(),
+      translationLanguage: config.getTranslationLanguage(),
+      transcriptionEngine: config.getTranscriptionEngine(),
+      parakeetAvailable: models.isParakeetAvailable(),
+    };
+  });
+
+  ipcMain.on('set-model', (_, model) => {
+    config.setModel(model);
+    broadcastStatus('Loading model...');
+    whisper.loadModel(model).then(() => {
+      broadcastStatus('Ready');
+    }).catch((err) => {
+      console.error('Model load failed:', err);
+      broadcastStatus('Model load failed');
+    });
+  });
+
+  ipcMain.on('set-transcription-engine', (_, engine) => {
+    config.setTranscriptionEngine(engine);
+    if (engine === 'parakeet') {
+      // Pre-load Parakeet model if available so first transcription is fast
+      if (parakeet.isAvailable() && !parakeet.isLoaded()) {
+        try { parakeet.loadModel(); } catch (err) {
+          console.warn('Parakeet pre-load failed:', err.message);
+        }
+      }
+    }
+    sendToMainWindow('config-changed', {
+      transcriptionEngine: engine,
+      parakeetAvailable: models.isParakeetAvailable(),
+    });
+  });
+
+  ipcMain.handle('get-parakeet-status', () => models.getParakeetStatus());
+
+  ipcMain.on('start-parakeet-download', () => {
+    models.startParakeetDownload({
+      onProgress: (p) => sendToMainWindow('parakeet-download-progress', p),
+      onComplete: () => {
+        sendToMainWindow('parakeet-status-changed', models.getParakeetStatus());
+        // Auto-load model after download
+        try { parakeet.loadModel(); } catch (err) {
+          console.warn('Parakeet post-download load failed:', err.message);
+        }
+      },
+      onError: (err) => {
+        console.error('Parakeet download error:', err.message);
+        sendToMainWindow('parakeet-download-error', { error: err.message });
+        sendToMainWindow('parakeet-status-changed', models.getParakeetStatus());
+      },
+    });
+    sendToMainWindow('parakeet-status-changed', models.getParakeetStatus());
+  });
+
+  ipcMain.on('cancel-parakeet-download', () => {
+    models.cancelParakeetDownload();
+    sendToMainWindow('parakeet-status-changed', models.getParakeetStatus());
+  });
+
+  ipcMain.on('delete-parakeet', () => {
+    parakeet.free();
+    models.deleteParakeet();
+    // If Parakeet was active engine, fall back to Whisper
+    if (config.getTranscriptionEngine() === 'parakeet') {
+      config.setTranscriptionEngine('whisper');
+    }
+    sendToMainWindow('parakeet-status-changed', models.getParakeetStatus());
+    sendToMainWindow('config-changed', {
+      transcriptionEngine: config.getTranscriptionEngine(),
+      parakeetAvailable: false,
+    });
+  });
+
+  ipcMain.on('set-programming-mode', (_, enabled) => {
+    config.setProgrammingMode(enabled);
+  });
+
+  ipcMain.on('set-grammar-enabled', (_, enabled) => {
+    config.setGrammarEnabled(enabled);
+    if (enabled && grammar.isModelAvailable()) {
+      grammar.warmup();
+    }
+  });
+
+  ipcMain.on('set-theme', (_, theme) => {
+    config.setTheme(theme);
+  });
+
+  // Dictionary management
+  ipcMain.handle('get-dictionary', () => {
+    return config.getDictionary();
+  });
+
+  ipcMain.handle('add-dictionary-entry', (_, { from, to }) => {
+    return config.addDictionaryEntry(from, to);
+  });
+
+  ipcMain.handle('remove-dictionary-entry', (_, id) => {
+    return config.removeDictionaryEntry(id);
+  });
+
+  ipcMain.handle('update-dictionary-entry', (_, { id, from, to }) => {
+    return config.updateDictionaryEntry(id, from, to);
+  });
+
+  // Snippets management
+  ipcMain.handle('get-snippets', () => {
+    return snippets.getSnippets();
+  });
+
+  ipcMain.handle('add-snippet', (_, { trigger, content }) => {
+    return snippets.addSnippet(trigger, content);
+  });
+
+  ipcMain.handle('remove-snippet', (_, id) => {
+    return snippets.removeSnippet(id);
+  });
+
+  ipcMain.handle('update-snippet', (_, { id, trigger, content }) => {
+    return snippets.updateSnippet(id, trigger, content);
+  });
+
+  ipcMain.handle('clear-snippets', () => {
+    return snippets.clearSnippets();
+  });
+
+  ipcMain.handle('clear-dictionary', () => {
+    return config.clearDictionary();
+  });
+
+  ipcMain.handle('reset-permissions', () => {
+    config.setAccessibilityGrantedOnce(false);
+    config.setOnboardingComplete(false);
+    return true;
+  });
+
+  // Model management
+  ipcMain.handle('get-models', () => {
+    return models.getModelsStatus();
+  });
+
+  ipcMain.on('start-download', (_, modelKey) => {
+    models.startDownload(modelKey, {
+      onProgress: (progress) => {
+        sendToMainWindow('download-progress', progress);
+      },
+      onComplete: () => {
+        sendToMainWindow('models-changed', models.getModelsStatus());
+      },
+      onError: (err) => {
+        console.error(`Download ${modelKey} failed:`, err.message);
+        sendToMainWindow('download-error', { modelKey, error: err.message });
+        sendToMainWindow('models-changed', models.getModelsStatus());
+      },
+    });
+  });
+
+  ipcMain.on('pause-download', (_, modelKey) => {
+    models.pauseDownload(modelKey);
+    sendToMainWindow('models-changed', models.getModelsStatus());
+  });
+
+  ipcMain.on('cancel-download', (_, modelKey) => {
+    models.cancelDownload(modelKey);
+    sendToMainWindow('models-changed', models.getModelsStatus());
+  });
+
+  ipcMain.on('delete-model', (_, modelKey) => {
+    models.deleteModel(modelKey);
+    sendToMainWindow('models-changed', models.getModelsStatus());
+  });
+
+  // Grammar model management (multi-model)
+  ipcMain.handle('get-grammar-models-status', () => {
+    return grammar.getGrammarModelsStatus();
+  });
+
+  ipcMain.on('start-grammar-download', (_, modelKey) => {
+    grammar.startGrammarDownload(modelKey, {
+      onProgress: (p) => {
+        sendToMainWindow('grammar-model-progress', p);
+      },
+      onComplete: () => {
+        console.log(`Grammar model ${modelKey} downloaded successfully`);
+        sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
+      },
+      onError: (err) => {
+        console.error(`Grammar model ${modelKey} download failed:`, err.message);
+        sendToMainWindow('grammar-model-error', { modelKey, error: err.message });
+        sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
+      },
+    });
+  });
+
+  ipcMain.on('pause-grammar-download', (_, modelKey) => {
+    grammar.pauseGrammarDownload(modelKey);
+    sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
+  });
+
+  ipcMain.on('cancel-grammar-download', (_, modelKey) => {
+    grammar.cancelGrammarDownload(modelKey);
+    sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
+  });
+
+  ipcMain.on('delete-grammar-model', (_, modelKey) => {
+    grammar.deleteGrammarModel(modelKey);
+    // If we deleted the active model, auto-disable grammar
+    if (config.getGrammarModel() === modelKey && !grammar.isModelAvailable()) {
+      config.setGrammarEnabled(false);
+    }
+    sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
+  });
+
+  ipcMain.on('set-grammar-model', async (_, modelKey) => {
+    config.setGrammarModel(modelKey);
+    // Restart the worker so it loads the newly-selected model
+    await grammar.restartWorker();
+    sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
+    // Eagerly warm up so the model is in memory before the next transcription.
+    // Awaited so the worker is fully ready before this handler exits.
+    if (config.getGrammarEnabled() && grammar.isModelAvailable()) {
+      await grammar.warmup();
+    }
+  });
+
+  // Grammar tone
+  ipcMain.handle('get-grammar-tone', () => config.getGrammarTone());
+
+  ipcMain.on('set-grammar-tone', (_, tone) => {
+    config.setGrammarTone(tone);
+  });
+
+  // Permission grant actions
+  ipcMain.handle('grant-mic', async () => {
+    const granted = await permissions.requestMicrophone();
+    return granted;
+  });
+
+  ipcMain.on('grant-accessibility', () => {
+    permissions.promptAccessibility();
+    permissions.openAccessibilityPrefs();
+  });
+
+  ipcMain.on('retry-hotkey', () => {
+    startHotkeyListener();
+  });
+
+  // ── Hotkey recording session ──────────────────────────────────────────────
+  // The renderer cannot detect fn/system keys via DOM — use keyspy in main.
+  let recordingSession = null; // { listener, senderWebContents, timer }
+
+  function stopRecordingSession() {
+    if (!recordingSession) return;
+    clearTimeout(recordingSession.timer);
+    try { recordingSession.listener.kill(); } catch {}
+    recordingSession = null;
+  }
+
+  ipcMain.on('start-hotkey-recording', (event) => {
+    stopRecordingSession(); // cancel any previous session
+    hotkey.stop(); // pause main hotkey listener to avoid conflicts
+
+    let GlobalKeyboardListener;
+    try {
+      ({ GlobalKeyboardListener } = require('keyspy'));
+    } catch (err) {
+      console.error('keyspy unavailable for hotkey recording:', err.message);
+      if (!event.sender.isDestroyed()) event.sender.send('hotkey-recording-cancelled');
+      startHotkeyListener();
+      return;
+    }
+
+    let tempListener;
+    try {
+      tempListener = new GlobalKeyboardListener({ mac: { appName: 'Tellaflow' } });
+    } catch (err) {
+      console.error('Failed to create hotkey recording listener:', err.message);
+      if (!event.sender.isDestroyed()) event.sender.send('hotkey-recording-cancelled');
+      startHotkeyListener();
+      return;
+    }
+
+    // Keys to ignore as the sole trigger (pure modifiers pressed alone are fine
+    // only as part of a combo — but we DO allow them as single-key hotkeys too).
+    // We filter out keys that would be disruptive (e.g. mouse events).
+    const IGNORED_SOLO = new Set(['MOUSE LEFT', 'MOUSE RIGHT', 'MOUSE MIDDLE']);
+
+    tempListener.addListener((e, down) => {
+      if (e.state !== 'DOWN') return;
+      if (IGNORED_SOLO.has(e.name)) return;
+
+      // Collect all currently held key names (modifiers + the trigger)
+      const heldModifiers = Object.entries(down)
+        .filter(([name, isDown]) => isDown && name !== e.name)
+        .map(([name]) => name)
+        // Only keep recognized modifier-like names
+        .filter(n => /CTRL|SHIFT|ALT|META|FUNCTION|FN/i.test(n));
+
+      const names = [...heldModifiers, e.name];
+
+      // Build human-readable label
+      const LABEL_MAP = {
+        'LEFT CTRL': 'Ctrl', 'RIGHT CTRL': 'Ctrl',
+        'LEFT ALT': 'Option (⌥)', 'RIGHT ALT': 'Option (⌥)',
+        'LEFT SHIFT': 'Shift (⇧)', 'RIGHT SHIFT': 'Shift (⇧)',
+        'LEFT META': 'Cmd (⌘)', 'RIGHT META': 'Cmd (⌘)',
+        'FN': 'fn',
+        'SPACE': 'Space', 'RETURN': 'Return', 'ESCAPE': 'Esc',
+        'BACKSPACE': 'Backspace', 'TAB': 'Tab',
+      };
+      const labelParts = names.map(n => LABEL_MAP[n] || n);
+      const label = labelParts.join(' + ');
+
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('hotkey-recorded', { names, label });
+      }
+      stopRecordingSession();
+      startHotkeyListener(); // resume main hotkey listener
+    });
+
+    const timer = setTimeout(() => {
+      stopRecordingSession();
+      startHotkeyListener(); // resume main hotkey listener on timeout
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('hotkey-recording-cancelled');
+      }
+    }, 10000);
+
+    recordingSession = { listener: tempListener, senderWebContents: event.sender, timer };
+  });
+
+  ipcMain.on('stop-hotkey-recording', () => {
+    stopRecordingSession();
+    startHotkeyListener(); // resume main hotkey listener
+  });
+
+  ipcMain.handle('check-needs-restart', () => {
+    // Stable: accessibility was absent at launch and has since been granted this session
+    return config.getAccessibilityGrantedOnce() && !accessibilityInitialState;
+  });
+
+  ipcMain.on('restart-app', () => {
+    // If the restart is triggered from the onboarding "Restart Now" button,
+    // permissions are already granted — mark onboarding complete so the app
+    // starts normally after the restart instead of showing onboarding again.
+    if (!config.isOnboardingComplete()) {
+      config.setOnboardingComplete(true);
+    }
+    performCleanup();
+    app.relaunch();
+    app.exit(0);
+  });
+
+  // History
+  ipcMain.handle('get-history', () => {
+    return history.getEntries();
+  });
+
+  ipcMain.on('clear-history', () => {
+    history.clearHistory();
+  });
+
+  ipcMain.handle('delete-history-entry', (_, id) => {
+    history.deleteEntry(id);
+    return history.getEntries();
+  });
+
+  ipcMain.handle('get-audio-data', async (_, filePath) => {
+    const fs = require('fs');
+    if (!filePath || typeof filePath !== 'string') return null;
+    // Prevent path traversal — only allow files inside the recordings directory
+    const recordingsDir = path.join(app.getPath('userData'), 'recordings');
+    const resolved = path.resolve(filePath);
+    if (!resolved.startsWith(recordingsDir)) return null;
+    if (!fs.existsSync(resolved)) return null;
+    const buf = fs.readFileSync(resolved);
+    // buf.buffer returns the underlying ArrayBuffer from Node's pool, which may
+    // be larger than the file contents. Slice to the exact byte range.
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  });
+
+  ipcMain.on('copy-to-clipboard', (_, text) => {
+    clipboard.writeText(text);
+  });
+
+  ipcMain.on('paste-text', (_, text) => {
+    pasteText(text);
+  });
+
+  // Open test WAV file dialog
+  ipcMain.on('open-external', (_, url) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      shell.openExternal(url);
+    }
+  });
+
+  ipcMain.handle('get-app-version', () => {
+    return app.getVersion();
+  });
+
+  ipcMain.on('open-test-wav', async () => {
+    const result = await dialog.showOpenDialog({
+      filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'm4a'] }],
+      properties: ['openFile'],
+    });
+    if (!result.canceled && result.filePaths.length > 0) {
+      processWavFile(result.filePaths[0]);
+    }
+  });
+
+  ipcMain.on('audio-level', (_, level) => {
+    sendToToast('audio-level', level);
+  });
+
+  // ── Floating bar: capture frontmost app before click steals focus ─────────
+  // Called from the renderer on hover-start (before the click activates Electron)
+  // so we know which app to re-focus when pasting the transcription result.
+  ipcMain.on('record-frontmost-app', () => {
+    // Suppress the activate→showMainWindow handler so clicking the toast
+    // doesn't bring the main settings window to the front.
+    suppressNextActivation();
+
+    // EC1 — always reset first so a failed capture (Electron frontmost) never
+    // leaves a stale value from a previous recording session in place.
+    clickPasteTargetApp = null;
+
+    // Sync call on hover: blocks for ~100ms but that's invisible to the user
+    // since no animation has started yet. Eliminates the race where the user
+    // clicks before the async result returns and clickPasteTargetApp is still null.
+    try {
+      const { execFileSync } = require('child_process');
+      const name = execFileSync('osascript', [
+        '-e',
+        'tell application "System Events" to get name of first process whose frontmost is true',
+      ]).toString().trim();
+      if (name && !isOwnApp(name)) {
+        clickPasteTargetApp = name;
+      }
+    } catch {}
+  });
+
+  // Fired on mousedown on the trigger strip — runs suppressNextActivation again
+  // right before the click activates Electron, as a belt-and-suspenders guard
+  // in case the hover timer already expired.
+  ipcMain.on('suppress-toast-activation', () => {
+    suppressNextActivation();
+  });
+
+  // ── Floating bar click-to-dictate ─────────────────────────────────────────
+  ipcMain.on('click-start-recording', () => {
+    // clickPasteTargetApp is set by record-frontmost-app (fired on hover, before
+    // the click activates Electron). No extra capture needed here.
+    startClickRecording();
+  });
+
+  ipcMain.on('click-cancel-recording', () => {
+    clearRecordingTimeout();
+    sounds.playStop();
+    sounds.unmuteMusic();
+    pendingStop = false;
+    clickPasteTargetApp = null;
+    destroyAudioCaptureWindow();
+    hideToast();
+    broadcastStatus('Ready');
+  });
+
+  ipcMain.on('click-finish-recording', () => {
+    clearRecordingTimeout();
+    sounds.playStop();
+    sounds.unmuteMusic();
+    if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+      if (audioCaptureWindow.webContents.isLoading()) {
+        pendingStop = true;
+      } else {
+        audioCaptureWindow.webContents.send('stop-recording');
+      }
+    } else {
+      hideToast();
+      broadcastStatus('Ready');
+    }
+  });
+
+  // ── System settings IPC ───────────────────────────────────────────────────
+  ipcMain.handle('get-floating-bar-enabled', () => config.getFloatingBarEnabled());
+  ipcMain.on('set-floating-bar-enabled', (_, enabled) => {
+    toastSetFloatingBarEnabled(enabled);
+  });
+
+  ipcMain.handle('get-sounds-enabled', () => config.getSoundsEnabled());
+  ipcMain.on('set-sounds-enabled', (_, enabled) => {
+    config.setSoundsEnabled(enabled);
+  });
+
+  ipcMain.handle('get-mute-while-dictating', () => config.getMuteWhileDictating());
+  ipcMain.on('set-mute-while-dictating', (_, enabled) => {
+    config.setMuteWhileDictating(enabled);
+  });
+
+  ipcMain.handle('get-show-in-dock', () => config.getShowInDock());
+  ipcMain.on('set-show-in-dock', (_, enabled) => {
+    config.setShowInDock(enabled);
+    if (app.dock) {
+      if (enabled) {
+        app.dock.show();
+      } else {
+        app.dock.hide();
+      }
+    }
+  });
+
+  ipcMain.handle('get-launch-at-login', () => app.getLoginItemSettings().openAtLogin);
+  ipcMain.on('set-launch-at-login', (_, enabled) => {
+    app.setLoginItemSettings({ openAtLogin: enabled });
+  });
+
+  ipcMain.handle('get-translation-enabled', () => config.getTranslationEnabled());
+  ipcMain.on('set-translation-enabled', (_, enabled) => {
+    config.setTranslationEnabled(enabled);
+  });
+
+  ipcMain.handle('get-translation-language', () => config.getTranslationLanguage());
+  ipcMain.on('set-translation-language', (_, lang) => {
+    config.setTranslationLanguage(lang);
+  });
+
+  // Audio capture window signals it's loaded and ready
+  ipcMain.on('capture-ready', () => {
+    if (!audioCaptureWindow || audioCaptureWindow.isDestroyed()) return;
+
+    if (pendingStop) {
+      console.log('Audio window ready but stop was pending — start+stop immediately.');
+      pendingStop = false;
+      audioCaptureWindow.webContents.send('start-recording');
+      setTimeout(() => {
+        if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+          audioCaptureWindow.webContents.send('stop-recording');
+        }
+      }, 150);
+    } else {
+      audioCaptureWindow.webContents.send('start-recording');
+    }
+  });
+
+  // Audio captured from renderer -> preprocess -> transcribe -> format -> paste
+  const MAX_AUDIO_SAMPLES = 16000 * 120; // 120 seconds at 16kHz
+  ipcMain.on('audio-captured', async (_, pcmArray) => {
+    destroyAudioCaptureWindow();
+
+    if (!pcmArray || pcmArray.length === 0) {
+      console.log('Empty audio received — skipping transcription.');
+      clickPasteTargetApp = null;
+      hideToast();
+      broadcastStatus('Ready');
+      if (playgroundMode) {
+        const win = getOnboardingWindow();
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('playground-text', '');
+        } else {
+          playgroundMode = false; // window gone — clear stale flag
+        }
+      }
+      return;
+    }
+
+    if (pcmArray.length > MAX_AUDIO_SAMPLES) {
+      console.warn(`Audio too large (${pcmArray.length} samples), truncating to ${MAX_AUDIO_SAMPLES}.`);
+      pcmArray = pcmArray.slice(0, MAX_AUDIO_SAMPLES);
+    }
+
+    showToast('transcribing');
+    broadcastStatus('Transcribing...');
+
+    // Save the raw audio to disk before transcription so it is always preserved
+    const fs = require('fs');
+    const recordingsDir = path.join(app.getPath('userData'), 'recordings');
+    const audioPath = path.join(recordingsDir, `recording-${Date.now()}.wav`);
+    let savedAudioPath = null;
+    try {
+      const pcmRaw = new Float32Array(pcmArray);
+      const wavBuf = encodePcmToWav(pcmRaw, 16000);
+      fs.writeFileSync(audioPath, wavBuf);
+      savedAudioPath = audioPath;
+    } catch (writeErr) {
+      console.warn('Failed to save audio file:', writeErr.message);
+    }
+
+    try {
+      let pcm = new Float32Array(pcmArray);
+      pcm = trimSilence(pcm);
+      pcm = normalizeVolume(pcm);
+
+      let rawText;
+      if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
+        rawText = await parakeet.transcribe(pcm);
+      } else {
+        rawText = await whisper.transcribe(pcm);
+        rawText = stripWhisperArtifacts(rawText);
+      }
+      if (!rawText) {
+        clickPasteTargetApp = null;
+        hideToast();
+        broadcastStatus('Ready');
+        if (savedAudioPath) {
+          try { fs.unlinkSync(savedAudioPath); } catch (_) {}
+        }
+        if (playgroundMode) {
+          const win = getOnboardingWindow();
+          if (win && !win.isDestroyed()) {
+            win.webContents.send('playground-text', '');
+          } else {
+            playgroundMode = false; // window gone — clear stale flag
+          }
+        }
+        return;
+      }
+      rawText = applyDictionary(rawText);
+
+      if (config.getGrammarEnabled() && grammar.isModelAvailable()) {
+        broadcastStatus('Formatting...');
+        try {
+          rawText = await grammar.correctGrammar(rawText, config.getGrammarTone());
+        } catch (err) {
+          console.warn('Grammar formatting failed, using raw text:', err.message);
+        }
+      }
+
+      let text = formatTranscription(rawText);
+      text = snippets.applySnippets(text);
+
+      hideToast();
+
+      // In playground (onboarding dry-run) mode: send the result back to the
+      // onboarding window and skip paste, history, and notifications.
+      // playgroundMode stays true so repeated dictations work without re-enabling it.
+      if (playgroundMode) {
+        const win = getOnboardingWindow();
+        if (win && !win.isDestroyed()) {
+          clickPasteTargetApp = null;
+          broadcastStatus('Ready');
+          if (savedAudioPath) { try { fs.unlinkSync(savedAudioPath); } catch (_) {} }
+          // Always send (even empty text) so the renderer can reset its recording state.
+          // Re-focus the onboarding window so subsequent hotkey presses are captured.
+          win.webContents.send('playground-text', text || '');
+          win.focus();
+          return;
+        }
+        // Onboarding window is gone (e.g. user closed it while playground was active).
+        // Auto-clear the stale flag so this and future transcriptions paste normally.
+        playgroundMode = false;
+      }
+
+      if (text && text.length > 0) {
+        history.addEntry(text, savedAudioPath);
+        const entries = history.getEntries();
+        sendToMainWindow('history-update', entries);
+
+        const recordedTarget = clickPasteTargetApp;
+        clickPasteTargetApp = null;
+
+        // recordedTarget was captured synchronously at key-press time (before any
+        // Electron window creation could corrupt the query). Use it directly.
+        // As a bonus, if the user deliberately switched to a different real app
+        // during transcription, honour that switch by pasting there instead.
+        const currentFrontmost = await getFrontmostApp();
+        const pasteTarget = (!isOwnApp(currentFrontmost) && currentFrontmost !== recordedTarget)
+          ? currentFrontmost
+          : recordedTarget;
+        pasteText(text, pasteTarget);
+
+        new Notification({
+          title: 'Tellaflow',
+          body: text.length > 80 ? text.substring(0, 80) + '...' : text,
+          silent: true,
+        }).show();
+      } else {
+        clickPasteTargetApp = null;
+        new Notification({
+          title: 'Tellaflow',
+          body: 'No speech detected.',
+        }).show();
+      }
+    } catch (err) {
+      console.error('Transcription failed:', err);
+      clickPasteTargetApp = null;
+      hideToast();
+
+      if (savedAudioPath) {
+        try { fs.unlinkSync(savedAudioPath); } catch (_) {}
+      }
+
+      const isModelMissing = err.message && err.message.includes('not found');
+      new Notification({
+        title: isModelMissing ? 'Tellaflow — Model Not Found' : 'Transcription Failed',
+        body: isModelMissing
+          ? `${err.message} Go to Settings → Models to download one.`
+          : (err.message || 'Unknown error'),
+      }).show();
+
+      if (isModelMissing) broadcastStatus('No model downloaded');
+    }
+
+    broadcastStatus('Ready');
+  });
+}
+
+async function processWavFile(filePath) {
+  const fs = require('fs');
+  try {
+    showToast('transcribing');
+    broadcastStatus('Transcribing file...');
+
+    const buf = fs.readFileSync(filePath);
+
+    // Validate WAV header
+    if (buf.length < 44) throw new Error('File too small to be a valid WAV');
+    const riff = buf.toString('ascii', 0, 4);
+    const wave = buf.toString('ascii', 8, 12);
+    if (riff !== 'RIFF' || wave !== 'WAVE') throw new Error('Not a valid WAV file');
+
+    const numChannels = buf.readUInt16LE(22);
+    const sampleRate = buf.readUInt32LE(24);
+    const bitsPerSample = buf.readUInt16LE(34);
+
+    if (numChannels < 1) throw new Error(`Invalid channel count: ${numChannels}`);
+    if (sampleRate < 1) throw new Error(`Invalid sample rate: ${sampleRate}`);
+    if (![8, 16, 24, 32].includes(bitsPerSample)) throw new Error(`Unsupported bit depth: ${bitsPerSample}`);
+
+    let dataOffset = 12;
+    let pcmBuf = null;
+    while (dataOffset < buf.length - 8) {
+      const chunkId = buf.toString('ascii', dataOffset, dataOffset + 4);
+      const chunkSize = buf.readUInt32LE(dataOffset + 4);
+      if (chunkId === 'data') {
+        dataOffset += 8;
+        pcmBuf = buf.slice(dataOffset, Math.min(dataOffset + chunkSize, buf.length));
+        break;
+      }
+      dataOffset += 8 + chunkSize;
+      if (chunkSize % 2 !== 0) dataOffset++;
+    }
+
+    if (!pcmBuf) throw new Error('No data chunk in WAV');
+
+    const numSamples = pcmBuf.length / (bitsPerSample / 8) / numChannels;
+    const mono16k = new Float32Array(Math.floor(numSamples * 16000 / sampleRate));
+    for (let i = 0; i < mono16k.length; i++) {
+      const srcIdx = Math.floor(i * sampleRate / 16000);
+      const byteOffset = srcIdx * numChannels * (bitsPerSample / 8);
+      if (byteOffset + 1 < pcmBuf.length) {
+        mono16k[i] = pcmBuf.readInt16LE(byteOffset) / 32768.0;
+      }
+    }
+
+    console.log(`WAV loaded: ${sampleRate}Hz -> 16kHz, ${mono16k.length} samples`);
+
+    let pcm = trimSilence(mono16k);
+    pcm = normalizeVolume(pcm);
+    let rawText;
+    if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
+      rawText = await parakeet.transcribe(pcm);
+    } else {
+      rawText = await whisper.transcribe(pcm);
+      rawText = stripWhisperArtifacts(rawText);
+    }
+    if (!rawText) {
+      hideToast();
+      broadcastStatus('Ready');
+      return;
+    }
+    rawText = applyDictionary(rawText);
+
+    if (config.getGrammarEnabled() && grammar.isModelAvailable()) {
+      broadcastStatus('Formatting...');
+      try {
+        rawText = await grammar.correctGrammar(rawText, config.getGrammarTone());
+      } catch (err) {
+        console.warn('Grammar formatting failed, using raw text:', err.message);
+      }
+    }
+
+    let text = formatTranscription(rawText);
+    text = snippets.applySnippets(text);
+
+    hideToast();
+
+    if (text && text.length > 0) {
+      history.addEntry(text);
+      const entries = history.getEntries();
+      sendToMainWindow('history-update', entries);
+      pasteText(text);
+      new Notification({ title: 'Tellaflow', body: text.length > 80 ? text.substring(0, 80) + '...' : text }).show();
+    } else {
+      new Notification({ title: 'Tellaflow', body: 'No speech detected.' }).show();
+    }
+
+    broadcastStatus('Ready');
+  } catch (err) {
+    console.error('WAV test failed:', err);
+    hideToast();
+    broadcastStatus('Ready');
+    new Notification({ title: 'Test Failed', body: err.message }).show();
+  }
+}
