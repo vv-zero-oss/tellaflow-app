@@ -9,6 +9,7 @@
     "build:renderer": "vite build --config vite.config.ts",
     "build": "npm run build:renderer && electron-builder --mac --publish never",
     "start": "electron .",
+    "dev:sign": "codesign --force --deep --sign - --options runtime --entitlements build/entitlements.mac.plist node_modules/electron/dist/Electron.app && codesign --force --sign - node_modules/keyspy/runtime/MacKeyServer",
     "download-model": "bash scripts/download-model.sh",
     "test-wav": "DYLD_LIBRARY_PATH=./node_modules/@kutalia/whisper-node-addon/dist/mac-arm64:$DYLD_LIBRARY_PATH node scripts/test-whisper.js",
     "postinstall": "node scripts/postinstall.js",
