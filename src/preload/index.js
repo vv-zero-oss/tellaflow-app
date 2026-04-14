@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('tellaflow', {
   // Audio capture IPC
-  onStartRecording: (callback) => ipcRenderer.on('start-recording', callback),
+  onStartRecording: (callback) => ipcRenderer.on('start-recording', (_, data) => callback(data)),
   onStopRecording: (callback) => ipcRenderer.on('stop-recording', callback),
   sendAudio: (pcmBuffer) => ipcRenderer.send('audio-captured', pcmBuffer),
   sendCaptureReady: () => ipcRenderer.send('capture-ready'),
@@ -87,6 +87,9 @@ contextBridge.exposeInMainWorld('tellaflow', {
   onParakeetDownloadProgress: (cb) => { const h = (_, p) => cb(p); ipcRenderer.on('parakeet-download-progress', h); return () => ipcRenderer.removeListener('parakeet-download-progress', h); },
   onParakeetDownloadError: (cb) => { const h = (_, e) => cb(e); ipcRenderer.on('parakeet-download-error', h); return () => ipcRenderer.removeListener('parakeet-download-error', h); },
   onParakeetStatusChanged: (cb) => { const h = (_, s) => cb(s); ipcRenderer.on('parakeet-status-changed', h); return () => ipcRenderer.removeListener('parakeet-status-changed', h); },
+
+  // Microphone device selection
+  setMicrophoneDeviceId: (deviceId) => ipcRenderer.send('set-microphone-device-id', deviceId),
 
   // Transcription engine
   setTranscriptionEngine: (engine) => ipcRenderer.send('set-transcription-engine', engine),
