@@ -198,16 +198,21 @@ function LanguageCombobox({ value, onChange }: LanguageComboboxProps) {
   );
 }
 
-function Tab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function Tab({ label, active, onClick, badge }: { label: string; active: boolean; onClick: () => void; badge?: string }) {
   return (
     <button
       onClick={onClick}
       className={cn(
-        'relative pb-2.5 text-sm font-medium transition-colors whitespace-nowrap',
+        'relative pb-2.5 text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1.5',
         active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
       )}
     >
       {label}
+      {badge && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wide uppercase bg-amber-400/20 text-amber-600 dark:text-amber-400 border border-amber-400/30 leading-none">
+          {badge}
+        </span>
+      )}
       {active && (
         <motion.div
           layoutId="models-tab-indicator"
@@ -252,7 +257,7 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
       <div className="px-7 [-webkit-app-region:no-drag]">
         <div className="flex gap-5 border-b border-border/50 mt-3">
           <Tab label="Transcription" active={activeTab === 'models'} onClick={() => setActiveTab('models')} />
-          <Tab label="AI Grammar" active={activeTab === 'grammar'} onClick={() => setActiveTab('grammar')} />
+          <Tab label="AI Grammar" active={activeTab === 'grammar'} onClick={() => setActiveTab('grammar')} badge="Beta" />
         </div>
       </div>
 
@@ -376,11 +381,21 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
           )}
 
           {activeTab === 'grammar' && (
-            <GrammarModelCard
-              grammarEnabled={config.grammarEnabled ?? false}
-              activeGrammarModel={config.grammarModel}
-              onSetGrammarEnabled={setGrammarEnabled}
-            />
+            <>
+              <div className="flex items-start gap-2.5 mb-5 px-3.5 py-3 rounded-lg bg-amber-400/10 border border-amber-400/25">
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wide uppercase bg-amber-400/20 text-amber-600 dark:text-amber-400 border border-amber-400/30 leading-none mt-0.5 shrink-0">
+                  Beta
+                </span>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  AI Grammar correction is in beta. Results may vary — please report any issues or unexpected behaviour so we can keep improving it.
+                </p>
+              </div>
+              <GrammarModelCard
+                grammarEnabled={config.grammarEnabled ?? false}
+                activeGrammarModel={config.grammarModel}
+                onSetGrammarEnabled={setGrammarEnabled}
+              />
+            </>
           )}
         </div>
       </ScrollArea>
