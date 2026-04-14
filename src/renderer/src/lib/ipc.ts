@@ -25,6 +25,7 @@ export interface AppConfig {
   translationLanguage?: string;
   transcriptionEngine?: TranscriptionEngine;
   parakeetAvailable?: boolean;
+  microphoneDeviceId?: string;
 }
 
 export interface ParakeetModelInfo {
@@ -99,7 +100,7 @@ export type GrammarModels = Record<string, GrammarModelInfo>;
 export type GrammarModelStatus = GrammarModelInfo;
 
 interface TellaflowAPI {
-  onStartRecording: (cb: () => void) => void;
+  onStartRecording: (cb: (data?: { deviceId?: string }) => void) => void;
   onStopRecording: (cb: () => void) => void;
   sendAudio: (pcm: ArrayBuffer) => void;
   sendCaptureReady: () => void;
@@ -181,6 +182,7 @@ interface TellaflowAPI {
   onParakeetStatusChanged: (cb: (s: ParakeetModelInfo) => void) => () => void;
 
   setTranscriptionEngine: (engine: TranscriptionEngine) => void;
+  setMicrophoneDeviceId: (deviceId: string) => void;
   onConfigChanged: (cb: (c: Partial<AppConfig>) => void) => () => void;
 
   grantMic: () => Promise<boolean>;
