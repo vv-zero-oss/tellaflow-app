@@ -61,3 +61,35 @@ try {
 } catch (err) {
   console.warn('better-sqlite3 rebuild failed:', err.message);
 }
+
+// Ad-hoc sign Electron.app so dev-mode Accessibility grants persist across rebuilds
+if (process.platform === 'darwin') {
+  const electronApp = path.join(__dirname, '..', 'node_modules', 'electron', 'dist', 'Electron.app');
+  if (fs.existsSync(electronApp)) {
+    const entitlements = path.join(__dirname, '..', 'build', 'entitlements.mac.plist');
+    try {
+      execSync(
+        `codesign --force --deep --sign - --options runtime --entitlements "${entitlements}" "${electronApp}"`,
+        { stdio: 'inherit' }
+      );
+      console.log('Ad-hoc signed Electron.app for dev-mode Accessibility.');
+    } catch (err) {
+      console.warn('codesign of Electron.app failed (dev Accessibility may not persist):', err.message);
+    }
+  }
+}
+
+// keyspy's MacKeyServer is the binary that calls CGEventTapCreate, so it (not Electron)
+// is the TCC subject for Accessibility. Re-sign with a stable ad-hoc signature so the
+// user's manual grant in System Settings survives `npm install` cycles.
+if (process.platform === 'darwin') {
+  const macKeyServer = path.join(__dirname, '..', 'node_modules', 'keyspy', 'runtime', 'MacKeyServer');
+  if (fs.existsSync(macKeyServer)) {
+    try {
+      execSync(`codesign --force --sign - "${macKeyServer}"`, { stdio: 'inherit' });
+      console.log('Ad-hoc signed MacKeyServer for dev-mode Accessibility.');
+    } catch (err) {
+      console.warn('codesign of MacKeyServer failed (hotkey may not work in dev):', err.message);
+    }
+  }
+}

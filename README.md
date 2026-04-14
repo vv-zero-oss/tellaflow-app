@@ -39,9 +39,47 @@ On first run the app shows an onboarding flow:
 
 1. **Welcome** — overview of how Tellaflow works.
 2. **Hotkey** — choose your push-to-talk key (default: Option ⌥).
-3. **Permissions** — grant Microphone and Accessibility access. Accessibility requires toggling the app ON in System Settings → Privacy & Security → Accessibility. During development the entry appears as "Electron".
+3. **Permissions** — grant Microphone and Accessibility access. In the packaged app, this is a single "Tellaflow" entry in System Settings → Privacy & Security → Accessibility. In development you grant two separate entries (`Electron` and `MacKeyServer`) — see [Accessibility in development](#accessibility-in-development) below.
 
 > After granting Accessibility for the first time, macOS requires an app restart for the permission to take effect.
+
+### Accessibility in development
+
+The packaged `Tellaflow.app` is one signed bundle containing both the Electron main process **and** keyspy's native `MacKeyServer` helper (the binary that actually calls `CGEventTapCreate`). macOS treats the bundle as one TCC subject, so granting **Tellaflow** in System Settings → Privacy & Security → Accessibility authorizes both processes at once.
+
+In `npm run dev`, those two processes live as separate binaries inside `node_modules/`:
+
+| Binary | Path | Why it needs Accessibility |
+|--------|------|----------------------------|
+| `Electron.app` | `node_modules/electron/dist/Electron.app` | The main process calls `systemPreferences.isTrustedAccessibilityClient`, which determines what the in-app Settings UI's "Accessibility" badge displays. |
+| `MacKeyServer` | `node_modules/keyspy/runtime/MacKeyServer` | The actual binary that calls `CGEventTapCreate` to capture the global push-to-talk hotkey. |
+
+Both must be added to System Settings → Privacy & Security → Accessibility **once**:
+
+1. Open System Settings → Privacy & Security → Accessibility
+2. Click `+`, press `Cmd+Shift+G`, paste the path above, click Open, toggle the new row ON
+3. Repeat for the second binary
+
+The `postinstall` script ad-hoc signs both binaries with deterministic CDHashes, so once you grant them, the permission persists across `npm install` cycles — you do not need to re-grant after every dependency update. The signing happens automatically on `npm install` / `yarn install` / `pnpm install`.
+
+If you ever need to re-sign manually (e.g. after upgrading `electron` or `keyspy` to a new version):
+
+```bash
+npm run dev:sign
+```
+
+If grants get into a bad state (toggled ON in System Settings but the hotkey still does nothing, usually after a version bump that changed a CDHash), reset and re-grant:
+
+```bash
+# Clears only Electron's Accessibility grant — leaves other apps untouched
+tccutil reset Accessibility com.github.Electron
+```
+
+`MacKeyServer` does not have a reverse-DNS bundle id (its codesign identifier is a content hash), so `tccutil reset` cannot target it. Remove it manually instead: open System Settings → Privacy & Security → Accessibility, click the `MacKeyServer` row, press the `–` button. Then re-add both binaries via the steps above.
+
+> Avoid `tccutil reset Accessibility` with no argument — that wipes the Accessibility grant for **every** app on your Mac (Raycast, Cursor, Discord, etc.), not just Tellaflow's binaries.
+
+> The Tellaflow Settings UI's "Accessibility: Granted" badge reflects only `Electron`'s TCC status. In dev that badge confirms grant #1 but cannot verify grant #2 — the only way to verify `MacKeyServer` is granted is to actually trigger the hotkey and confirm a recording starts.
 
 ## Project Structure
 
@@ -113,6 +151,7 @@ src/
 | `npm run build` | Build renderer + package macOS `.app` |
 | `npm run build:renderer` | Build only the Vite renderer |
 | `npm start` | Launch Electron directly (no dev server) |
+| `npm run dev:sign` | Re-sign `Electron.app` and `MacKeyServer` for dev-mode Accessibility (runs automatically on `npm install`) |
 | `npm run download-model` | Download a Whisper GGML model |
 | `npm run test-wav` | Test transcription with a WAV file |
 
