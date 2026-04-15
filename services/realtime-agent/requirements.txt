@@ -1,0 +1,8 @@
+fastapi>=0.116.0
+uvicorn[standard]>=0.35.0
+pydantic>=2.11.0
+silero-vad>=6.2.1
+numpy>=2.2.0
+croniter>=3.0.3
+huggingface_hub>=0.34.0
+kokoro-onnx>=0.4.9
