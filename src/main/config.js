@@ -14,6 +14,7 @@ const DEFAULTS = {
   translationEnabled: false,
   translationLanguage: 'ja',
   transcriptionEngine: 'whisper',
+  microphoneDeviceId: 'auto',
 };
 
 // Map from uiohook scan codes to keyspy key names (for migrating old configs)
@@ -103,6 +104,9 @@ function setTranslationLanguage(lang) { setSetting('translationLanguage', lang);
 function getTranscriptionEngine() { return getSetting('transcriptionEngine') || 'whisper'; }
 function setTranscriptionEngine(engine) { setSetting('transcriptionEngine', engine); }
 
+function getMicrophoneDeviceId() { return getSetting('microphoneDeviceId') || 'auto'; }
+function setMicrophoneDeviceId(deviceId) { setSetting('microphoneDeviceId', deviceId); }
+
 function getDictionary() {
   const rows = getDb().prepare('SELECT id, from_word, to_word FROM dictionary ORDER BY id').all();
   return rows.map(r => ({ id: r.id, from: r.from_word, to: r.to_word }));
@@ -173,6 +177,8 @@ module.exports = {
   setTranslationLanguage,
   getTranscriptionEngine,
   setTranscriptionEngine,
+  getMicrophoneDeviceId,
+  setMicrophoneDeviceId,
   getDictionary,
   setDictionary,
   addDictionaryEntry,

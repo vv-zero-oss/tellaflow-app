@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Sun, Moon, Monitor, Pencil, RotateCcw, Check, X, CheckCircle2 } from 'lucide-react';
+import { Sun, Moon, Monitor, Pencil, RotateCcw, Check, X } from 'lucide-react';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { ModifierKeyRow } from '@/components/ui/mac-keyboard';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ipc, type AppConfig, type HotkeyConfig, type Theme } from '@/lib/ipc';
-import { Button } from '../ui/button';
+import { MicrophoneSelectDialog } from './MicrophoneSelectDialog';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -247,6 +248,41 @@ function HotkeyEditor({ currentHotkey }: { currentHotkey: HotkeyConfig | undefin
   );
 }
 
+// ─── Microphone label ─────────────────────────────────────────────────────────
+
+function useMicLabel(deviceId: string | undefined) {
+  const [label, setLabel] = useState('Auto-detect');
+
+  const resolve = useCallback(async () => {
+    const id = deviceId || 'auto';
+    try {
+      const allDevices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = allDevices.filter((d) => d.kind === 'audioinput');
+
+      if (id === 'auto') {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const track = stream.getAudioTracks()[0];
+          const micName = track.label || 'System default';
+          track.stop();
+          setLabel(`Auto-detect (${micName})`);
+        } catch {
+          setLabel('Auto-detect');
+        }
+      } else {
+        const match = audioInputs.find((d) => d.deviceId === id);
+        setLabel(match?.label || 'Unknown device');
+      }
+    } catch {
+      setLabel(id === 'auto' ? 'Auto-detect' : 'Unknown device');
+    }
+  }, [deviceId]);
+
+  useEffect(() => { resolve(); }, [resolve]);
+
+  return label;
+}
+
 // ─── GeneralSettings ──────────────────────────────────────────────────────────
 
 interface GeneralSettingsProps {
@@ -256,8 +292,15 @@ interface GeneralSettingsProps {
 
 export function GeneralSettings({ config, onSetTheme }: GeneralSettingsProps) {
   const currentTheme = config.theme || 'dark';
+  const [micDialogOpen, setMicDialogOpen] = useState(false);
+  const micLabel = useMicLabel(config.microphoneDeviceId);
+
+  const handleMicSelect = (deviceId: string) => {
+    ipc.setMicrophoneDeviceId(deviceId);
+  };
 
   return (
+    <>
     <Well className="mb-7">
       <WellHeader>
         <WellTitle>General</WellTitle>
@@ -295,7 +338,28 @@ export function GeneralSettings({ config, onSetTheme }: GeneralSettingsProps) {
             <HotkeyEditor currentHotkey={config.hotkey} />
           </div>
         </WellItem>
+
+        <WellItem>
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm">Microphone</span>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">{micLabel}</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setMicDialogOpen(true)}>
+              Change
+            </Button>
+          </div>
+        </WellItem>
+
       </WellCard>
     </Well>
+
+    <MicrophoneSelectDialog
+      open={micDialogOpen}
+      onOpenChange={setMicDialogOpen}
+      currentDeviceId={config.microphoneDeviceId || 'auto'}
+      onSelect={handleMicSelect}
+    />
+  </>
   );
 }

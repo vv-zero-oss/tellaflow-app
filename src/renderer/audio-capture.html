@@ -13,16 +13,31 @@ let startingUp = false;
 
 const TARGET_SAMPLE_RATE = 16000;
 
-async function startCapture() {
+async function startCapture(deviceId) {
   if (isCapturing || startingUp) return;
   startingUp = true;
   stopRequested = false;
   pcmChunks = [];
 
+  const audioConstraints = { sampleRate: { ideal: TARGET_SAMPLE_RATE }, channelCount: 1, echoCancellation: true };
+  if (deviceId && deviceId !== 'auto') {
+    audioConstraints.deviceId = { exact: deviceId };
+  }
+
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: { sampleRate: { ideal: TARGET_SAMPLE_RATE }, channelCount: 1, echoCancellation: true }
-    });
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+    } catch (deviceErr) {
+      // Fallback to default device if the specific device is unavailable
+      if (deviceId && deviceId !== 'auto') {
+        console.warn('Selected mic unavailable, falling back to default:', deviceErr.message);
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: { sampleRate: { ideal: TARGET_SAMPLE_RATE }, channelCount: 1, echoCancellation: true }
+        });
+      } else {
+        throw deviceErr;
+      }
+    }
 
     if (stopRequested) {
       mediaStream.getTracks().forEach(t => t.stop());
@@ -112,7 +127,7 @@ function stopCapture() {
   window.tellaflow.sendAudio(Array.from(merged));
 }
 
-window.tellaflow.onStartRecording(() => startCapture());
+window.tellaflow.onStartRecording((data) => startCapture(data?.deviceId));
 window.tellaflow.onStopRecording(() => stopCapture());
 
 window.tellaflow.sendCaptureReady();

@@ -446,7 +446,7 @@ function startHotkeyListener() {
 
 function createAudioCaptureWindow() {
   if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
-    audioCaptureWindow.webContents.send('start-recording');
+    audioCaptureWindow.webContents.send('start-recording', { deviceId: config.getMicrophoneDeviceId() });
     return;
   }
 
@@ -642,6 +642,7 @@ function registerIPC() {
       translationLanguage: config.getTranslationLanguage(),
       transcriptionEngine: config.getTranscriptionEngine(),
       parakeetAvailable: models.isParakeetAvailable(),
+      microphoneDeviceId: config.getMicrophoneDeviceId(),
     };
   });
 
@@ -670,6 +671,11 @@ function registerIPC() {
       transcriptionEngine: engine,
       parakeetAvailable: models.isParakeetAvailable(),
     });
+  });
+
+  ipcMain.on('set-microphone-device-id', (_, deviceId) => {
+    config.setMicrophoneDeviceId(deviceId);
+    sendToMainWindow('config-changed', { microphoneDeviceId: deviceId });
   });
 
   ipcMain.handle('get-parakeet-status', () => models.getParakeetStatus());
@@ -1171,14 +1177,14 @@ function registerIPC() {
     if (pendingStop) {
       console.log('Audio window ready but stop was pending — start+stop immediately.');
       pendingStop = false;
-      audioCaptureWindow.webContents.send('start-recording');
+      audioCaptureWindow.webContents.send('start-recording', { deviceId: config.getMicrophoneDeviceId() });
       setTimeout(() => {
         if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
           audioCaptureWindow.webContents.send('stop-recording');
         }
       }, 150);
     } else {
-      audioCaptureWindow.webContents.send('start-recording');
+      audioCaptureWindow.webContents.send('start-recording', { deviceId: config.getMicrophoneDeviceId() });
     }
   });
 
