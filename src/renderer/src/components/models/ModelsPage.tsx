@@ -13,6 +13,7 @@ import { useModels } from '@/hooks/use-models';
 import { useParakeet } from '@/hooks/use-parakeet';
 import type { AppConfig, TranscriptionEngine } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
+import { Badge } from '../ui/badge';
 
 const TRANSLATION_LANGUAGES = [
   { code: 'af', name: 'Afrikaans', flag: '🇿🇦' },
@@ -257,7 +258,7 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
       <div className="px-7 [-webkit-app-region:no-drag]">
         <div className="flex gap-5 border-b border-border/50 mt-3">
           <Tab label="Transcription" active={activeTab === 'models'} onClick={() => setActiveTab('models')} />
-          <Tab label="AI Grammar" active={activeTab === 'grammar'} onClick={() => setActiveTab('grammar')} badge="Beta" />
+          <Tab label="AI Models" active={activeTab === 'grammar'} onClick={() => setActiveTab('grammar')} badge="🐛 Beta" />
         </div>
       </div>
 
@@ -338,7 +339,7 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
               {/* Translation — disabled when Parakeet is active */}
               <Well className="mt-5">
                 <WellHeader>
-                  <WellTitle>Translation</WellTitle>
+                  <WellTitle>Translation <Badge variant="outline" className="text-[9px] ml-1"> 🐛 Beta</Badge></WellTitle>
                 </WellHeader>
                 <WellCard>
                   <WellItem>

@@ -4,7 +4,7 @@ const fs = require('fs');
 let db = null;
 
 const DEFAULTS = {
-  hotkey: { names: ['LEFT ALT'], label: 'Option' },
+  hotkey: { names: ['LEFT ALT'], label: 'Left Option (⌥)' },
   model: 'small',
   grammarEnabled: false,
   onboardingComplete: false,

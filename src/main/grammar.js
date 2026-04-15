@@ -26,6 +26,26 @@ const GRAMMAR_REGISTRY = {
     description: 'Latest generation, best accuracy. Recommended.',
     url: 'https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/main/Qwen_Qwen3-0.6B-Q4_K_M.gguf',
   },
+  'gemma-3-1b': {
+    name: 'Gemma 3 1B',
+    filename: 'google_gemma-3-1b-it-Q4_K_M.gguf',
+    size: '806 MB',
+    bytes: 806_000_000,
+    quality: 'Good',
+    context: '32K',
+    description: 'Google\'s Gemma 3 1B. Fast and efficient for on-device corrections.',
+    url: 'https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q4_K_M.gguf',
+  },
+  'gemma-3-4b': {
+    name: 'Gemma 3 4B',
+    filename: 'google_gemma-3-4b-it-qat-Q4_K_M.gguf',
+    size: '2.49 GB',
+    bytes: 2_490_000_000,
+    quality: 'Best',
+    context: '128K',
+    description: 'Google\'s Gemma 3 4B with QAT. Outperforms Gemma 2-27B. 128K context.',
+    url: 'https://huggingface.co/bartowski/google_gemma-3-4b-it-qat-GGUF/resolve/main/google_gemma-3-4b-it-qat-Q4_K_M.gguf',
+  },
 };
 
 // ─── Paths ─────────────────────────────────────────────────────────────────────

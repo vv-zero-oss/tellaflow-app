@@ -1,128 +1,260 @@
-import { useState, useEffect } from 'react';
-import { Sun, Moon, Monitor, Pencil, X, Check } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Sun, Moon, Monitor, Pencil, RotateCcw, Check, X, CheckCircle2 } from 'lucide-react';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import { ModifierKeyRow } from '@/components/ui/mac-keyboard';
 import { cn } from '@/lib/utils';
 import { ipc, type AppConfig, type HotkeyConfig, type Theme } from '@/lib/ipc';
+import { Button } from '../ui/button';
 
-interface GeneralSettingsProps {
-  config: AppConfig;
-  onSetTheme: (theme: Theme) => void;
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const DEFAULT_HOTKEY: HotkeyConfig = {
+  names: ['LEFT ALT'],
+  label: 'Left Option (⌥)',
+};
+
+const KEYSPY_TO_BROWSER_CODE: Record<string, string> = {
+  'LEFT ALT':    'AltLeft',
+  'RIGHT ALT':   'AltRight',
+  'LEFT META':   'MetaLeft',
+  'RIGHT META':  'MetaRight',
+  'LEFT CTRL':   'ControlLeft',
+  'RIGHT CTRL':  'ControlRight',
+  'LEFT SHIFT':  'ShiftLeft',
+  'RIGHT SHIFT': 'ShiftRight',
+  'FN':          'Fn',
+  'SPACE':       'Space',
+  'RETURN':      'Enter',
+  'ESCAPE':      'Escape',
+  'BACKSPACE':   'Backspace',
+  'TAB':         'Tab',
+};
+
+function namesToCodes(names: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const n of names) {
+    const code = KEYSPY_TO_BROWSER_CODE[n];
+    if (code) out.add(code);
+    else if (n.length === 1) out.add(`Key${n.toUpperCase()}`);
+  }
+  return out;
 }
 
+// ─── Theme options ────────────────────────────────────────────────────────────
+
 const themeOptions: { value: Theme; label: string; icon: typeof Sun }[] = [
-  { value: 'light', label: 'Light', icon: Sun },
-  { value: 'dark', label: 'Dark', icon: Moon },
+  { value: 'light',  label: 'Light',  icon: Sun },
+  { value: 'dark',   label: 'Dark',   icon: Moon },
   { value: 'system', label: 'System', icon: Monitor },
 ];
 
-function HotkeyEditor({ currentHotkey }: { currentHotkey: HotkeyConfig | undefined }) {
-  const [editing, setEditing] = useState(false);
-  const [pending, setPending] = useState<HotkeyConfig | null>(null);
+// ─── Hotkey dialog ────────────────────────────────────────────────────────────
+
+function HotkeyDialog({
+  open,
+  currentHotkey,
+  onOpenChange,
+  onSave,
+}: {
+  open: boolean;
+  currentHotkey: HotkeyConfig | undefined;
+  onOpenChange: (v: boolean) => void;
+  onSave: (hotkey: HotkeyConfig) => void;
+}) {
   const [listening, setListening] = useState(false);
+  const [captured, setCaptured] = useState<HotkeyConfig | null>(null);
+  const [highlightCodes, setHighlightCodes] = useState<Set<string>>(new Set());
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Start/stop recording session when editing begins/ends
-  useEffect(() => {
-    if (!editing) return;
+  const clearFlash = () => {
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+  };
+
+  const flashCodes = useCallback((codes: Set<string>) => {
+    setHighlightCodes(codes);
+    clearFlash();
+    flashTimer.current = setTimeout(() => setHighlightCodes(new Set()), 1400);
+  }, []);
+
+  // Re-usable: start a fresh recording session AND register a fresh listener
+  const startRecording = useCallback(() => {
     setListening(true);
-    ipc.startHotkeyRecording();
-
+    // Re-register both listeners every time so `once` always has a live callback
     ipc.onHotkeyRecorded((data: HotkeyConfig) => {
-      setPending(data);
+      setCaptured(data);
       setListening(false);
+      flashCodes(namesToCodes(data.names));
     });
     ipc.onHotkeyRecordingCancelled(() => {
       setListening(false);
     });
+    ipc.startHotkeyRecording();
+  }, [flashCodes]);
 
+  // Open → reset everything and start listening immediately
+  useEffect(() => {
+    if (!open) return;
+    setCaptured(null);
+    setHighlightCodes(new Set());
+    startRecording();
     return () => {
+      clearFlash();
       ipc.stopHotkeyRecording();
     };
-  }, [editing]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
-  const save = () => {
-    if (pending) {
-      ipc.setHotkey(pending);
-      ipc.retryHotkey();
-    }
-    setEditing(false);
-    setPending(null);
-    setListening(false);
-  };
-
-  const cancel = () => {
+  const handleReset = () => {
     ipc.stopHotkeyRecording();
-    setEditing(false);
-    setPending(null);
     setListening(false);
+    setCaptured(DEFAULT_HOTKEY);
+    flashCodes(namesToCodes(DEFAULT_HOTKEY.names));
   };
 
-  const startEdit = () => {
-    setPending(null);
-    setEditing(true);
+  const handleChange = () => {
+    setCaptured(null);
+    setHighlightCodes(new Set());
+    startRecording();
   };
 
-  const displayLabel = pending?.label ?? currentHotkey?.label ?? '—';
+  const handleSave = () => {
+    const hotkey = captured ?? currentHotkey ?? DEFAULT_HOTKEY;
+    onSave(hotkey);
+    onOpenChange(false);
+  };
 
-  if (!editing) {
-    return (
+  const handleCancel = () => {
+    ipc.stopHotkeyRecording();
+    onOpenChange(false);
+  };
+
+  const displayLabel = captured?.label ?? currentHotkey?.label ?? DEFAULT_HOTKEY.label;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[420px] max-w-[calc(100vw-32px)] p-5" aria-describedby={undefined}>
+        <DialogHeader>
+          <DialogTitle>Change Hotkey</DialogTitle>
+        </DialogHeader>
+
+        {/* Keyboard + status */}
+        <div className="flex flex-col gap-3 py-1">
+
+          <p className='text-sm text-muted-foreground'>Press a Key for making it a shortcut</p>
+          <ModifierKeyRow externalActiveKeys={highlightCodes} />
+
+          {/* Status strip */}
+          <div className="w-ful flex-col gap-2 flex  justify-center">
+            {listening ? (
+              <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+                </span>
+                Press a Key for making it a shortcut
+              </span>
+            ) : (
+              <div className="flex items-center gap-2.5">
+              Active Key:  <kbd className={cn(
+                  'inline-flex items-center rounded-md border px-3 py-1 text-sm font-mono font-semibold',
+                  captured
+                    ? 'border-blue-500/40 bg-blue-500/10 text-blue-500 dark:text-blue-300'
+                    : 'border-input bg-muted/40 text-foreground',
+                )}>
+                
+                  {displayLabel}
+                  
+                </kbd>
+               
+              </div>
+            )}
+             
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center justify-between pt-1 border-t border-border/40">
+          {/* Left side */}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleReset}
+              title="Reset to Left Option (⌥)"
+              className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Reset
+            </button>
+           
+          </div>
+
+          {/* Right side */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCancel}
+              className="flex items-center gap-1 rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            >
+              <X className="w-3 h-3" />
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              <Check className="w-3 h-3" />
+              Save
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Inline hotkey display ────────────────────────────────────────────────────
+
+function HotkeyEditor({ currentHotkey }: { currentHotkey: HotkeyConfig | undefined }) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  const handleSave = (hotkey: HotkeyConfig) => {
+    ipc.setHotkey(hotkey);
+    ipc.retryHotkey();
+  };
+
+  return (
+    <>
       <div className="flex items-center gap-2">
-        <span className="text-sm text-muted-foreground font-mono">{currentHotkey?.label || '—'}</span>
+        <span className="text-sm text-muted-foreground font-mono">
+          {currentHotkey?.label || DEFAULT_HOTKEY.label}
+        </span>
         <button
-          onClick={startEdit}
+          onClick={() => setDialogOpen(true)}
           className="flex items-center gap-1 text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors rounded px-1.5 py-0.5 hover:bg-muted/50"
         >
           <Pencil className="w-3 h-3" />
           Edit
         </button>
       </div>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      {/* Key capture zone */}
-      <button
-        onClick={() => { if (!listening) { ipc.startHotkeyRecording(); setListening(true); } }}
-        className={cn(
-          'flex items-center justify-center rounded-lg border px-3 py-1 text-sm font-mono min-w-[100px] transition-all',
-          listening
-            ? 'border-primary/50 bg-primary/[0.07] text-primary animate-pulse cursor-default'
-            : 'border-input bg-muted/40 text-foreground hover:bg-muted/60 cursor-pointer',
-        )}
-      >
-        {listening ? (
-          <span className="text-xs">press a key…</span>
-        ) : (
-          <span>{displayLabel}</span>
-        )}
-      </button>
-
-      {/* Save */}
-      <button
-        onClick={save}
-        disabled={!pending}
-        className="p-1.5 rounded-md text-green-500 hover:bg-green-500/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-        title="Save"
-      >
-        <Check className="w-3.5 h-3.5" />
-      </button>
-
-      {/* Cancel */}
-      <button
-        onClick={cancel}
-        className="p-1.5 rounded-md text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/50 transition-colors"
-        title="Cancel"
-      >
-        <X className="w-3.5 h-3.5" />
-      </button>
-    </div>
+      <HotkeyDialog
+        open={dialogOpen}
+        currentHotkey={currentHotkey}
+        onOpenChange={setDialogOpen}
+        onSave={handleSave}
+      />
+    </>
   );
 }
 
-export function GeneralSettings({
-  config,
-  onSetTheme,
-}: GeneralSettingsProps) {
+// ─── GeneralSettings ──────────────────────────────────────────────────────────
+
+interface GeneralSettingsProps {
+  config: AppConfig;
+  onSetTheme: (theme: Theme) => void;
+}
+
+export function GeneralSettings({ config, onSetTheme }: GeneralSettingsProps) {
   const currentTheme = config.theme || 'dark';
 
   return (
@@ -157,13 +289,12 @@ export function GeneralSettings({
         <WellItem>
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-sm">Hotkey</span>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">Hold to record · supports fn, combos</p>
+              <span className="text-sm">Shortcut</span>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">Hold to Transcribe, shortcut to start/stop transcription</p>
             </div>
             <HotkeyEditor currentHotkey={config.hotkey} />
           </div>
         </WellItem>
-
       </WellCard>
     </Well>
   );

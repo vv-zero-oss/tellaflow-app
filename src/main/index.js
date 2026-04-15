@@ -941,10 +941,10 @@ function registerIPC() {
 
       // Build human-readable label
       const LABEL_MAP = {
-        'LEFT CTRL': 'Ctrl', 'RIGHT CTRL': 'Ctrl',
-        'LEFT ALT': 'Option (⌥)', 'RIGHT ALT': 'Option (⌥)',
-        'LEFT SHIFT': 'Shift (⇧)', 'RIGHT SHIFT': 'Shift (⇧)',
-        'LEFT META': 'Cmd (⌘)', 'RIGHT META': 'Cmd (⌘)',
+        'LEFT CTRL': 'Left Control (^)', 'RIGHT CTRL': 'Right Control (^)',
+        'LEFT ALT': 'Left Option (⌥)', 'RIGHT ALT': 'Right Option (⌥)',
+        'LEFT SHIFT': 'Left Shift (⇧)', 'RIGHT SHIFT': 'Right Shift (⇧)',
+        'LEFT META': 'Left Command (⌘)', 'RIGHT META': 'Right Command (⌘)',
         'FN': 'fn',
         'SPACE': 'Space', 'RETURN': 'Return', 'ESCAPE': 'Esc',
         'BACKSPACE': 'Backspace', 'TAB': 'Tab',

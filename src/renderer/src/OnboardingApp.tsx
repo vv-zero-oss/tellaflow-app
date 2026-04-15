@@ -6,7 +6,7 @@ import { ipc, type HotkeyConfig } from '@/lib/ipc';
 
 const defaultHotkey: HotkeyConfig = {
   names: ['LEFT ALT'],
-  label: 'Option',
+  label: 'Left Option (⌥)',
 };
 
 // ─── Coloured keyword chip ────────────────────────────────────────────────────

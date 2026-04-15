@@ -1,7 +1,7 @@
 const { getDb } = require('./db');
 
 const DEFAULTS = {
-  hotkey: { names: ['LEFT ALT'], label: 'Option' },
+  hotkey: { names: ['LEFT ALT'], label: 'Left Option (⌥)' },
   model: 'small',
   programmingMode: false,
   grammarEnabled: false,

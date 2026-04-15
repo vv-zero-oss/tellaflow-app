@@ -160,7 +160,7 @@ function SnippetDialog({
             <label className="text-sm font-medium mb-2 block">Trigger phrase</label>
             <Input
               ref={setTriggerRef}
-              placeholder='e.g. "my email"'
+              placeholder='e.g. "USA"'
               value={form.trigger}
               onChange={(e) => setForm((f) => ({ ...f, trigger: e.target.value }))}
               onKeyDown={(e) => {
@@ -175,7 +175,7 @@ function SnippetDialog({
           <div>
             <label className="text-sm font-medium mb-2 block">Expansion</label>
             <textarea
-              placeholder="e.g. vivek@tws.com"
+              placeholder="e.g. United States of America"
               value={form.content}
               onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
               onKeyDown={(e) => {
