@@ -29,8 +29,17 @@ export default function ToastApp() {
   const [hotkeyLabel, setHotkeyLabel] = useState('');
   const [isHovered, setIsHovered] = useState(false);
   const [variantKey, setVariantKey] = useState('idle');
+  const [isDragging, setIsDragging] = useState(false);
   const audioLevelRef = useRef(0);
   const shouldReduceMotion = useReducedMotion();
+  const dragRef = useRef({
+    active: false,
+    startMouseX: 0,
+    startMouseY: 0,
+    startWinX: 0,
+    startWinY: 0,
+    hasMoved: false,
+  });
 
   useEffect(() => {
     const cleanups = [
@@ -54,10 +63,55 @@ export default function ToastApp() {
   }, []);
 
   const handleClick = useCallback(() => {
+    if (dragRef.current.hasMoved) return;
     if (state === 'floating-idle') {
       ipc.clickStartRecording();
     }
   }, [state]);
+
+  const handlePillMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    dragRef.current = {
+      active: true,
+      startMouseX: e.screenX,
+      startMouseY: e.screenY,
+      startWinX: window.screenX,
+      startWinY: window.screenY,
+      hasMoved: false,
+    };
+    setIsDragging(true);
+    e.preventDefault();
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dragRef.current.active) return;
+      const dx = e.screenX - dragRef.current.startMouseX;
+      const dy = e.screenY - dragRef.current.startMouseY;
+      if (!dragRef.current.hasMoved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        dragRef.current.hasMoved = true;
+      }
+      if (dragRef.current.hasMoved) {
+        ipc.moveToastWindow(
+          dragRef.current.startWinX + dx,
+          dragRef.current.startWinY + dy,
+        );
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (!dragRef.current.active) return;
+      dragRef.current.active = false;
+      setIsDragging(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
 
   const handleCancel = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -144,7 +198,7 @@ export default function ToastApp() {
                 paddingLeft: 12,
                 paddingRight: 12,
                 borderRadius: 999,
-                cursor: isInteractive ? 'pointer' : 'default',
+                cursor: isDragging ? 'grabbing' : isInteractive ? 'grab' : 'default',
                 background: state === 'floating-idle' ? 'rgba(0,0,0,0.60)' : 'rgba(0,0,0,0.92)',
                 border: state === 'floating-idle'
                   ? '1px solid rgba(255,255,255,0.12)'
@@ -153,7 +207,9 @@ export default function ToastApp() {
                 WebkitBackdropFilter: 'blur(20px)',
                 overflow: 'hidden',
                 whiteSpace: 'nowrap',
+                userSelect: 'none',
               } as React.CSSProperties}
+              onMouseDown={handlePillMouseDown}
               onClick={handleClick}
             >
 

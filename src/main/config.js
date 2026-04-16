@@ -107,6 +107,18 @@ function setTranscriptionEngine(engine) { setSetting('transcriptionEngine', engi
 function getMicrophoneDeviceId() { return getSetting('microphoneDeviceId') || 'auto'; }
 function setMicrophoneDeviceId(deviceId) { setSetting('microphoneDeviceId', deviceId); }
 
+function getAgentEnabled() { return getSetting('agentEnabled') || false; }
+function setAgentEnabled(enabled) { setSetting('agentEnabled', enabled); }
+
+function getAgentHotkey() {
+  const raw = getSetting('agentHotkey');
+  return migrateHotkey(raw) || { names: ['RIGHT ALT'], label: 'Right Option (⌥)' };
+}
+function setAgentHotkey(hotkey) { setSetting('agentHotkey', hotkey); }
+
+function getAgentModel() { return getSetting('agentModel') || 'qwen3-1.7b'; }
+function setAgentModel(key) { setSetting('agentModel', key); }
+
 function getDictionary() {
   const rows = getDb().prepare('SELECT id, from_word, to_word FROM dictionary ORDER BY id').all();
   return rows.map(r => ({ id: r.id, from: r.from_word, to: r.to_word }));
@@ -179,6 +191,12 @@ module.exports = {
   setTranscriptionEngine,
   getMicrophoneDeviceId,
   setMicrophoneDeviceId,
+  getAgentEnabled,
+  setAgentEnabled,
+  getAgentHotkey,
+  setAgentHotkey,
+  getAgentModel,
+  setAgentModel,
   getDictionary,
   setDictionary,
   addDictionaryEntry,

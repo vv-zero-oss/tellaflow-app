@@ -7,10 +7,13 @@ let toastReady = false;
 let pendingState = null;
 // Track current state so we can restore to correct idle when needed
 let currentState = 'idle';
+// Remembers position after the user drags the toast (session-only)
+let savedPosition = null;
 
 const INTERACTIVE_STATES = new Set(['floating-idle', 'click-recording']);
 
 function getToastPosition() {
+  if (savedPosition) return savedPosition;
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
   const { x, y, width, height } = display.workArea;
@@ -18,6 +21,13 @@ function getToastPosition() {
     x: Math.round(x + width / 2 - 140),
     y: y + height - 80,
   };
+}
+
+function moveToast(x, y) {
+  savedPosition = { x: Math.round(x), y: Math.round(y) };
+  if (toastWindow && !toastWindow.isDestroyed()) {
+    toastWindow.setPosition(savedPosition.x, savedPosition.y, false);
+  }
 }
 
 function createToastWindow() {
@@ -175,4 +185,4 @@ function getCurrentToastState() {
   return currentState;
 }
 
-module.exports = { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled, getToastWindow, getCurrentToastState };
+module.exports = { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled, getToastWindow, getCurrentToastState, moveToast };

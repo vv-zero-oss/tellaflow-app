@@ -65,6 +65,22 @@ function DashboardIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+function AgentIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" fill="none" {...props}>
+      <rect x="2" y="6" width="14" height="9" rx="2.5" fill="currentColor" fillOpacity="0.3" />
+      <rect x="2" y="6" width="14" height="9" rx="2.5" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="6" cy="10.5" r="1.5" fill="currentColor" />
+      <circle cx="9" cy="10.5" r="1.5" fill="currentColor" />
+      <circle cx="12" cy="10.5" r="1.5" fill="currentColor" />
+      <path d="M9 6V4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <circle cx="9" cy="3" r="1" fill="currentColor" />
+      <path d="M6 6V4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M12 6V4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function SettingsIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" fill="none" {...props}>
@@ -105,6 +121,7 @@ const navItems = [
   { id: 'snippets', label: 'Snippets', icon: SnippetsIcon },
   { id: 'dictionary', label: 'Dictionary', icon: DictionaryIcon },
   { id: 'models', label: 'Models', icon: ModelsIcon },
+  { id: 'agent', label: 'Agent', icon: AgentIcon },
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
 

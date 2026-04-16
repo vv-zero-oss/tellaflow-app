@@ -1,17 +1,17 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { ChevronDown, Check, Search } from 'lucide-react';
+import { ChevronDown, Check, Search, Download, Loader2, Trash2, ChevronRight, CheckCircle2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import { ModelCards } from './ModelCards';
-import { GrammarModelCard } from './GrammarModelCard';
 import { ParakeetModelCard } from './ParakeetModelCard';
 import { useModels } from '@/hooks/use-models';
 import { useParakeet } from '@/hooks/use-parakeet';
-import type { AppConfig, TranscriptionEngine } from '@/lib/ipc';
+import type { AppConfig, TranscriptionEngine, AiModels, AiModelInfo } from '@/lib/ipc';
+import { ipc } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
 import { Badge } from '../ui/badge';
 
@@ -199,6 +199,161 @@ function LanguageCombobox({ value, onChange }: LanguageComboboxProps) {
   );
 }
 
+// ─── Unified AI model row ──────────────────────────────────────────────────────
+
+function AiModelRow({ modelKey, info }: { modelKey: string; info: AiModelInfo }) {
+  const [downloading, setDownloading] = useState(info.status === 'downloading');
+  const [progress, setProgress] = useState<{ downloaded: number; total: number; percent: number } | null>(
+    info.status === 'downloading' || info.status === 'paused'
+      ? { downloaded: info.downloaded, total: info.total, percent: info.total > 0 ? Math.round((info.downloaded / info.total) * 100) : 0 }
+      : null,
+  );
+
+  useEffect(() => {
+    if (info.status === 'downloading') {
+      setDownloading(true);
+      setProgress({ downloaded: info.downloaded, total: info.total, percent: info.total > 0 ? Math.round((info.downloaded / info.total) * 100) : 0 });
+    }
+  }, [info.status, info.downloaded, info.total]);
+
+  useEffect(() => {
+    const offG = ipc.onGrammarModelProgress((p) => {
+      if (p.modelKey === modelKey && info.source === 'grammar') {
+        setDownloading(true);
+        setProgress(p);
+      }
+    });
+    const offA = ipc.onAgentModelProgress((p) => {
+      if (p.modelKey === modelKey && info.source === 'agent') {
+        setDownloading(true);
+        setProgress(p);
+      }
+    });
+    return () => { offG(); offA(); };
+  }, [modelKey, info.source]);
+
+  const handleDownload = () => {
+    setDownloading(true);
+    if (info.source === 'grammar') ipc.startGrammarDownload(modelKey);
+    else ipc.startAgentDownload(modelKey);
+  };
+
+  const handlePause = () => {
+    if (info.source === 'grammar') ipc.pauseGrammarDownload(modelKey);
+    else ipc.pauseAgentDownload(modelKey);
+    setDownloading(false);
+  };
+
+  const handleDelete = () => {
+    if (info.source === 'grammar') ipc.deleteGrammarModel(modelKey);
+    else ipc.deleteAgentModel(modelKey);
+  };
+
+  const fmtBytes = (b: number) => {
+    if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+    if (b >= 1e6) return (b / 1e6).toFixed(0) + ' MB';
+    return (b / 1e3).toFixed(0) + ' KB';
+  };
+
+  return (
+    <WellItem>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold">{info.name}</span>
+            <Badge variant="outline" className="text-[10px] h-4 px-1.5">{info.quality}</Badge>
+            <Badge variant="outline" className="text-[10px] h-4 px-1.5">{info.size}</Badge>
+            <Badge variant="outline" className="text-[10px] h-4 px-1.5">{info.context} ctx</Badge>
+            <Badge
+              variant="outline"
+              className={cn(
+                'text-[10px] h-4 px-1.5',
+                info.source === 'grammar' ? 'border-violet-400/50 text-violet-600 dark:text-violet-400' : 'border-blue-400/50 text-blue-600 dark:text-blue-400',
+              )}
+            >
+              {info.source === 'grammar' ? 'Grammar' : 'Agent'}
+            </Badge>
+            {info.available && (
+              <Badge variant="secondary" className="text-[10px] h-4 px-1.5 gap-1">
+                <CheckCircle2 className="w-2.5 h-2.5" /> Downloaded
+              </Badge>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">{info.description}</p>
+
+          {progress && (
+            <div className="mt-2">
+              <div className="h-1 rounded-full bg-muted overflow-hidden">
+                <div className="h-full bg-primary transition-all duration-300" style={{ width: `${progress.percent}%` }} />
+              </div>
+              <div className="flex justify-between text-[11px] text-muted-foreground mt-1">
+                <span>{fmtBytes(progress.downloaded)} / {fmtBytes(progress.total)}</span>
+                <span>{downloading ? 'Downloading' : 'Paused'} · {progress.percent}%</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-1.5 items-center shrink-0">
+          {info.available ? (
+            <button
+              onClick={handleDelete}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-destructive/70 hover:text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <Trash2 className="w-3 h-3" /> Remove
+            </button>
+          ) : downloading ? (
+            <button
+              onClick={handlePause}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-muted hover:bg-muted/70 text-foreground transition-colors"
+            >
+              <Loader2 className="w-3 h-3 animate-spin" /> Pause
+            </button>
+          ) : info.status === 'paused' ? (
+            <button
+              onClick={handleDownload}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-primary/10 hover:bg-primary/20 text-primary transition-colors"
+            >
+              <ChevronRight className="w-3 h-3" /> Resume
+            </button>
+          ) : (
+            <button
+              onClick={handleDownload}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-primary/10 hover:bg-primary/20 text-primary transition-colors"
+            >
+              <Download className="w-3 h-3" /> Download
+            </button>
+          )}
+        </div>
+      </div>
+    </WellItem>
+  );
+}
+
+// ─── Hook for unified AI models ────────────────────────────────────────────────
+
+function useAllAiModels() {
+  const [models, setModels] = useState<AiModels | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await ipc.getAllAiModelsStatus();
+      setModels(s);
+    } catch (err) {
+      console.error('Failed to get AI models status:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const offG = ipc.onGrammarModelChanged(() => refresh());
+    const offA = ipc.onAgentModelChanged(() => refresh());
+    return () => { offG(); offA(); };
+  }, [refresh]);
+
+  return { models, refresh };
+}
+
 function Tab({ label, active, onClick, badge }: { label: string; active: boolean; onClick: () => void; badge?: string }) {
   return (
     <button
@@ -228,6 +383,7 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
   const [activeTab, setActiveTab] = useState<Tab>('models');
   const { models, startDownload, pauseDownload, cancelDownload, deleteModel } = useModels();
   const parakeet = useParakeet();
+  const { models: aiModels } = useAllAiModels();
 
   const whisperAvailable = Object.entries(models).filter(([, info]) => info.available);
   const engine = config.transcriptionEngine || 'whisper';
@@ -250,7 +406,7 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
       <div className="px-7 pt-12 pb-1 [-webkit-app-region:drag]">
         <h2 className="text-xl font-bold tracking-tight">Models</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Manage transcription and grammar models.
+          Manage transcription and AI models.
         </p>
       </div>
 
@@ -381,23 +537,80 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
             </>
           )}
 
-          {activeTab === 'grammar' && (
-            <>
-              <div className="flex items-start gap-2.5 mb-5 px-3.5 py-3 rounded-lg bg-amber-400/10 border border-amber-400/25">
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wide uppercase bg-amber-400/20 text-amber-600 dark:text-amber-400 border border-amber-400/30 leading-none mt-0.5 shrink-0">
-                  Beta
-                </span>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  AI Grammar correction is in beta. Results may vary — please report any issues or unexpected behaviour so we can keep improving it.
-                </p>
-              </div>
-              <GrammarModelCard
-                grammarEnabled={config.grammarEnabled ?? false}
-                activeGrammarModel={config.grammarModel}
-                onSetGrammarEnabled={setGrammarEnabled}
-              />
-            </>
-          )}
+          {activeTab === 'grammar' && (() => {
+            const grammarDownloaded = aiModels
+              ? Object.entries(aiModels).filter(([, m]) => m.source === 'grammar' && m.available)
+              : [];
+            const activeGrammarKey = config.grammarModel ?? (grammarDownloaded[0]?.[0] ?? '');
+            return (
+              <>
+                {/* Grammar correction settings */}
+                <Well className="mb-5">
+                  <WellHeader>
+                    <WellTitle>Grammar Correction <Badge variant="outline" className="text-[9px] ml-1">Beta</Badge></WellTitle>
+                  </WellHeader>
+                  <WellCard>
+                    <WellItem>
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <span className="text-sm font-medium">Enable AI Grammar correction</span>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Automatically clean up transcriptions after each recording
+                          </p>
+                        </div>
+                        <Switch checked={config.grammarEnabled ?? false} onCheckedChange={setGrammarEnabled} />
+                      </div>
+                    </WellItem>
+                    {grammarDownloaded.length > 0 && (config.grammarEnabled ?? false) && (
+                      <WellItem>
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <span className="text-sm font-medium">Grammar model</span>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Which model to use for correction
+                            </p>
+                          </div>
+                          <Select value={activeGrammarKey} onValueChange={(k) => ipc.setGrammarModel(k)}>
+                            <SelectTrigger className="w-auto min-w-[180px] h-9 text-sm shrink-0">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {grammarDownloaded.map(([key, info]) => (
+                                <SelectItem key={key} value={key}>
+                                  {info.name} ({info.size})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </WellItem>
+                    )}
+                  </WellCard>
+                </Well>
+
+                {/* Single unified model list */}
+                <Well>
+                  <WellHeader>
+                    <WellTitle>AI Models</WellTitle>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      <span className="font-medium text-violet-600 dark:text-violet-400">Grammar</span> models correct transcriptions ·{' '}
+                      <span className="font-medium text-blue-600 dark:text-blue-400">Agent</span> models power voice commands · any downloaded model works for Agent
+                    </p>
+                  </WellHeader>
+                  <WellCard>
+                    {!aiModels && (
+                      <WellItem>
+                        <p className="text-xs text-muted-foreground">Loading…</p>
+                      </WellItem>
+                    )}
+                    {aiModels && Object.entries(aiModels).map(([key, info]) => (
+                      <AiModelRow key={key} modelKey={key} info={info} />
+                    ))}
+                  </WellCard>
+                </Well>
+              </>
+            );
+          })()}
         </div>
       </ScrollArea>
     </div>

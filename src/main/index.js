@@ -27,12 +27,14 @@ const { formatTranscription } = require('./formatter');
 const grammar = require('./grammar');
 const { applyDictionary } = require('./dictionary');
 const snippets = require('./snippets');
-const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState } = require('./toast');
+const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState, moveToast } = require('./toast');
 const { showMainWindow, sendToMainWindow, destroyMainWindow, createMainWindow } = require('./main-window');
 const history = require('./history');
 const { closeDb } = require('./db');
 const sounds = require('./sounds');
 const { runStartupSmokeTest } = require('./startup-smoke-test');
+const agent = require('./agent');
+const wsBridge = require('./ws-bridge');
 
 // Whisper outputs non-speech annotations in several forms — strip them all
 // so they never reach history or clipboard.
@@ -54,6 +56,10 @@ let pendingStop = false;
 let recordingTimeout = null;
 const MAX_RECORDING_MS = 60000;
 let accessibilityInitialState = null; // null = not yet checked
+
+// When true, the next audio-captured event is routed to the agent instead
+// of the standard dictation pipeline. Reset to false on each use.
+let isAgentMode = false;
 
 // App captured at recording-start (before Electron stole focus).
 // Used as a fallback if Electron is still frontmost when paste fires.
@@ -115,6 +121,8 @@ function performCleanup() {
   try { parakeet.free(); } catch (e) { console.error('parakeet.free error:', e); }
   try { hotkey.stop(); } catch (e) { console.error('hotkey.stop error:', e); }
   try { grammar.dispose(); } catch (e) { console.error('grammar.dispose error:', e); }
+  try { agent.dispose(); } catch (e) { console.error('agent.dispose error:', e); }
+  try { wsBridge.stopServer(); } catch (e) { console.error('wsBridge.stopServer error:', e); }
   try { destroyToast(); } catch (e) { console.error('destroyToast error:', e); }
   try { destroyAudioCaptureWindow(); } catch (e) { console.error('destroyAudioCaptureWindow error:', e); }
   try { destroyMainWindow(); } catch (e) { console.error('destroyMainWindow error:', e); }
@@ -172,6 +180,7 @@ app.whenReady().then(async () => {
   }
 
   registerIPC();
+  wsBridge.startServer();
 
   // Ensure recordings directory exists
   const fs = require('fs');
@@ -351,6 +360,7 @@ function startHotkeyListener() {
         // An async query races with window creation — on macOS, creating a new
         // BrowserWindow can briefly activate Electron, corrupting a concurrent
         // osascript query and making it return 'Electron' instead of the user's app.
+        isAgentMode = false;
         clickPasteTargetApp = null;
         try {
           const { execFileSync } = require('child_process');
@@ -401,6 +411,48 @@ function startHotkeyListener() {
             audioCaptureWindow.webContents.send('stop-recording');
           }
         } else {
+          hideToast();
+          broadcastStatus('Ready');
+        }
+      },
+
+      // ── Agent hotkey callbacks ────────────────────────────────────────────
+      onAgentStart: () => {
+        if (!config.getAgentEnabled()) return;
+        isAgentMode = true;
+        clickPasteTargetApp = null;
+
+        pendingStop = false;
+        clearRecordingTimeout();
+        sounds.playStart();
+        broadcastStatus('Agent listening...');
+        showToast('recording');
+        createAudioCaptureWindow();
+
+        recordingTimeout = setTimeout(forceStopRecording, MAX_RECORDING_MS);
+      },
+
+      onAgentStop: ({ cancelled, reason }) => {
+        clearRecordingTimeout();
+        sounds.playStop();
+
+        if (cancelled) {
+          isAgentMode = false;
+          pendingStop = false;
+          destroyAudioCaptureWindow();
+          hideToast();
+          broadcastStatus('Ready');
+          return;
+        }
+
+        if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+          if (audioCaptureWindow.webContents.isLoading()) {
+            pendingStop = true;
+          } else {
+            audioCaptureWindow.webContents.send('stop-recording');
+          }
+        } else {
+          isAgentMode = false;
           hideToast();
           broadcastStatus('Ready');
         }
@@ -643,6 +695,10 @@ function registerIPC() {
       transcriptionEngine: config.getTranscriptionEngine(),
       parakeetAvailable: models.isParakeetAvailable(),
       microphoneDeviceId: config.getMicrophoneDeviceId(),
+      agentEnabled: config.getAgentEnabled(),
+      agentHotkey: config.getAgentHotkey(),
+      agentModel: config.getAgentModel(),
+      agentModelAvailable: agent.isModelAvailable(),
     };
   });
 
@@ -877,6 +933,96 @@ function registerIPC() {
     config.setGrammarTone(tone);
   });
 
+  // ── Agent settings ─────────────────────────────────────────────────────────
+  ipcMain.handle('get-agent-models-status', () => agent.getAgentModelsStatus());
+
+  ipcMain.handle('get-all-ai-models-status', () => {
+    const result = {};
+    for (const [key, info] of Object.entries(grammar.getGrammarModelsStatus()))
+      result[key] = { ...info, source: 'grammar' };
+    for (const [key, info] of Object.entries(agent.getAgentModelsStatus()))
+      result[key] = { ...info, source: 'agent' };
+    return result;
+  });
+
+  ipcMain.handle('get-extension-status', () => ({ connected: wsBridge.isExtensionConnected() }));
+
+  ipcMain.on('set-agent-enabled', (_, enabled) => {
+    config.setAgentEnabled(enabled);
+    sendToMainWindow('config-changed', { agentEnabled: enabled });
+  });
+
+  ipcMain.on('set-agent-hotkey', (_, hotkeyData) => {
+    config.setAgentHotkey(hotkeyData);
+    sendToMainWindow('config-changed', { agentHotkey: hotkeyData });
+  });
+
+  ipcMain.on('set-agent-model', async (_, modelKey) => {
+    config.setAgentModel(modelKey);
+    await agent.restartWorker();
+    sendToMainWindow('agent-model-changed', agent.getAgentModelsStatus());
+  });
+
+  ipcMain.on('start-agent-download', (_, modelKey) => {
+    agent.startAgentDownload(modelKey, {
+      onProgress: (p) => sendToMainWindow('agent-model-progress', p),
+      onComplete: () => sendToMainWindow('agent-model-changed', agent.getAgentModelsStatus()),
+      onError: (err) => {
+        console.error(`Agent model ${modelKey} download failed:`, err.message);
+        sendToMainWindow('agent-model-error', { modelKey, error: err.message });
+        sendToMainWindow('agent-model-changed', agent.getAgentModelsStatus());
+      },
+    });
+    sendToMainWindow('agent-model-changed', agent.getAgentModelsStatus());
+  });
+
+  ipcMain.on('pause-agent-download', (_, modelKey) => {
+    agent.pauseAgentDownload(modelKey);
+    sendToMainWindow('agent-model-changed', agent.getAgentModelsStatus());
+  });
+
+  ipcMain.on('cancel-agent-download', (_, modelKey) => {
+    agent.cancelAgentDownload(modelKey);
+    sendToMainWindow('agent-model-changed', agent.getAgentModelsStatus());
+  });
+
+  ipcMain.on('delete-agent-model', (_, modelKey) => {
+    agent.deleteAgentModel(modelKey);
+    if (config.getAgentModel() === modelKey && !agent.isModelAvailable()) {
+      config.setAgentEnabled(false);
+    }
+    sendToMainWindow('agent-model-changed', agent.getAgentModelsStatus());
+  });
+
+  // Agent memory IPC
+  ipcMain.handle('get-agent-memory', () => {
+    const memory = require('./memory');
+    return memory.getAllFacts();
+  });
+
+  ipcMain.on('delete-agent-memory-entry', (_, key) => {
+    const memory = require('./memory');
+    memory.deleteFact(key);
+    sendToMainWindow('agent-memory-changed', memory.getAllFacts());
+  });
+
+  ipcMain.on('clear-agent-memory', () => {
+    const memory = require('./memory');
+    memory.clearAllFacts();
+    sendToMainWindow('agent-memory-changed', []);
+  });
+
+  ipcMain.handle('get-agent-history', () => {
+    const memory = require('./memory');
+    return memory.getRecentHistory(50);
+  });
+
+  ipcMain.on('clear-agent-history', () => {
+    const memory = require('./memory');
+    memory.clearHistory();
+    sendToMainWindow('agent-history-changed', []);
+  });
+
   // Permission grant actions
   ipcMain.handle('grant-mic', async () => {
     const granted = await permissions.requestMicrophone();
@@ -1093,6 +1239,10 @@ function registerIPC() {
     suppressNextActivation();
   });
 
+  ipcMain.on('move-toast-window', (_, { x, y }) => {
+    moveToast(x, y);
+  });
+
   // ── Floating bar click-to-dictate ─────────────────────────────────────────
   ipcMain.on('click-start-recording', () => {
     // clickPasteTargetApp is set by record-frontmost-app (fired on hover, before
@@ -1192,6 +1342,64 @@ function registerIPC() {
   const MAX_AUDIO_SAMPLES = 16000 * 120; // 120 seconds at 16kHz
   ipcMain.on('audio-captured', async (_, pcmArray) => {
     destroyAudioCaptureWindow();
+
+    // ── Agent mode fork ────────────────────────────────────────────────────────
+    // If this recording was triggered by the agent hotkey, route entirely to the
+    // agent pipeline. NEVER falls through to grammar / snippets / clipboard / paste.
+    if (isAgentMode) {
+      isAgentMode = false;
+      hideToast();
+
+      if (!pcmArray || pcmArray.length === 0) {
+        broadcastStatus('Ready');
+        return;
+      }
+
+      broadcastStatus('Transcribing...');
+      let rawText;
+      try {
+        let pcm = new Float32Array(pcmArray);
+        pcm = trimSilence(pcm);
+        pcm = normalizeVolume(pcm);
+        if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
+          rawText = await parakeet.transcribe(pcm);
+        } else {
+          rawText = await whisper.transcribe(pcm);
+          rawText = stripWhisperArtifacts(rawText);
+        }
+      } catch (err) {
+        console.error('[agent] Transcription failed:', err);
+        broadcastStatus('Ready');
+        new Notification({ title: 'Agent Error', body: `Transcription failed: ${err.message}` }).show();
+        return;
+      }
+
+      if (!rawText || !rawText.trim()) {
+        broadcastStatus('Ready');
+        return;
+      }
+
+      console.log('[agent] Command:', rawText);
+      broadcastStatus('Agent thinking...');
+      sendToMainWindow('agent-status', { status: 'running', command: rawText });
+
+      try {
+        const reply = await agent.runAgent(rawText);
+        console.log('[agent] Reply:', reply);
+        broadcastStatus('Ready');
+        sendToMainWindow('agent-status', { status: 'done', command: rawText, reply });
+        if (reply) {
+          new Notification({ title: 'Agent', body: reply.length > 120 ? reply.slice(0, 120) + '...' : reply, silent: true }).show();
+        }
+      } catch (err) {
+        console.error('[agent] Execution failed:', err);
+        broadcastStatus('Ready');
+        sendToMainWindow('agent-status', { status: 'error', command: rawText, error: err.message });
+        new Notification({ title: 'Agent Error', body: err.message }).show();
+      }
+      return;
+    }
+    // ── End agent mode fork ────────────────────────────────────────────────────
 
     if (!pcmArray || pcmArray.length === 0) {
       console.log('Empty audio received — skipping transcription.');

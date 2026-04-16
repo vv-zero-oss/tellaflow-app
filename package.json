@@ -6,6 +6,13 @@
   "scripts": {
     "dev:renderer": "vite --config vite.config.ts",
     "dev": "concurrently \"npm run dev:renderer\" \"sleep 2 && electron .\"",
+    "test:agent": "node scripts/test-agent.js",
+    "test:agent:real": "node scripts/test-agent.js --real",
+    "diagnose": "node scripts/diagnose-agent.js --no-llm",
+    "diagnose:full": "node scripts/diagnose-agent.js",
+    "test:platforms": "node scripts/test-platforms.js",
+    "test:platforms:fast": "node scripts/test-platforms.js --no-llm",
+    "test:extension": "node scripts/test-extension.js",
     "build:renderer": "vite build --config vite.config.ts",
     "build": "npm run build:renderer && electron-builder --mac --publish never",
     "start": "electron .",
@@ -42,6 +49,7 @@
   },
   "dependencies": {
     "@kutalia/whisper-node-addon": "^1.1.0",
+    "@playwright/mcp": "^0.0.70",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-progress": "^1.1.8",
@@ -64,6 +72,7 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "sherpa-onnx-node": "^1.12.35",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "ws": "^8.20.0"
   }
 }

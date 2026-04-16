@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('tellaflow', {
   clickFinishRecording: () => ipcRenderer.send('click-finish-recording'),
   recordFrontmostApp: () => ipcRenderer.send('record-frontmost-app'),
   suppressToastActivation: () => ipcRenderer.send('suppress-toast-activation'),
+  moveToastWindow: (x, y) => ipcRenderer.send('move-toast-window', { x, y }),
 
   // Onboarding IPC
   setHotkey: (hotkey) => ipcRenderer.send('set-hotkey', hotkey),
@@ -128,6 +129,39 @@ contextBridge.exposeInMainWorld('tellaflow', {
   onGrammarModelProgress: (cb) => { const h = (_, p) => cb(p); ipcRenderer.on('grammar-model-progress', h); return () => ipcRenderer.removeListener('grammar-model-progress', h); },
   onGrammarModelChanged: (cb) => { const h = (_, s) => cb(s); ipcRenderer.on('grammar-model-changed', h); return () => ipcRenderer.removeListener('grammar-model-changed', h); },
   onGrammarModelError: (cb) => { const h = (_, e) => cb(e); ipcRenderer.on('grammar-model-error', h); return () => ipcRenderer.removeListener('grammar-model-error', h); },
+
+  // Unified AI model status (grammar + agent registries merged)
+  getAllAiModelsStatus: () => ipcRenderer.invoke('get-all-ai-models-status'),
+
+  // Agent settings
+  getAgentModelsStatus: () => ipcRenderer.invoke('get-agent-models-status'),
+  setAgentEnabled: (enabled) => ipcRenderer.send('set-agent-enabled', enabled),
+  setAgentHotkey: (hotkey) => ipcRenderer.send('set-agent-hotkey', hotkey),
+  setAgentModel: (modelKey) => ipcRenderer.send('set-agent-model', modelKey),
+  startAgentDownload: (modelKey) => ipcRenderer.send('start-agent-download', modelKey),
+  pauseAgentDownload: (modelKey) => ipcRenderer.send('pause-agent-download', modelKey),
+  cancelAgentDownload: (modelKey) => ipcRenderer.send('cancel-agent-download', modelKey),
+  deleteAgentModel: (modelKey) => ipcRenderer.send('delete-agent-model', modelKey),
+  onAgentModelProgress: (cb) => { const h = (_, p) => cb(p); ipcRenderer.on('agent-model-progress', h); return () => ipcRenderer.removeListener('agent-model-progress', h); },
+  onAgentModelChanged: (cb) => { const h = (_, s) => cb(s); ipcRenderer.on('agent-model-changed', h); return () => ipcRenderer.removeListener('agent-model-changed', h); },
+  onAgentModelError: (cb) => { const h = (_, e) => cb(e); ipcRenderer.on('agent-model-error', h); return () => ipcRenderer.removeListener('agent-model-error', h); },
+
+  // Agent memory
+  getAgentMemory: () => ipcRenderer.invoke('get-agent-memory'),
+  deleteAgentMemoryEntry: (key) => ipcRenderer.send('delete-agent-memory-entry', key),
+  clearAgentMemory: () => ipcRenderer.send('clear-agent-memory'),
+  onAgentMemoryChanged: (cb) => { const h = (_, m) => cb(m); ipcRenderer.on('agent-memory-changed', h); return () => ipcRenderer.removeListener('agent-memory-changed', h); },
+
+  // Agent history
+  getAgentHistory: () => ipcRenderer.invoke('get-agent-history'),
+  clearAgentHistory: () => ipcRenderer.send('clear-agent-history'),
+  onAgentHistoryChanged: (cb) => { const h = (_, h2) => cb(h2); ipcRenderer.on('agent-history-changed', h); return () => ipcRenderer.removeListener('agent-history-changed', h); },
+
+  // Agent live status
+  onAgentStatus: (cb) => { const h = (_, s) => cb(s); ipcRenderer.on('agent-status', h); return () => ipcRenderer.removeListener('agent-status', h); },
+
+  // Browser extension status
+  getExtensionStatus: () => ipcRenderer.invoke('get-extension-status'),
 
   // Bulk data reset
   clearSnippets: () => ipcRenderer.invoke('clear-snippets'),

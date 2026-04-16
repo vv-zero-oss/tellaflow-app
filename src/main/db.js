@@ -47,10 +47,26 @@ function getDb() {
   try {
     db.exec(`ALTER TABLE history ADD COLUMN audio_path TEXT`);
   } catch (err) {
-    // SQLite throws "duplicate column name" when the column already exists —
-    // that's expected after the first run. Re-throw anything else.
     if (!err.message?.includes('duplicate column name')) throw err;
   }
+
+  // Agent memory tables
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_memory (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      key        TEXT NOT NULL UNIQUE,
+      value      TEXT NOT NULL,
+      category   TEXT NOT NULL DEFAULT 'fact',
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE TABLE IF NOT EXISTS agent_history (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      transcript TEXT NOT NULL,
+      actions    TEXT NOT NULL DEFAULT '[]',
+      success    INTEGER NOT NULL DEFAULT 1,
+      timestamp  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+  `);
 
   migrateFromJson(app.getPath('userData'));
   seedDefaults();

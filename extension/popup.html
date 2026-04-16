@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #111;
+      color: #eee;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .logo {
+      width: 28px; height: 28px;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+    }
+    h1 { font-size: 14px; font-weight: 600; }
+    .subtitle { font-size: 11px; color: #666; }
+
+    .status-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 12px;
+      background: #1a1a1a; border-radius: 8px;
+      margin-bottom: 12px;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #ef4444; flex-shrink: 0;
+    }
+    .dot.connected { background: #22c55e; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+    .status-text { font-size: 12px; }
+
+    .section-title {
+      font-size: 10px; text-transform: uppercase;
+      letter-spacing: .05em; color: #555;
+      margin: 10px 0 6px;
+    }
+
+    /* Site recipes panel */
+    .site-panel {
+      background: #1a1a1a; border-radius: 8px; padding: 10px 12px;
+      margin-bottom: 10px; display: none;
+    }
+    .site-panel.visible { display: block; }
+    .site-name { font-size: 12px; font-weight: 600; color: #a78bfa; margin-bottom: 6px; }
+    .recipe-list { display: flex; flex-direction: column; gap: 3px; }
+    .recipe-item {
+      font-size: 11px; color: #aaa; font-family: monospace;
+      padding: 3px 6px; background: #222; border-radius: 4px;
+    }
+    .recipe-item .name { color: #6ee7b7; }
+
+    .commands { display: flex; flex-direction: column; gap: 4px; }
+    .cmd {
+      font-size: 11px; padding: 6px 10px;
+      background: #1a1a1a; border-radius: 6px;
+      color: #aaa; font-family: monospace;
+    }
+    .cmd span { color: #818cf8; }
+
+    .footer { margin-top: 14px; font-size: 10px; color: #444; text-align: center; }
+    .badge {
+      display: inline-block; padding: 1px 6px; border-radius: 4px;
+      font-size: 10px; font-weight: 600; margin-left: 4px;
+    }
+    .badge-green { background: #14532d; color: #4ade80; }
+    .badge-gray  { background: #1f2937; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">✦</div>
+    <div>
+      <h1>Tellaflow Bridge <span id="version-badge" class="badge badge-gray">v2</span></h1>
+      <div class="subtitle">Playwright-powered AI Agent</div>
+    </div>
+  </div>
+
+  <div class="status-row">
+    <div class="dot" id="dot"></div>
+    <span class="status-text" id="status">Connecting to Tellaflow…</span>
+  </div>
+
+  <!-- Site-specific recipes panel (shown when on a known site) -->
+  <div class="site-panel" id="site-panel">
+    <div class="site-name" id="site-name">Gmail</div>
+    <div class="section-title">Available actions on this page</div>
+    <div class="recipe-list" id="recipe-list"></div>
+  </div>
+
+  <div class="section-title">Example voice commands</div>
+  <div class="commands" id="example-cmds">
+    <div class="cmd">"<span>Go to gmail.com</span> and write email to boss"</div>
+    <div class="cmd">"<span>Play</span> Bohemian Rhapsody <span>on YouTube</span>"</div>
+    <div class="cmd">"<span>Like</span> this YouTube video"</div>
+    <div class="cmd">"<span>Tweet:</span> Hello world"</div>
+    <div class="cmd">"<span>Play next</span> song on Spotify"</div>
+  </div>
+
+  <div class="footer" id="footer">ws://localhost:9009 · Tellaflow Bridge v2</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

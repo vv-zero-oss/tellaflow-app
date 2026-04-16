@@ -26,6 +26,50 @@ export interface AppConfig {
   transcriptionEngine?: TranscriptionEngine;
   parakeetAvailable?: boolean;
   microphoneDeviceId?: string;
+  agentEnabled?: boolean;
+  agentHotkey?: HotkeyConfig;
+  agentModel?: string;
+  agentModelAvailable?: boolean;
+}
+
+export interface AgentModelInfo {
+  name: string;
+  filename: string;
+  size: string;
+  bytes: number;
+  quality: string;
+  context: string;
+  description: string;
+  url: string;
+  available: boolean;
+  status: 'downloaded' | 'not_downloaded' | 'downloading' | 'paused';
+  downloaded: number;
+  total: number;
+}
+
+export type AgentModels = Record<string, AgentModelInfo>;
+
+export interface AgentMemoryEntry {
+  id: number;
+  key: string;
+  value: string;
+  category: string;
+  updated_at: number;
+}
+
+export interface AgentHistoryEntry {
+  id: number;
+  transcript: string;
+  actions: string;
+  success: number;
+  timestamp: number;
+}
+
+export interface AgentStatus {
+  status: 'running' | 'done' | 'error';
+  command: string;
+  reply?: string;
+  error?: string;
 }
 
 export interface ParakeetModelInfo {
@@ -99,6 +143,13 @@ export type GrammarModels = Record<string, GrammarModelInfo>;
 /** @deprecated use GrammarModels */
 export type GrammarModelStatus = GrammarModelInfo;
 
+export interface AiModelInfo extends GrammarModelInfo {
+  /** Which registry this model belongs to */
+  source: 'grammar' | 'agent';
+}
+
+export type AiModels = Record<string, AiModelInfo>;
+
 interface TellaflowAPI {
   onStartRecording: (cb: (data?: { deviceId?: string }) => void) => void;
   onStopRecording: (cb: () => void) => void;
@@ -115,6 +166,7 @@ interface TellaflowAPI {
   clickFinishRecording: () => void;
   recordFrontmostApp: () => void;
   suppressToastActivation: () => void;
+  moveToastWindow: (x: number, y: number) => void;
 
   setHotkey: (hotkey: HotkeyConfig) => void;
   startHotkeyRecording: () => void;
@@ -199,6 +251,7 @@ interface TellaflowAPI {
   pasteText: (text: string) => void;
   onHistoryUpdate: (cb: (entries: HistoryEntry[]) => void) => () => void;
 
+  getAllAiModelsStatus: () => Promise<AiModels>;
   getGrammarModelsStatus: () => Promise<GrammarModels>;
   startGrammarDownload: (modelKey: string) => void;
   pauseGrammarDownload: (modelKey: string) => void;
@@ -214,6 +267,27 @@ interface TellaflowAPI {
   clearSnippets: () => Promise<SnippetEntry[]>;
   clearDictionary: () => Promise<DictionaryEntry[]>;
   resetPermissions: () => Promise<boolean>;
+
+  // Agent
+  getAgentModelsStatus: () => Promise<AgentModels>;
+  setAgentEnabled: (enabled: boolean) => void;
+  setAgentHotkey: (hotkey: HotkeyConfig) => void;
+  setAgentModel: (modelKey: string) => void;
+  startAgentDownload: (modelKey: string) => void;
+  pauseAgentDownload: (modelKey: string) => void;
+  cancelAgentDownload: (modelKey: string) => void;
+  deleteAgentModel: (modelKey: string) => void;
+  onAgentModelProgress: (cb: (p: { modelKey: string; downloaded: number; total: number; percent: number }) => void) => () => void;
+  onAgentModelChanged: (cb: (s: AgentModels) => void) => () => void;
+  onAgentModelError: (cb: (e: { modelKey: string; error: string }) => void) => () => void;
+  getAgentMemory: () => Promise<AgentMemoryEntry[]>;
+  deleteAgentMemoryEntry: (key: string) => void;
+  clearAgentMemory: () => void;
+  onAgentMemoryChanged: (cb: (m: AgentMemoryEntry[]) => void) => () => void;
+  getAgentHistory: () => Promise<AgentHistoryEntry[]>;
+  clearAgentHistory: () => void;
+  onAgentHistoryChanged: (cb: (h: AgentHistoryEntry[]) => void) => () => void;
+  onAgentStatus: (cb: (s: AgentStatus) => void) => () => void;
 
   onStatusChange: (cb: (status: string) => void) => () => void;
   onShowRestartBanner: (cb: () => void) => () => void;
