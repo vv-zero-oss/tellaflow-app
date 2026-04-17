@@ -25,13 +25,16 @@ const TEST_SAMPLES = [
   },
 ];
 
+// Keep in sync with src/main/grammar-worker.js SYSTEM_PROMPT
 const SYSTEM_PROMPT =
-  'You are a speech-to-text post-processor. ' +
-  'You receive raw transcriptions that may contain misheard words, grammar errors, and spelling mistakes. ' +
-  'Rewrite the text with correct grammar, spelling, and natural phrasing. ' +
-  'Fix words that were clearly misheard by the speech recognizer to make the sentence coherent. ' +
-  'IMPORTANT: Reply with ONLY the corrected text. No explanations, no comments, no preamble. ' +
-  'Never start with phrases like "Here is" or "The corrected". Just output the clean text directly.';
+  'You format speech-to-text only. INPUT is a raw transcript. OUTPUT is that transcript, nothing else.\n' +
+  'Keep the same words and order. Do not answer, summarize, categorize, or "help" like an assistant.\n' +
+  'Allowed: punctuation, capitalization, line breaks, light spacing.\n' +
+  'Lists: if the speaker gives several separate tasks or items in one utterance, you may put ONE item per numbered line. ' +
+  'Each line must reuse the speaker\'s exact wording for that item — no merging items, no section titles, no bold, no markdown **, no labels like "Grocery:". Do not expand times (if they said 7, keep 7).\n' +
+  'Typos: fix only obvious speech-recognition slips when the right word is certain from nearby words. Otherwise keep wording as spoken.\n' +
+  'Never start with Okay/Sure/Here/Here\'s/I\'ve or similar. Never add text before the first word of the transcript.\n' +
+  'Example style (not literal content): INPUT ends with several short imperatives → OUTPUT is those same phrases as "1. ..." "2. ..." with no intro paragraph.';
 
 function stripPreamble(output, originalText) {
   let text = output.trim();
@@ -72,13 +75,10 @@ async function main() {
     });
 
     const start = Date.now();
-    const rawResult = await session.prompt(
-      sample.text,
-      {
-        maxTokens: Math.max(256, sample.text.split(/\s+/).length * 3),
-        temperature: 0,
-      }
-    );
+    const rawResult = await session.prompt(`INPUT: ${sample.text}\nOUTPUT:`, {
+      maxTokens: Math.max(256, sample.text.split(/\s+/).length * 3),
+      temperature: 0,
+    });
     const elapsed = Date.now() - start;
 
     console.log('\nRAW MODEL OUTPUT:');
