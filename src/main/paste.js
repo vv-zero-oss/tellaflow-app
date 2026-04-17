@@ -1,5 +1,5 @@
 const { clipboard } = require('electron');
-const { execFile } = require('child_process');
+const platform = require('./platform');
 
 const RESTORE_DELAY_MS = 600;
 
@@ -29,26 +29,10 @@ function pasteText(text, targetApp = null) {
 
   clipboard.writeText(text);
 
-  // EC3 — sanitize app name: strip characters that would break the osascript
-  // string literal (quotes, newlines). Names come from System Events so this
-  // is a safety measure rather than a user-input concern.
-  const safeTarget = targetApp ? targetApp.replace(/[\\"'\n\r]/g, '') : null;
-
-  const pasteScript = 'tell application "System Events" to keystroke "v" using command down';
-
-  // EC4 — if no target is known, paste without activation (best-effort).
-  // This avoids sending Cmd+V into a random Electron window.
-  const script = safeTarget
-    ? `tell application "${safeTarget}" to activate\ndelay 0.15\n${pasteScript}`
-    : pasteScript;
-
-  if (!safeTarget) {
+  if (!targetApp) {
     console.warn('pasteText: no target app known — pasting into current frontmost window.');
   }
-
-  execFile('osascript', ['-e', script], (err) => {
-    if (err) console.error('Failed to simulate paste:', err.message);
-  });
+  platform.pasteViaSystem(targetApp);
 
   _restoreTimer = setTimeout(() => {
     if (_originalClipboard !== null) clipboard.writeText(_originalClipboard);

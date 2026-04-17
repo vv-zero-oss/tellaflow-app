@@ -5,6 +5,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { ModifierKeyRow } from '@/components/ui/mac-keyboard';
+import { WindowsModifierKeyRow } from '@/components/ui/windows-keyboard';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ipc, type AppConfig, type HotkeyConfig, type Theme } from '@/lib/ipc';
@@ -12,10 +13,12 @@ import { MicrophoneSelectDialog } from './MicrophoneSelectDialog';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const DEFAULT_HOTKEY: HotkeyConfig = {
-  names: ['LEFT ALT'],
-  label: 'Left Option (⌥)',
-};
+function getDefaultHotkey(platformName: string): HotkeyConfig {
+  if (platformName === 'windows') {
+    return { names: ['LEFT CTRL', 'LEFT ALT'], label: 'Left Control (^) + Left Alt' };
+  }
+  return { names: ['LEFT ALT'], label: 'Left Option (⌥)' };
+}
 
 const KEYSPY_TO_BROWSER_CODE: Record<string, string> = {
   'LEFT ALT':    'AltLeft',
@@ -59,16 +62,21 @@ function HotkeyDialog({
   currentHotkey,
   onOpenChange,
   onSave,
+  platformName,
 }: {
   open: boolean;
   currentHotkey: HotkeyConfig | undefined;
   onOpenChange: (v: boolean) => void;
   onSave: (hotkey: HotkeyConfig) => void;
+  platformName: string;
 }) {
+  const defaultHotkey = getDefaultHotkey(platformName);
+
   const [listening, setListening] = useState(false);
   const [captured, setCaptured] = useState<HotkeyConfig | null>(null);
   const [highlightCodes, setHighlightCodes] = useState<Set<string>>(new Set());
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const windowsNeedsCombo = platformName === 'windows' && !!captured && captured.names.length < 2;
 
   const clearFlash = () => {
     if (flashTimer.current) clearTimeout(flashTimer.current);
@@ -111,8 +119,8 @@ function HotkeyDialog({
   const handleReset = () => {
     ipc.stopHotkeyRecording();
     setListening(false);
-    setCaptured(DEFAULT_HOTKEY);
-    flashCodes(namesToCodes(DEFAULT_HOTKEY.names));
+    setCaptured(defaultHotkey);
+    flashCodes(namesToCodes(defaultHotkey.names));
   };
 
   const handleChange = () => {
@@ -122,7 +130,8 @@ function HotkeyDialog({
   };
 
   const handleSave = () => {
-    const hotkey = captured ?? currentHotkey ?? DEFAULT_HOTKEY;
+    const hotkey = captured ?? currentHotkey ?? defaultHotkey;
+    if (platformName === 'windows' && hotkey.names.length < 2) return;
     onSave(hotkey);
     onOpenChange(false);
   };
@@ -132,7 +141,7 @@ function HotkeyDialog({
     onOpenChange(false);
   };
 
-  const displayLabel = captured?.label ?? currentHotkey?.label ?? DEFAULT_HOTKEY.label;
+  const displayLabel = captured?.label ?? currentHotkey?.label ?? defaultHotkey.label;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -145,7 +154,9 @@ function HotkeyDialog({
         <div className="flex flex-col gap-3 py-1">
 
           <p className='text-sm text-muted-foreground'>Press a Key for making it a shortcut</p>
-          <ModifierKeyRow externalActiveKeys={highlightCodes} />
+          {platformName === 'windows'
+            ? <WindowsModifierKeyRow externalActiveKeys={highlightCodes} />
+            : <ModifierKeyRow externalActiveKeys={highlightCodes} />}
 
           {/* Status strip */}
           <div className="w-ful flex-col gap-2 flex  justify-center">
@@ -172,6 +183,11 @@ function HotkeyDialog({
                
               </div>
             )}
+            {windowsNeedsCombo && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Windows hotkeys must be a combination (for example Ctrl + Alt).
+              </p>
+            )}
              
           </div>
         </div>
@@ -182,7 +198,7 @@ function HotkeyDialog({
           <div className="flex items-center gap-1">
             <button
               onClick={handleReset}
-              title="Reset to Left Option (⌥)"
+              title="Reset to Left Alt"
               className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
             >
               <RotateCcw className="w-3 h-3" />
@@ -202,6 +218,7 @@ function HotkeyDialog({
             </button>
             <button
               onClick={handleSave}
+              disabled={windowsNeedsCombo}
               className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
             >
               <Check className="w-3 h-3" />
@@ -216,7 +233,13 @@ function HotkeyDialog({
 
 // ─── Inline hotkey display ────────────────────────────────────────────────────
 
-function HotkeyEditor({ currentHotkey }: { currentHotkey: HotkeyConfig | undefined }) {
+function HotkeyEditor({
+  currentHotkey,
+  platformName,
+}: {
+  currentHotkey: HotkeyConfig | undefined;
+  platformName: string;
+}) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const handleSave = (hotkey: HotkeyConfig) => {
@@ -228,7 +251,7 @@ function HotkeyEditor({ currentHotkey }: { currentHotkey: HotkeyConfig | undefin
     <>
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground font-mono">
-          {currentHotkey?.label || DEFAULT_HOTKEY.label}
+          {currentHotkey?.label || getDefaultHotkey(platformName).label}
         </span>
         <button
           onClick={() => setDialogOpen(true)}
@@ -243,6 +266,7 @@ function HotkeyEditor({ currentHotkey }: { currentHotkey: HotkeyConfig | undefin
         currentHotkey={currentHotkey}
         onOpenChange={setDialogOpen}
         onSave={handleSave}
+        platformName={platformName}
       />
     </>
   );
@@ -293,7 +317,13 @@ interface GeneralSettingsProps {
 export function GeneralSettings({ config, onSetTheme }: GeneralSettingsProps) {
   const currentTheme = config.theme || 'dark';
   const [micDialogOpen, setMicDialogOpen] = useState(false);
+  const [platformName, setPlatformName] = useState('macos');
   const micLabel = useMicLabel(config.microphoneDeviceId);
+
+  useEffect(() => {
+    if (!ipc?.getPlatform) return;
+    ipc.getPlatform().then((name) => setPlatformName(name || 'macos')).catch(() => {});
+  }, []);
 
   const handleMicSelect = (deviceId: string) => {
     ipc.setMicrophoneDeviceId(deviceId);
@@ -335,7 +365,7 @@ export function GeneralSettings({ config, onSetTheme }: GeneralSettingsProps) {
               <span className="text-sm">Shortcut</span>
               <p className="text-xs text-muted-foreground/60 mt-0.5">Hold to Transcribe, shortcut to start/stop transcription</p>
             </div>
-            <HotkeyEditor currentHotkey={config.hotkey} />
+            <HotkeyEditor currentHotkey={config.hotkey} platformName={platformName} />
           </div>
         </WellItem>
 

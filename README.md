@@ -1,6 +1,6 @@
 # Tellaflow
 
-Offline speech-to-text for macOS. Hold a hotkey, speak, release — your words appear wherever your cursor is. Powered by [OpenAI Whisper](https://github.com/openai/whisper) running locally via [whisper.cpp](https://github.com/ggerganov/whisper.cpp).
+Offline speech-to-text for desktop. Hold a hotkey, speak, release — your words appear wherever your cursor is. Powered by [OpenAI Whisper](https://github.com/openai/whisper) running locally via [whisper.cpp](https://github.com/ggerganov/whisper.cpp).
 
 ## Features
 
@@ -17,7 +17,7 @@ Offline speech-to-text for macOS. Hold a hotkey, speak, release — your words a
 
 ## Requirements
 
-- macOS 12+ (Apple Silicon recommended for Metal GPU acceleration)
+- macOS 12+ or Windows 10+
 - Node.js 18+ and npm (for development)
 - Xcode Command Line Tools (`xcode-select --install`)
 
@@ -99,7 +99,7 @@ src/
 │   ├── models.js          # Model download manager with pause/resume
 │   ├── formatter.js       # Rule-based text formatting (lists, punctuation, fillers)
 │   ├── audio-preprocess.js# Volume normalization + silence trimming
-│   ├── permissions.js     # macOS permission checks
+│   ├── permissions.js     # Permission checks and settings deep-links
 │   ├── paste.js           # Clipboard write + Cmd+V via osascript
 │   ├── main-window.js     # Main BrowserWindow
 │   ├── onboarding.js      # Onboarding BrowserWindow
@@ -148,7 +148,11 @@ src/
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Start Vite dev server + Electron |
-| `npm run build` | Build renderer + package macOS `.app` |
+| `npm run build` | Build renderer + package for current platform |
+| `npm run build:mac` | Build renderer + package macOS `.app` |
+| `npm run build:win` | Build renderer + package Windows installer (`nsis`, x64) |
+| `npm run smoke:win` | Validate Windows build artifacts + key defaults |
+| `npm run build:win:qa` | Build Windows installer and print smoke checklist path |
 | `npm run build:renderer` | Build only the Vite renderer |
 | `npm start` | Launch Electron directly (no dev server) |
 | `npm run dev:sign` | Re-sign `Electron.app` and `MacKeyServer` for dev-mode Accessibility (runs automatically on `npm install`) |
@@ -164,6 +168,10 @@ npm run build
 This builds the renderer with Vite, then packages the app with electron-builder. The output is in `dist/`. The bundled `small` Whisper model (~465 MB) is included as an extra resource.
 
 Native addons (`whisper-node-addon`, `uiohook-napi`, `better-sqlite3`, `node-llama-cpp`) are unpacked from the asar archive so they can load at runtime.
+
+### Windows QA pass
+
+After creating a Windows build, run the smoke checklist in `docs/windows-installer-smoke-checklist.md`.
 
 ## Architecture Notes
 

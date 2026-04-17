@@ -1,7 +1,10 @@
 const { getDb } = require('./db');
+const isWindows = process.platform === 'win32';
 
 const DEFAULTS = {
-  hotkey: { names: ['LEFT ALT'], label: 'Left Option (⌥)' },
+  hotkey: isWindows
+    ? { names: ['LEFT CTRL', 'LEFT ALT'], label: 'Left Control (^) + Left Alt' }
+    : { names: ['LEFT ALT'], label: 'Left Option (⌥)' },
   model: 'small',
   programmingMode: false,
   grammarEnabled: false,

@@ -2,9 +2,12 @@ const path = require('path');
 const fs = require('fs');
 
 let db = null;
+const isWindows = process.platform === 'win32';
 
 const DEFAULTS = {
-  hotkey: { names: ['LEFT ALT'], label: 'Left Option (⌥)' },
+  hotkey: isWindows
+    ? { names: ['LEFT CTRL', 'LEFT ALT'], label: 'Left Control (^) + Left Alt' }
+    : { names: ['LEFT ALT'], label: 'Left Option (⌥)' },
   model: 'small',
   grammarEnabled: false,
   onboardingComplete: false,

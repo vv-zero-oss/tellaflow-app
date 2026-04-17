@@ -1,5 +1,6 @@
 const { execFile } = require('child_process');
 const config = require('./config');
+const platform = require('./platform');
 
 // macOS system sounds — built-in, no bundling needed
 const SOUND_START = '/System/Library/Sounds/Tink.aiff';
@@ -7,6 +8,10 @@ const SOUND_STOP  = '/System/Library/Sounds/Glass.aiff';
 
 function play(file) {
   if (!config.getSoundsEnabled()) return;
+  if (!platform.isMac) {
+    process.stdout.write('\x07');
+    return;
+  }
   execFile('afplay', ['-v', '0.4', file], (err) => {
     if (err) console.warn('Sound playback failed:', err.message);
   });
@@ -20,6 +25,7 @@ let pausedApps = { music: false, spotify: false };
 
 // Pause Apple Music and Spotify via AppleScript
 function muteMusic() {
+  if (!platform.isMac) return;
   if (!config.getMuteWhileDictating()) return;
   pausedApps = { music: false, spotify: false };
   const script = `
@@ -54,6 +60,7 @@ function muteMusic() {
 
 // Resume only the apps that we actually paused
 function unmuteMusic() {
+  if (!platform.isMac) return;
   if (!config.getMuteWhileDictating()) return;
   if (!pausedApps.music && !pausedApps.spotify) return;
 

@@ -222,6 +222,7 @@ interface TellaflowAPI {
   openTestWav: () => void;
   openExternal: (url: string) => void;
   getAppVersion: () => Promise<string>;
+  getPlatform: () => Promise<string>;
 }
 
 declare global {

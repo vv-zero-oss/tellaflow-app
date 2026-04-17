@@ -137,6 +137,7 @@ contextBridge.exposeInMainWorld('tellaflow', {
   // Open external URL in default browser
   openExternal: (url) => ipcRenderer.send('open-external', url),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  getPlatform: () => ipcRenderer.invoke('get-platform'),
 
   // Test WAV
   openTestWav: () => ipcRenderer.send('open-test-wav'),

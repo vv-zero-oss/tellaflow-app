@@ -4,10 +4,12 @@ import { Power, RotateCcw, X, Check, AlertCircle, Send, Smile, Paperclip, Bold, 
 import { cn } from '@/lib/utils';
 import { ipc, type HotkeyConfig } from '@/lib/ipc';
 
-const defaultHotkey: HotkeyConfig = {
-  names: ['LEFT ALT'],
-  label: 'Left Option (⌥)',
-};
+function getDefaultHotkey(platformName: string): HotkeyConfig {
+  if (platformName === 'windows') {
+    return { names: ['LEFT CTRL', 'LEFT ALT'], label: 'Left Control (^) + Left Alt' };
+  }
+  return { names: ['LEFT ALT'], label: 'Left Option (⌥)' };
+}
 
 // ─── Coloured keyword chip ────────────────────────────────────────────────────
 function Chip({ bg, fg, children }: { bg: string; fg: string; children: React.ReactNode }) {
@@ -94,9 +96,11 @@ function PermissionRow({
 function WelcomePermissionsStep({
   onRestart,
   onNext,
+  platformName,
 }: {
   onRestart: () => void;
   onNext: () => void;
+  platformName: string;
 }) {
   const [micGranted, setMicGranted] = useState(false);
   const [accGranted, setAccGranted] = useState(false);
@@ -182,7 +186,9 @@ function WelcomePermissionsStep({
         </div>
         <h2 className="text-[18px] font-bold mb-2" style={{ color: '#111111' }}>One sec — quick restart</h2>
         <p className="text-[13px] leading-relaxed max-w-[260px] mb-6" style={{ color: '#666666' }}>
-          macOS needs a restart to activate your hotkey after granting Accessibility. Totally normal!
+          {platformName === 'macos'
+            ? 'macOS needs a restart to activate your hotkey after granting Accessibility. Totally normal!'
+            : 'A quick restart may be needed after changing system permission settings.'}
         </p>
         <button
           onClick={() => { if (ipc?.restartApp) ipc.restartApp(); }}
@@ -231,7 +237,7 @@ function WelcomePermissionsStep({
       <p className="text-[24px] font-semibold leading-[1.9] mb-7" style={{ color: '#111111' }}>
         Dictate into{' '}
         <Chip bg="#0097e6" fg="#fff">every app</Chip>
-        {' '}on your Mac. Works{' '}
+        {' '}on your computer. Works{' '}
         <Chip bg="#1345eb" fg="#fff">offline</Chip>
         , sends{' '}
         <Chip bg="#3a3a3c" fg="#f7f5f3">zero data</Chip>
@@ -290,10 +296,20 @@ function WelcomePermissionsStep({
             className="rounded-xl px-3.5 py-2.5 border border-blue-200 bg-blue-50 overflow-hidden"
           >
             <p className="text-[11px] leading-relaxed" style={{ color: '#444444' }}>
-              In System Settings, find{' '}
-              <span className="font-semibold" style={{ color: '#1d6aba' }}>Tellaflow</span>{' '}
-              (or <span className="font-semibold" style={{ color: '#1d6aba' }}>Electron</span> in dev) and toggle{' '}
-              <span className="font-semibold" style={{ color: '#111111' }}>ON</span>.
+              {platformName === 'macos'
+                ? (
+                  <>
+                    In System Settings, find{' '}
+                    <span className="font-semibold" style={{ color: '#1d6aba' }}>Tellaflow</span>{' '}
+                    (or <span className="font-semibold" style={{ color: '#1d6aba' }}>Electron</span> in dev) and toggle{' '}
+                    <span className="font-semibold" style={{ color: '#111111' }}>ON</span>.
+                  </>
+                )
+                : (
+                  <>
+                    In Windows Settings, open Accessibility and make sure Tellaflow can send input to other apps.
+                  </>
+                )}
             </p>
           </motion.div>
         )}
@@ -322,12 +338,12 @@ interface ChatMessage {
 
 const SEED_MESSAGES: ChatMessage[] = [
   { id: 1, fromBot: true,  text: 'Hey, welcome to Tellaflow! 👋 I\'m your voice assistant.' },
-  { id: 2, fromBot: true,  text: 'You can dictate into any app on your Mac — emails, docs, chats, anywhere.' },
-  { id: 3, fromBot: true,  text: 'Give it a go right now. Hold ⌥ Option, say one of these, then release:',
+  { id: 2, fromBot: true,  text: 'You can dictate into any app — emails, docs, chats, anywhere.' },
+  { id: 3, fromBot: true,  text: 'Give it a go right now. Hold your hotkey, say one of these, then release:',
     suggestions: ['Hey, this is pretty cool!', 'Meeting at 3 PM tomorrow.', 'The weather is nice today.'] },
 ];
 
-function PlaygroundStep() {
+function PlaygroundStep({ hotkeyHint }: { hotkeyHint: string }) {
   const [modelState, setModelState] = useState<ModelCheckState>('loading');
   const [recordState, setRecordState] = useState<RecordState>('idle');
   const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
@@ -531,7 +547,7 @@ function PlaygroundStep() {
             boxShadow: '0 1px 0 rgba(0,0,0,0.08)',
           }}
         >
-          ⌥ Option
+          {hotkeyHint}
         </kbd>
         {' '}and speak — your words will appear below.
       </p>
@@ -688,7 +704,7 @@ function PlaygroundStep() {
                       ))}
                     </div>
                     <span className="text-[11px] font-semibold" style={{ color: '#e01e5a' }}>
-                      Listening… release ⌥ to finish
+                      Listening... release {hotkeyHint} to finish
                     </span>
                   </div>
                 </motion.div>
@@ -712,7 +728,7 @@ function PlaygroundStep() {
                 // Re-focus after a tick so hotkey events always reach the window
                 setTimeout(() => inputRef.current?.focus(), 0);
               }}
-              placeholder="Hold ⌥ Option and speak, or type here…"
+              placeholder={`Hold ${hotkeyHint} and speak, or type here...`}
               className="w-full bg-transparent resize-none outline-none leading-relaxed px-3 pt-2.5 pb-1"
               style={{ fontSize: 13, color: '#1d1c1d', minHeight: 36, maxHeight: 72 }}
               rows={1}
@@ -766,6 +782,12 @@ function PlaygroundStep() {
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function OnboardingApp() {
   const [step, setStep] = useState<number | null>(null);
+  const [platformName, setPlatformName] = useState('macos');
+
+  useEffect(() => {
+    if (!ipc?.getPlatform) return;
+    ipc.getPlatform().then((name) => setPlatformName(name || 'macos')).catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -782,6 +804,8 @@ export default function OnboardingApp() {
   }, []);
 
   const dismiss = () => { if (ipc?.dismissOnboarding) ipc.dismissOnboarding(); };
+  const hotkeyHint = platformName === 'windows' ? 'Alt' : 'Option';
+  const defaultHotkey = getDefaultHotkey(platformName);
 
   const finish = () => {
     if (ipc?.setHotkey) ipc.setHotkey(defaultHotkey);
@@ -858,9 +882,10 @@ export default function OnboardingApp() {
               key="step-0"
               onRestart={() => setStep(1)}
               onNext={() => setStep(1)}
+              platformName={platformName}
             />
           )}
-          {step === 1 && <PlaygroundStep key="step-1" />}
+          {step === 1 && <PlaygroundStep key="step-1" hotkeyHint={hotkeyHint} />}
         </AnimatePresence>
       </div>
 

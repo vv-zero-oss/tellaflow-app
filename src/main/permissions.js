@@ -1,10 +1,13 @@
 const { systemPreferences, shell } = require('electron');
+const platform = require('./platform');
 
 function isTrustedAccessibility() {
+  if (!platform.isMac) return true;
   return systemPreferences.isTrustedAccessibilityClient(false);
 }
 
 function promptAccessibility() {
+  if (!platform.isMac) return;
   systemPreferences.isTrustedAccessibilityClient(true);
 }
 
@@ -18,9 +21,15 @@ async function requestMicrophone() {
 }
 
 function openAccessibilityPrefs() {
-  shell.openExternal(
-    'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
-  );
+  if (platform.isMac) {
+    shell.openExternal(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
+    );
+    return;
+  }
+  if (platform.isWindows) {
+    shell.openExternal('ms-settings:privacy-accessibility');
+  }
 }
 
 module.exports = {

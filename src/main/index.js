@@ -33,6 +33,7 @@ const history = require('./history');
 const { closeDb } = require('./db');
 const sounds = require('./sounds');
 const { runStartupSmokeTest } = require('./startup-smoke-test');
+const platform = require('./platform');
 
 // Whisper outputs non-speech annotations in several forms — strip them all
 // so they never reach history or clipboard.
@@ -58,26 +59,6 @@ let accessibilityInitialState = null; // null = not yet checked
 // App captured at recording-start (before Electron stole focus).
 // Used as a fallback if Electron is still frontmost when paste fires.
 let clickPasteTargetApp = null;
-
-// Returns the name of the current frontmost application asynchronously.
-// EC2 — resolves null after 800 ms if osascript hangs, preventing the
-// audio-captured handler from stalling indefinitely.
-function getFrontmostApp() {
-  return new Promise((resolve) => {
-    const { execFile } = require('child_process');
-    const timer = setTimeout(() => {
-      console.warn('getFrontmostApp timed out');
-      resolve(null);
-    }, 800);
-    execFile('osascript', [
-      '-e',
-      'tell application "System Events" to get name of first process whose frontmost is true',
-    ], (err, stdout) => {
-      clearTimeout(timer);
-      resolve(err ? null : (stdout.trim() || null));
-    });
-  });
-}
 
 // True when the given app name is our own Electron process (not a real user app).
 function isOwnApp(name) {
@@ -151,14 +132,8 @@ app.whenReady().then(async () => {
     onStartRecording: () => {
       // Capture frontmost app synchronously before the menu click steals focus
       clickPasteTargetApp = null;
-      try {
-        const { execFileSync } = require('child_process');
-        const name = execFileSync('osascript', [
-          '-e',
-          'tell application "System Events" to get name of first process whose frontmost is true',
-        ]).toString().trim();
-        if (name && !isOwnApp(name)) clickPasteTargetApp = name;
-      } catch {}
+      const name = platform.getFrontmostAppSync();
+      if (name && !isOwnApp(name)) clickPasteTargetApp = name;
       startClickRecording();
     },
   });
@@ -223,7 +198,7 @@ app.on('will-quit', () => {
 
 app.on('window-all-closed', () => {
   // On macOS tray apps, don't quit when all windows close — user reopens via tray or dock
-  if (process.platform !== 'darwin') {
+  if (!platform.isMac) {
     gracefulQuit();
   }
 });
@@ -319,7 +294,7 @@ function forceStopRecording() {
   pendingStop = false;
   sounds.unmuteMusic();
   // EC5 — target captured at start is now up to 60 s stale; discard it so
-  // getFrontmostApp() at paste time picks the correct current window instead.
+  // the frontmost-app check at paste time picks the correct current window instead.
   clickPasteTargetApp = null;
 
   if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
@@ -350,18 +325,12 @@ function startHotkeyListener() {
         // Capture the frontmost app SYNCHRONOUSLY and BEFORE createAudioCaptureWindow().
         // An async query races with window creation — on macOS, creating a new
         // BrowserWindow can briefly activate Electron, corrupting a concurrent
-        // osascript query and making it return 'Electron' instead of the user's app.
+        // frontmost-app query and making it return 'Electron' instead of the user's app.
         clickPasteTargetApp = null;
-        try {
-          const { execFileSync } = require('child_process');
-          const name = execFileSync('osascript', [
-            '-e',
-            'tell application "System Events" to get name of first process whose frontmost is true',
-          ], { timeout: 500 }).toString().trim();
-          if (name && !isOwnApp(name)) {
-            clickPasteTargetApp = name;
-          }
-        } catch {}
+        const name = platform.getFrontmostAppSync();
+        if (name && !isOwnApp(name)) {
+          clickPasteTargetApp = name;
+        }
 
         pendingStop = false;
         clearRecordingTimeout();
@@ -412,7 +381,7 @@ function startHotkeyListener() {
     // mid-session (accessibilityInitialState === false), the native event tap may
     // not have activated yet on this process — keep the flag so the main window's
     // restart prompt stays visible and the user is guided to restart.
-    if (accessibilityInitialState) {
+    if (!platform.isMac || accessibilityInitialState) {
       config.setAccessibilityGrantedOnce(false);
     } else if (config.getAccessibilityGrantedOnce()) {
       // Accessibility was granted during this session; the hotkey listener started
@@ -476,13 +445,27 @@ function destroyAudioCaptureWindow() {
 }
 
 function registerIPC() {
+  const normalizeHotkeyForPlatform = (hotkeyData) => {
+    if (!platform.isWindows || !hotkeyData || !Array.isArray(hotkeyData.names)) return hotkeyData;
+    if (hotkeyData.names.length >= 2) return hotkeyData;
+    const trigger = hotkeyData.names[0] || 'LEFT ALT';
+    const names = /CTRL/i.test(trigger) ? ['LEFT ALT', trigger] : ['LEFT CTRL', trigger];
+    const label = names.map((n) => {
+      if (n === 'LEFT CTRL') return 'Left Control (^)';
+      if (n === 'LEFT ALT') return 'Left Alt';
+      return n;
+    }).join(' + ');
+    return { ...hotkeyData, names, label };
+  };
+
   // Onboarding
   ipcMain.on('set-hotkey', (_, hotkeyData) => {
-    config.setHotkey(hotkeyData);
+    const normalized = normalizeHotkeyForPlatform(hotkeyData);
+    config.setHotkey(normalized);
     // Notify the settings UI so the displayed label updates immediately
-    sendToMainWindow('config-changed', { hotkey: hotkeyData });
+    sendToMainWindow('config-changed', { hotkey: normalized });
     // Update the floating bar hint label
-    sendToToast('toast-hotkey', hotkeyData?.label || '');
+    sendToToast('toast-hotkey', normalized?.label || '');
   });
 
   ipcMain.handle('request-mic-permission', async () => {
@@ -919,7 +902,10 @@ function registerIPC() {
 
     let tempListener;
     try {
-      tempListener = new GlobalKeyboardListener({ mac: { appName: 'Tellaflow' } });
+      const listenerOptions = platform.isMac
+        ? { mac: { appName: 'Tellaflow' } }
+        : {};
+      tempListener = new GlobalKeyboardListener(listenerOptions);
     } catch (err) {
       console.error('Failed to create hotkey recording listener:', err.message);
       if (!event.sender.isDestroyed()) event.sender.send('hotkey-recording-cancelled');
@@ -932,6 +918,13 @@ function registerIPC() {
     // We filter out keys that would be disruptive (e.g. mouse events).
     const IGNORED_SOLO = new Set(['MOUSE LEFT', 'MOUSE RIGHT', 'MOUSE MIDDLE']);
 
+    const ensureWindowsCombo = (capturedNames) => {
+      if (!platform.isWindows || capturedNames.length >= 2) return capturedNames;
+      const trigger = capturedNames[0];
+      if (/CTRL/i.test(trigger)) return ['LEFT ALT', trigger];
+      return ['LEFT CTRL', trigger];
+    };
+
     tempListener.addListener((e, down) => {
       if (e.state !== 'DOWN') return;
       if (IGNORED_SOLO.has(e.name)) return;
@@ -943,14 +936,16 @@ function registerIPC() {
         // Only keep recognized modifier-like names
         .filter(n => /CTRL|SHIFT|ALT|META|FUNCTION|FN/i.test(n));
 
-      const names = [...heldModifiers, e.name];
+      const names = ensureWindowsCombo([...heldModifiers, e.name]);
 
       // Build human-readable label
       const LABEL_MAP = {
         'LEFT CTRL': 'Left Control (^)', 'RIGHT CTRL': 'Right Control (^)',
-        'LEFT ALT': 'Left Option (⌥)', 'RIGHT ALT': 'Right Option (⌥)',
+        'LEFT ALT': platform.isWindows ? 'Left Alt' : 'Left Option (⌥)',
+        'RIGHT ALT': platform.isWindows ? 'Right Alt' : 'Right Option (⌥)',
         'LEFT SHIFT': 'Left Shift (⇧)', 'RIGHT SHIFT': 'Right Shift (⇧)',
-        'LEFT META': 'Left Command (⌘)', 'RIGHT META': 'Right Command (⌘)',
+        'LEFT META': platform.isWindows ? 'Left Windows Key' : 'Left Command (⌘)',
+        'RIGHT META': platform.isWindows ? 'Right Windows Key' : 'Right Command (⌘)',
         'FN': 'fn',
         'SPACE': 'Space', 'RETURN': 'Return', 'ESCAPE': 'Esc',
         'BACKSPACE': 'Backspace', 'TAB': 'Tab',
@@ -982,6 +977,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('check-needs-restart', () => {
+    if (!platform.isMac) return false;
     // Stable: accessibility was absent at launch and has since been granted this session
     return config.getAccessibilityGrantedOnce() && !accessibilityInitialState;
   });
@@ -1045,6 +1041,10 @@ function registerIPC() {
     return app.getVersion();
   });
 
+  ipcMain.handle('get-platform', () => {
+    return platform.getPlatformName();
+  });
+
   ipcMain.on('open-test-wav', async () => {
     const result = await dialog.showOpenDialog({
       filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'm4a'] }],
@@ -1074,16 +1074,10 @@ function registerIPC() {
     // Sync call on hover: blocks for ~100ms but that's invisible to the user
     // since no animation has started yet. Eliminates the race where the user
     // clicks before the async result returns and clickPasteTargetApp is still null.
-    try {
-      const { execFileSync } = require('child_process');
-      const name = execFileSync('osascript', [
-        '-e',
-        'tell application "System Events" to get name of first process whose frontmost is true',
-      ]).toString().trim();
-      if (name && !isOwnApp(name)) {
-        clickPasteTargetApp = name;
-      }
-    } catch {}
+    const name = platform.getFrontmostAppSync();
+    if (name && !isOwnApp(name)) {
+      clickPasteTargetApp = name;
+    }
   });
 
   // Fired on mousedown on the trigger strip — runs suppressNextActivation again
@@ -1308,7 +1302,7 @@ function registerIPC() {
         // Electron window creation could corrupt the query). Use it directly.
         // As a bonus, if the user deliberately switched to a different real app
         // during transcription, honour that switch by pasting there instead.
-        const currentFrontmost = await getFrontmostApp();
+        const currentFrontmost = await platform.getFrontmostApp();
         const pasteTarget = (!isOwnApp(currentFrontmost) && currentFrontmost !== recordedTarget)
           ? currentFrontmost
           : recordedTarget;

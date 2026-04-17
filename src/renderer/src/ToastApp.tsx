@@ -225,19 +225,6 @@ export default function ToastApp() {
               {/* Transcribing */}
               {state === 'transcribing' && (
                 <>
-                  <LiveWaveform
-                    processing={true}
-                    mode="static"
-                    barColor="rgba(190,180,255,0.55)"
-                    height={20}
-                    barWidth={3}
-                    barGap={1.5}
-                    barRadius={2}
-                    barHeight={3}
-                    fadeEdges={true}
-                    fadeWidth={14}
-                    className="w-[80px]"
-                  />
                   <span className="text-[9px] font-medium tracking-wide text-white/40">
                     Transcribing…
                   </span>
