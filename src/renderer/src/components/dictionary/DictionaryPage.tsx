@@ -1,16 +1,32 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
 import { ArrowRight, BookOpen } from 'lucide-react';
 import { TrashIcon } from '@/components/icons/TrashIcon';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { DictionaryPacksCarousel } from '@/components/dictionary/DictionaryPacksCarousel';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import { useDictionary } from '@/hooks/use-dictionary';
+import { useDictionaryPacks } from '@/hooks/use-dictionary-packs';
+import type { DictionaryPackCatalogItem } from '@/lib/ipc';
 
 export function DictionaryPage() {
-  const { entries, add, remove, update } = useDictionary();
+  const { entries, add, remove, update, refresh: refreshEntries } = useDictionary();
+  const { packs, loading: packsLoading, error: packsError, installPack, uninstallPack } =
+    useDictionaryPacks();
   const [newFrom, setNewFrom] = useState('');
   const [newTo, setNewTo] = useState('');
+  const [previewPack, setPreviewPack] = useState<DictionaryPackCatalogItem | null>(null);
+  const [packBusy, setPackBusy] = useState<string | null>(null);
 
   const handleAdd = () => {
     const from = newFrom.trim();
@@ -28,6 +44,26 @@ export function DictionaryPage() {
     if (e.key === 'Enter') handleAdd();
   };
 
+  const runInstall = async (packId: string) => {
+    setPackBusy(packId);
+    try {
+      await installPack(packId);
+      await refreshEntries();
+    } finally {
+      setPackBusy(null);
+    }
+  };
+
+  const runUninstall = async (packId: string) => {
+    setPackBusy(packId);
+    try {
+      await uninstallPack(packId);
+      await refreshEntries();
+    } finally {
+      setPackBusy(null);
+    }
+  };
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <div className="px-7 pt-12 pb-4 [-webkit-app-region:drag]">
@@ -37,8 +73,9 @@ export function DictionaryPage() {
         </p>
       </div>
 
-      <ScrollArea className="flex-1">
-        <div className="px-7 py-6">
+        <div className="min-w-0 max-w-full px-7 pb-6 overflow-scroll">
+      
+        
           <Well className="mb-7">
             <WellHeader>
               <WellTitle>Add Entry</WellTitle>
@@ -61,12 +98,22 @@ export function DictionaryPage() {
                     onKeyDown={handleToKeyDown}
                     className="flex-1"
                   />
-                  <Button variant="outline" size="sm" onClick={handleAdd}>Add</Button>
+                  <Button variant="outline" size="sm" onClick={handleAdd}>
+                    Add
+                  </Button>
                 </div>
               </WellItem>
             </WellCard>
           </Well>
-
+          <DictionaryPacksCarousel
+            packs={packs}
+            loading={packsLoading}
+            error={packsError}
+            packBusy={packBusy}
+            onPreview={setPreviewPack}
+            onInstall={runInstall}
+            onUninstall={runUninstall}
+          />
           <Well>
             <WellHeader>
               <WellTitle>Entries ({entries.length})</WellTitle>
@@ -92,7 +139,45 @@ export function DictionaryPage() {
             )}
           </Well>
         </div>
-      </ScrollArea>
+  
+
+      <Dialog open={!!previewPack} onOpenChange={(open) => !open && setPreviewPack(null)}>
+        <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{previewPack?.title}</DialogTitle>
+            <DialogDescription>{previewPack?.description}</DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[50vh] pr-3 border rounded-md">
+            <div className="p-3 space-y-1.5 text-sm font-mono">
+              {previewPack?.entries.map((e, i) => (
+                <div key={`${e.from}-${i}`} className="flex gap-2 break-all">
+                  <span className="text-muted-foreground shrink-0">{i + 1}.</span>
+                  <span>{e.from}</span>
+                  <ArrowRight className="w-3 h-3 shrink-0 mt-1 text-muted-foreground" />
+                  <span>{e.to}</span>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setPreviewPack(null)}>
+              Close
+            </Button>
+            {previewPack && !previewPack.installed && (
+              <Button
+                disabled={packBusy === previewPack.id}
+                onClick={async () => {
+                  const id = previewPack.id;
+                  setPreviewPack(null);
+                  await runInstall(id);
+                }}
+              >
+                Install this pack
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -102,12 +187,17 @@ function DictionaryRow({
   onRemove,
   onUpdate,
 }: {
-  entry: { id: number; from: string; to: string };
+  entry: { id: number; from: string; to: string; packId?: string | null };
   onRemove: (id: number) => void;
   onUpdate: (id: number, from: string, to: string) => void;
 }) {
   const [from, setFrom] = useState(entry.from);
   const [to, setTo] = useState(entry.to);
+
+  useEffect(() => {
+    setFrom(entry.from);
+    setTo(entry.to);
+  }, [entry.from, entry.to, entry.id]);
 
   const handleBlur = () => {
     if (from.trim() && (from !== entry.from || to !== entry.to)) {
@@ -118,6 +208,11 @@ function DictionaryRow({
   return (
     <WellItem>
       <div className="flex items-center gap-2">
+        {entry.packId ? (
+          <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0" title="From preset pack">
+            pack
+          </Badge>
+        ) : null}
         <Input value={from} onChange={(e) => setFrom(e.target.value)} onBlur={handleBlur} className="flex-1" />
         <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
         <Input value={to} onChange={(e) => setTo(e.target.value)} onBlur={handleBlur} className="flex-1" />

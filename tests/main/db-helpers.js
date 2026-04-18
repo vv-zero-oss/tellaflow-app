@@ -11,7 +11,7 @@ let nextId = 1;
 function createTestDb() {
   const tables = {
     settings: [],    // { key, value }
-    dictionary: [],  // { id, from_word, to_word }
+    dictionary: [],  // { id, from_word, to_word, pack_id? }
     snippets: [],    // { id, trigger, content }
     history: [],     // { id, text, timestamp }
   };
@@ -43,7 +43,12 @@ function createTestDb() {
           tables[table] = tables[table].filter((r) => r.id !== id);
           return;
         }
-        // DELETE FROM dictionary WHERE id = ?  (already covered above)
+        // DELETE FROM dictionary WHERE pack_id = ?
+        if (/^DELETE FROM dictionary WHERE pack_id = \?$/i.test(s)) {
+          const packId = args[0];
+          tables.dictionary = tables.dictionary.filter((r) => r.pack_id !== packId);
+          return;
+        }
         // INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)
         if (/^INSERT OR REPLACE INTO settings/i.test(s)) {
           const [key, value] = args;
@@ -52,10 +57,15 @@ function createTestDb() {
           else tables.settings.push({ key, value });
           return;
         }
-        // INSERT INTO dictionary (from_word, to_word) VALUES (?, ?)
-        if (/^INSERT INTO dictionary/i.test(s)) {
-          const [from_word, to_word] = args;
-          tables.dictionary.push({ id: nextId++, from_word, to_word });
+        // INSERT INTO dictionary (from_word, to_word, pack_id) VALUES (?, ?, ?)
+        if (/^INSERT INTO dictionary \(from_word, to_word, pack_id\)/i.test(s)) {
+          const [from_word, to_word, pack_id] = args;
+          tables.dictionary.push({
+            id: nextId++,
+            from_word,
+            to_word,
+            pack_id: pack_id == null ? null : pack_id,
+          });
           return;
         }
         // INSERT INTO snippets (trigger, content) VALUES (?, ?)
@@ -64,11 +74,21 @@ function createTestDb() {
           tables.snippets.push({ id: nextId++, trigger, content });
           return;
         }
+        // UPDATE dictionary SET to_word = ? WHERE id = ?
+        if (/^UPDATE dictionary SET to_word = \? WHERE id = \?$/i.test(s)) {
+          const [to_word, id] = args;
+          const row = tables.dictionary.find((r) => r.id === Number(id));
+          if (row) row.to_word = to_word;
+          return;
+        }
         // UPDATE dictionary SET from_word = ?, to_word = ? WHERE id = ?
-        if (/^UPDATE dictionary/i.test(s)) {
+        if (/^UPDATE dictionary SET from_word = \?, to_word = \? WHERE id = \?$/i.test(s)) {
           const [from_word, to_word, id] = args;
           const row = tables.dictionary.find((r) => r.id === Number(id));
-          if (row) { row.from_word = from_word; row.to_word = to_word; }
+          if (row) {
+            row.from_word = from_word;
+            row.to_word = to_word;
+          }
           return;
         }
         // UPDATE snippets SET trigger = ?, content = ? WHERE id = ?
@@ -89,9 +109,25 @@ function createTestDb() {
       },
 
       all(...args) {
-        // SELECT id, from_word, to_word FROM dictionary ORDER BY id
+        // SELECT pack_id, COUNT(*) as cnt ... GROUP BY pack_id
+        if (/FROM dictionary WHERE pack_id IS NOT NULL GROUP BY pack_id/i.test(s)) {
+          const map = new Map();
+          for (const r of tables.dictionary) {
+            if (r.pack_id == null) continue;
+            map.set(r.pack_id, (map.get(r.pack_id) || 0) + 1);
+          }
+          return [...map.entries()].map(([pack_id, cnt]) => ({ pack_id, cnt }));
+        }
+        // SELECT id, from_word, to_word, pack_id FROM dictionary ORDER BY id
         if (/FROM dictionary/i.test(s)) {
-          return [...tables.dictionary].sort((a, b) => a.id - b.id);
+          return [...tables.dictionary]
+            .sort((a, b) => a.id - b.id)
+            .map((r) => ({
+              id: r.id,
+              from_word: r.from_word,
+              to_word: r.to_word,
+              pack_id: r.pack_id ?? null,
+            }));
         }
         // SELECT id, trigger, content, created_at FROM snippets ORDER BY id
         if (/FROM snippets/i.test(s)) {
@@ -109,6 +145,14 @@ function createTestDb() {
         if (/SELECT value FROM settings WHERE key = \?/i.test(s)) {
           const row = tables.settings.find((r) => r.key === args[0]);
           return row ? { value: row.value } : undefined;
+        }
+        // SELECT id, pack_id FROM dictionary WHERE lower(from_word) = lower(?)
+        if (/SELECT id, pack_id FROM dictionary WHERE lower\(from_word\) = lower\(\?\)/i.test(s)) {
+          const from = args[0];
+          const row = tables.dictionary.find(
+            (r) => r.from_word.toLowerCase() === String(from).toLowerCase(),
+          );
+          return row ? { id: row.id, pack_id: row.pack_id ?? null } : undefined;
         }
         return undefined;
       },

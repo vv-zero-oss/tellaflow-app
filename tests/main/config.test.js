@@ -316,4 +316,65 @@ describe('dictionary CRUD', () => {
     const result = config.addDictionaryEntry('sth');
     expect(result[0].to).toBe('');
   });
+
+  it('addDictionaryEntry sets packId to null for manual rows', () => {
+    const [row] = config.addDictionaryEntry('colour', 'color');
+    expect(row.packId).toBeNull();
+  });
+});
+
+// ─── Dictionary preset packs ───────────────────────────────────────────────────
+
+describe('dictionary preset packs', () => {
+  let config;
+
+  beforeEach(() => {
+    ({ config } = freshConfig());
+  });
+
+  it('getDictionaryPacksCatalog lists packs with installed false initially', () => {
+    const cat = config.getDictionaryPacksCatalog();
+    expect(cat.length).toBeGreaterThan(0);
+    expect(cat.some((p) => p.id === 'software-developer')).toBe(true);
+    expect(cat.every((p) => p.installed === false)).toBe(true);
+  });
+
+  it('installDictionaryPack inserts rows with packId', () => {
+    config.installDictionaryPack('software-developer');
+    const rows = config.getDictionary();
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.packId === 'software-developer')).toBe(true);
+  });
+
+  it('installDictionaryPack skips from when a manual entry already exists', () => {
+    config.addDictionaryEntry('kubernetes', 'K8s');
+    config.installDictionaryPack('software-developer');
+    const rows = config.getDictionary();
+    const k = rows.filter((r) => r.from.toLowerCase() === 'kubernetes');
+    expect(k).toHaveLength(1);
+    expect(k[0].packId).toBeNull();
+    expect(k[0].to).toBe('K8s');
+  });
+
+  it('uninstallDictionaryPack removes only that pack rows', () => {
+    config.installDictionaryPack('software-developer');
+    config.addDictionaryEntry('zaphod', 'beeblebrox');
+    config.uninstallDictionaryPack('software-developer');
+    const rows = config.getDictionary();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].from).toBe('zaphod');
+    expect(rows[0].packId).toBeNull();
+  });
+
+  it('getDictionaryPacksCatalog marks installed after install', () => {
+    config.installDictionaryPack('software-developer');
+    const cat = config.getDictionaryPacksCatalog();
+    const dev = cat.find((p) => p.id === 'software-developer');
+    expect(dev?.installed).toBe(true);
+    expect(dev?.installedCount).toBeGreaterThan(0);
+  });
+
+  it('installDictionaryPack throws for unknown pack id', () => {
+    expect(() => config.installDictionaryPack('not-a-real-pack')).toThrow(/Unknown dictionary pack/);
+  });
 });

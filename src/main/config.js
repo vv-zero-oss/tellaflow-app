@@ -1,4 +1,5 @@
 const { getDb } = require('./db');
+const { getDictionaryPacksManifest, getPackById } = require('./dictionary-packs');
 
 const DEFAULTS = {
   hotkey: { names: ['LEFT ALT'], label: 'Left Option (⌥)' },
@@ -108,24 +109,35 @@ function getMicrophoneDeviceId() { return getSetting('microphoneDeviceId') || 'a
 function setMicrophoneDeviceId(deviceId) { setSetting('microphoneDeviceId', deviceId); }
 
 function getDictionary() {
-  const rows = getDb().prepare('SELECT id, from_word, to_word FROM dictionary ORDER BY id').all();
-  return rows.map(r => ({ id: r.id, from: r.from_word, to: r.to_word }));
+  const rows = getDb()
+    .prepare('SELECT id, from_word, to_word, pack_id FROM dictionary ORDER BY id')
+    .all();
+  return rows.map((r) => ({
+    id: r.id,
+    from: r.from_word,
+    to: r.to_word,
+    packId: r.pack_id ?? null,
+  }));
 }
 
 function setDictionary(entries) {
   const db = getDb();
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM dictionary').run();
-    const insert = db.prepare('INSERT INTO dictionary (from_word, to_word) VALUES (?, ?)');
+    const insert = db.prepare(
+      'INSERT INTO dictionary (from_word, to_word, pack_id) VALUES (?, ?, ?)',
+    );
     for (const e of entries) {
-      insert.run(e.from, e.to || '');
+      insert.run(e.from, e.to || '', e.packId ?? null);
     }
   });
   tx();
 }
 
 function addDictionaryEntry(from, to) {
-  getDb().prepare('INSERT INTO dictionary (from_word, to_word) VALUES (?, ?)').run(from, to || '');
+  getDb()
+    .prepare('INSERT INTO dictionary (from_word, to_word, pack_id) VALUES (?, ?, ?)')
+    .run(from, to || '', null);
   return getDictionary();
 }
 
@@ -141,6 +153,59 @@ function updateDictionaryEntry(id, from, to) {
 
 function clearDictionary() {
   getDb().prepare('DELETE FROM dictionary').run();
+  return getDictionary();
+}
+
+function getDictionaryPacksCatalog() {
+  const packs = getDictionaryPacksManifest();
+  const rows = getDb()
+    .prepare(
+      'SELECT pack_id, COUNT(*) as cnt FROM dictionary WHERE pack_id IS NOT NULL GROUP BY pack_id',
+    )
+    .all();
+  const installed = new Map(rows.map((r) => [r.pack_id, r.cnt]));
+  return packs.map((p) => ({
+    ...p,
+    installed: (installed.get(p.id) || 0) > 0,
+    installedCount: installed.get(p.id) || 0,
+  }));
+}
+
+function installDictionaryPack(packId) {
+  const pack = getPackById(packId);
+  if (!pack || !Array.isArray(pack.entries)) {
+    throw new Error(`Unknown dictionary pack: ${packId}`);
+  }
+  const findExisting = getDb().prepare(
+    'SELECT id, pack_id FROM dictionary WHERE lower(from_word) = lower(?)',
+  );
+  const insert = getDb().prepare(
+    'INSERT INTO dictionary (from_word, to_word, pack_id) VALUES (?, ?, ?)',
+  );
+  const update = getDb().prepare('UPDATE dictionary SET to_word = ? WHERE id = ?');
+
+  const tx = getDb().transaction(() => {
+    for (const e of pack.entries) {
+      const from = (e.from || '').trim();
+      if (!from) continue;
+      const to = (e.to ?? '').toString();
+      const ex = findExisting.get(from);
+      if (ex) {
+        if (ex.pack_id == null) continue;
+        if (ex.pack_id === packId) {
+          update.run(to, ex.id);
+        }
+        continue;
+      }
+      insert.run(from, to, packId);
+    }
+  });
+  tx();
+  return getDictionary();
+}
+
+function uninstallDictionaryPack(packId) {
+  getDb().prepare('DELETE FROM dictionary WHERE pack_id = ?').run(packId);
   return getDictionary();
 }
 
@@ -185,4 +250,7 @@ module.exports = {
   removeDictionaryEntry,
   updateDictionaryEntry,
   clearDictionary,
+  getDictionaryPacksCatalog,
+  installDictionaryPack,
+  uninstallDictionaryPack,
 };

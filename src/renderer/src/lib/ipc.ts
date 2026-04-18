@@ -69,6 +69,24 @@ export interface DictionaryEntry {
   id: number;
   from: string;
   to: string;
+  /** Present when row came from a preset pack install */
+  packId?: string | null;
+}
+
+export interface DictionaryPackEntry {
+  from: string;
+  to: string;
+}
+
+export interface DictionaryPackCatalogItem {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  entryCount: number;
+  entries: DictionaryPackEntry[];
+  installed: boolean;
+  installedCount: number;
 }
 
 export interface SnippetEntry {
@@ -158,6 +176,9 @@ interface TellaflowAPI {
   addDictionaryEntry: (from: string, to: string) => Promise<DictionaryEntry[]>;
   removeDictionaryEntry: (id: number) => Promise<DictionaryEntry[]>;
   updateDictionaryEntry: (id: number, from: string, to: string) => Promise<DictionaryEntry[]>;
+  getDictionaryPacksCatalog: () => Promise<DictionaryPackCatalogItem[]>;
+  installDictionaryPack: (packId: string) => Promise<DictionaryEntry[]>;
+  uninstallDictionaryPack: (packId: string) => Promise<DictionaryEntry[]>;
 
   getSnippets: () => Promise<SnippetEntry[]>;
   addSnippet: (trigger: string, content: string) => Promise<SnippetEntry[]>;

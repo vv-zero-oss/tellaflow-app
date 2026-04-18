@@ -1,0 +1,1848 @@
+{
+  "packs": [
+    {
+      "id": "software-developer",
+      "title": "Software developer",
+      "category": "Profession",
+      "description": "Common dev terms, frameworks, and acronyms often misheard by dictation.",
+      "entries": [
+        {
+          "from": "javascript",
+          "to": "JavaScript"
+        },
+        {
+          "from": "typescript",
+          "to": "TypeScript"
+        },
+        {
+          "from": "kubernetes",
+          "to": "Kubernetes"
+        },
+        {
+          "from": "k8s",
+          "to": "Kubernetes"
+        },
+        {
+          "from": "docker",
+          "to": "Docker"
+        },
+        {
+          "from": "github",
+          "to": "GitHub"
+        },
+        {
+          "from": "gitlab",
+          "to": "GitLab"
+        },
+        {
+          "from": "graphql",
+          "to": "GraphQL"
+        },
+        {
+          "from": "postgresql",
+          "to": "PostgreSQL"
+        },
+        {
+          "from": "mongodb",
+          "to": "MongoDB"
+        },
+        {
+          "from": "redis",
+          "to": "Redis"
+        },
+        {
+          "from": "kafka",
+          "to": "Kafka"
+        },
+        {
+          "from": "reactjs",
+          "to": "React"
+        },
+        {
+          "from": "nextjs",
+          "to": "Next.js"
+        },
+        {
+          "from": "vscode",
+          "to": "VS Code"
+        },
+        {
+          "from": "nodejs",
+          "to": "Node.js"
+        },
+        {
+          "from": "oauth",
+          "to": "OAuth"
+        },
+        {
+          "from": "jwt",
+          "to": "JWT"
+        },
+        {
+          "from": "grpc",
+          "to": "gRPC"
+        },
+        {
+          "from": "protobuf",
+          "to": "Protobuf"
+        },
+        {
+          "from": "terraform",
+          "to": "Terraform"
+        }
+      ]
+    },
+    {
+      "id": "devops-sre",
+      "title": "DevOps / SRE",
+      "category": "Role",
+      "description": "Deploy, observability, and infrastructure vocabulary.",
+      "entries": [
+        {
+          "from": "kubernetes",
+          "to": "Kubernetes"
+        },
+        {
+          "from": "helm",
+          "to": "Helm"
+        },
+        {
+          "from": "argocd",
+          "to": "Argo CD"
+        },
+        {
+          "from": "prometheus",
+          "to": "Prometheus"
+        },
+        {
+          "from": "grafana",
+          "to": "Grafana"
+        },
+        {
+          "from": "terraform",
+          "to": "Terraform"
+        },
+        {
+          "from": "ansible",
+          "to": "Ansible"
+        },
+        {
+          "from": "jenkins",
+          "to": "Jenkins"
+        },
+        {
+          "from": "ci cd",
+          "to": "CI/CD"
+        },
+        {
+          "from": "github actions",
+          "to": "GitHub Actions"
+        },
+        {
+          "from": "istio",
+          "to": "Istio"
+        },
+        {
+          "from": "linkerd",
+          "to": "Linkerd"
+        },
+        {
+          "from": "nginx",
+          "to": "Nginx"
+        },
+        {
+          "from": "haproxy",
+          "to": "HAProxy"
+        },
+        {
+          "from": "slo",
+          "to": "SLO"
+        },
+        {
+          "from": "sli",
+          "to": "SLI"
+        },
+        {
+          "from": "sla",
+          "to": "SLA"
+        },
+        {
+          "from": "canary",
+          "to": "canary"
+        },
+        {
+          "from": "rollback",
+          "to": "rollback"
+        },
+        {
+          "from": "blue green",
+          "to": "blue/green"
+        }
+      ]
+    },
+    {
+      "id": "data-science-ml",
+      "title": "Data science / ML",
+      "category": "Profession",
+      "description": "ML tooling, stats, and data pipeline terms.",
+      "entries": [
+        {
+          "from": "pytorch",
+          "to": "PyTorch"
+        },
+        {
+          "from": "tensorflow",
+          "to": "TensorFlow"
+        },
+        {
+          "from": "jupyter",
+          "to": "Jupyter"
+        },
+        {
+          "from": "pandas",
+          "to": "pandas"
+        },
+        {
+          "from": "numpy",
+          "to": "NumPy"
+        },
+        {
+          "from": "scikitlearn",
+          "to": "scikit-learn"
+        },
+        {
+          "from": "sklearn",
+          "to": "scikit-learn"
+        },
+        {
+          "from": "keras",
+          "to": "Keras"
+        },
+        {
+          "from": "dataframe",
+          "to": "DataFrame"
+        },
+        {
+          "from": "gpu",
+          "to": "GPU"
+        },
+        {
+          "from": "cuda",
+          "to": "CUDA"
+        },
+        {
+          "from": "mlflow",
+          "to": "MLflow"
+        },
+        {
+          "from": "dbt",
+          "to": "dbt"
+        },
+        {
+          "from": "snowflake",
+          "to": "Snowflake"
+        },
+        {
+          "from": "bigquery",
+          "to": "BigQuery"
+        },
+        {
+          "from": "spark",
+          "to": "Apache Spark"
+        },
+        {
+          "from": "pyspark",
+          "to": "PySpark"
+        },
+        {
+          "from": "kafka",
+          "to": "Kafka"
+        },
+        {
+          "from": "airflow",
+          "to": "Airflow"
+        },
+        {
+          "from": "huggingface",
+          "to": "Hugging Face"
+        },
+        {
+          "from": "onnx",
+          "to": "ONNX"
+        }
+      ]
+    },
+    {
+      "id": "cybersecurity-it",
+      "title": "Cybersecurity / IT",
+      "category": "Profession",
+      "description": "Security controls, threats, and identity vocabulary.",
+      "entries": [
+        {
+          "from": "phishing",
+          "to": "phishing"
+        },
+        {
+          "from": "ransomware",
+          "to": "ransomware"
+        },
+        {
+          "from": "malware",
+          "to": "malware"
+        },
+        {
+          "from": "siem",
+          "to": "SIEM"
+        },
+        {
+          "from": "mfa",
+          "to": "MFA"
+        },
+        {
+          "from": "oauth",
+          "to": "OAuth"
+        },
+        {
+          "from": "sso",
+          "to": "SSO"
+        },
+        {
+          "from": "rbac",
+          "to": "RBAC"
+        },
+        {
+          "from": "cve",
+          "to": "CVE"
+        },
+        {
+          "from": "zero trust",
+          "to": "zero trust"
+        },
+        {
+          "from": "x509",
+          "to": "X.509"
+        },
+        {
+          "from": "tls",
+          "to": "TLS"
+        },
+        {
+          "from": "mtls",
+          "to": "mTLS"
+        },
+        {
+          "from": "waf",
+          "to": "WAF"
+        },
+        {
+          "from": "ddos",
+          "to": "DDoS"
+        },
+        {
+          "from": "ids",
+          "to": "IDS"
+        },
+        {
+          "from": "ips",
+          "to": "IPS"
+        },
+        {
+          "from": "edr",
+          "to": "EDR"
+        },
+        {
+          "from": "sbom",
+          "to": "SBOM"
+        },
+        {
+          "from": "sast",
+          "to": "SAST"
+        },
+        {
+          "from": "dast",
+          "to": "DAST"
+        }
+      ]
+    },
+    {
+      "id": "customer-support",
+      "title": "Customer support",
+      "category": "Profession",
+      "description": "Tickets, SLAs, and customer-facing operations.",
+      "entries": [
+        {
+          "from": "sla",
+          "to": "SLA"
+        },
+        {
+          "from": "csat",
+          "to": "CSAT"
+        },
+        {
+          "from": "nps",
+          "to": "NPS"
+        },
+        {
+          "from": "sku",
+          "to": "SKU"
+        },
+        {
+          "from": "rma",
+          "to": "RMA"
+        },
+        {
+          "from": "escalation",
+          "to": "escalation"
+        },
+        {
+          "from": "tier 1",
+          "to": "Tier 1"
+        },
+        {
+          "from": "tier 2",
+          "to": "Tier 2"
+        },
+        {
+          "from": "kb article",
+          "to": "KB article"
+        },
+        {
+          "from": "faq",
+          "to": "FAQ"
+        },
+        {
+          "from": "live chat",
+          "to": "live chat"
+        },
+        {
+          "from": "helpdesk",
+          "to": "help desk"
+        },
+        {
+          "from": "zendesk",
+          "to": "Zendesk"
+        },
+        {
+          "from": "freshdesk",
+          "to": "Freshdesk"
+        },
+        {
+          "from": "intercom",
+          "to": "Intercom"
+        },
+        {
+          "from": "jira service",
+          "to": "Jira Service Management"
+        },
+        {
+          "from": "crm",
+          "to": "CRM"
+        },
+        {
+          "from": "voip",
+          "to": "VoIP"
+        },
+        {
+          "from": "ivr",
+          "to": "IVR"
+        },
+        {
+          "from": "acd",
+          "to": "ACD"
+        },
+        {
+          "from": "wrap up",
+          "to": "wrap-up"
+        }
+      ]
+    },
+    {
+      "id": "sales-crm",
+      "title": "Sales / CRM",
+      "category": "Profession",
+      "description": "Pipeline, forecasting, and CRM language.",
+      "entries": [
+        {
+          "from": "crm",
+          "to": "CRM"
+        },
+        {
+          "from": "mql",
+          "to": "MQL"
+        },
+        {
+          "from": "bdr",
+          "to": "BDR"
+        },
+        {
+          "from": "sdr",
+          "to": "SDR"
+        },
+        {
+          "from": "pipeline",
+          "to": "pipeline"
+        },
+        {
+          "from": "quota",
+          "to": "quota"
+        },
+        {
+          "from": "renewal",
+          "to": "renewal"
+        },
+        {
+          "from": "upsell",
+          "to": "upsell"
+        },
+        {
+          "from": "cross sell",
+          "to": "cross-sell"
+        },
+        {
+          "from": "churn",
+          "to": "churn"
+        },
+        {
+          "from": "arr",
+          "to": "ARR"
+        },
+        {
+          "from": "mrr",
+          "to": "MRR"
+        },
+        {
+          "from": "acv",
+          "to": "ACV"
+        },
+        {
+          "from": "tcv",
+          "to": "TCV"
+        },
+        {
+          "from": "cpq",
+          "to": "CPQ"
+        },
+        {
+          "from": "rfp",
+          "to": "RFP"
+        },
+        {
+          "from": "bant",
+          "to": "BANT"
+        },
+        {
+          "from": "meddic",
+          "to": "MEDDIC"
+        },
+        {
+          "from": "salesforce",
+          "to": "Salesforce"
+        },
+        {
+          "from": "hubspot",
+          "to": "HubSpot"
+        },
+        {
+          "from": "outreach",
+          "to": "Outreach"
+        },
+        {
+          "from": "gong",
+          "to": "Gong"
+        }
+      ]
+    },
+    {
+      "id": "marketing-content",
+      "title": "Marketing / content",
+      "category": "Profession",
+      "description": "Campaign, SEO, and analytics terms.",
+      "entries": [
+        {
+          "from": "seo",
+          "to": "SEO"
+        },
+        {
+          "from": "sem",
+          "to": "SEM"
+        },
+        {
+          "from": "ppc",
+          "to": "PPC"
+        },
+        {
+          "from": "cpc",
+          "to": "CPC"
+        },
+        {
+          "from": "cpm",
+          "to": "CPM"
+        },
+        {
+          "from": "ctr",
+          "to": "CTR"
+        },
+        {
+          "from": "cta",
+          "to": "CTA"
+        },
+        {
+          "from": "utm",
+          "to": "UTM"
+        },
+        {
+          "from": "a b test",
+          "to": "A/B test"
+        },
+        {
+          "from": "landing page",
+          "to": "landing page"
+        },
+        {
+          "from": "newsletter",
+          "to": "newsletter"
+        },
+        {
+          "from": "cms",
+          "to": "CMS"
+        },
+        {
+          "from": "dam",
+          "to": "DAM"
+        },
+        {
+          "from": "martech",
+          "to": "MarTech"
+        },
+        {
+          "from": "ga4",
+          "to": "GA4"
+        },
+        {
+          "from": "gtm",
+          "to": "GTM"
+        },
+        {
+          "from": "roas",
+          "to": "ROAS"
+        },
+        {
+          "from": "ltv",
+          "to": "LTV"
+        },
+        {
+          "from": "cac",
+          "to": "CAC"
+        },
+        {
+          "from": "brand voice",
+          "to": "brand voice"
+        },
+        {
+          "from": "copy deck",
+          "to": "copy deck"
+        }
+      ]
+    },
+    {
+      "id": "product-ux",
+      "title": "Product / UX",
+      "category": "Profession",
+      "description": "Product discovery, design, and metrics.",
+      "entries": [
+        {
+          "from": "prd",
+          "to": "PRD"
+        },
+        {
+          "from": "mrd",
+          "to": "MRD"
+        },
+        {
+          "from": "okr",
+          "to": "OKR"
+        },
+        {
+          "from": "kpi",
+          "to": "KPI"
+        },
+        {
+          "from": "cohort",
+          "to": "cohort"
+        },
+        {
+          "from": "funnel",
+          "to": "funnel"
+        },
+        {
+          "from": "wireframe",
+          "to": "wireframe"
+        },
+        {
+          "from": "prototype",
+          "to": "prototype"
+        },
+        {
+          "from": "usability",
+          "to": "usability"
+        },
+        {
+          "from": "ia",
+          "to": "IA"
+        },
+        {
+          "from": "ux",
+          "to": "UX"
+        },
+        {
+          "from": "ui",
+          "to": "UI"
+        },
+        {
+          "from": "figma",
+          "to": "Figma"
+        },
+        {
+          "from": "sketch",
+          "to": "Sketch"
+        },
+        {
+          "from": "user story",
+          "to": "user story"
+        },
+        {
+          "from": "acceptance criteria",
+          "to": "acceptance criteria"
+        },
+        {
+          "from": "roadmap",
+          "to": "roadmap"
+        },
+        {
+          "from": "raci",
+          "to": "RACI"
+        },
+        {
+          "from": "pi planning",
+          "to": "PI planning"
+        },
+        {
+          "from": "north star",
+          "to": "North Star"
+        },
+        {
+          "from": "jobs to be done",
+          "to": "Jobs to be Done"
+        }
+      ]
+    },
+    {
+      "id": "finance-accounting",
+      "title": "Finance / accounting",
+      "category": "Profession",
+      "description": "Accounting, tax, and corporate finance shorthand.",
+      "entries": [
+        {
+          "from": "gaap",
+          "to": "GAAP"
+        },
+        {
+          "from": "ifrs",
+          "to": "IFRS"
+        },
+        {
+          "from": "p and l",
+          "to": "P&L"
+        },
+        {
+          "from": "balance sheet",
+          "to": "balance sheet"
+        },
+        {
+          "from": "cash flow",
+          "to": "cash flow"
+        },
+        {
+          "from": "reconciliation",
+          "to": "reconciliation"
+        },
+        {
+          "from": "accounts payable",
+          "to": "accounts payable"
+        },
+        {
+          "from": "accounts receivable",
+          "to": "accounts receivable"
+        },
+        {
+          "from": "ebitda",
+          "to": "EBITDA"
+        },
+        {
+          "from": "cogs",
+          "to": "COGS"
+        },
+        {
+          "from": "cap ex",
+          "to": "CapEx"
+        },
+        {
+          "from": "op ex",
+          "to": "OpEx"
+        },
+        {
+          "from": "roi",
+          "to": "ROI"
+        },
+        {
+          "from": "npv",
+          "to": "NPV"
+        },
+        {
+          "from": "irr",
+          "to": "IRR"
+        },
+        {
+          "from": "wacc",
+          "to": "WACC"
+        },
+        {
+          "from": "fx",
+          "to": "FX"
+        },
+        {
+          "from": "sox",
+          "to": "SOX"
+        },
+        {
+          "from": "kyc",
+          "to": "KYC"
+        },
+        {
+          "from": "aml",
+          "to": "AML"
+        },
+        {
+          "from": "erp",
+          "to": "ERP"
+        }
+      ]
+    },
+    {
+      "id": "legal",
+      "title": "Legal",
+      "category": "Profession",
+      "description": "Contracts and litigation vocabulary.",
+      "entries": [
+        {
+          "from": "nda",
+          "to": "NDA"
+        },
+        {
+          "from": "msa",
+          "to": "MSA"
+        },
+        {
+          "from": "sow",
+          "to": "SOW"
+        },
+        {
+          "from": "dpa",
+          "to": "DPA"
+        },
+        {
+          "from": "baa",
+          "to": "BAA"
+        },
+        {
+          "from": "indemnity",
+          "to": "indemnity"
+        },
+        {
+          "from": "arbitration",
+          "to": "arbitration"
+        },
+        {
+          "from": "mediation",
+          "to": "mediation"
+        },
+        {
+          "from": "deposition",
+          "to": "deposition"
+        },
+        {
+          "from": "plaintiff",
+          "to": "plaintiff"
+        },
+        {
+          "from": "defendant",
+          "to": "defendant"
+        },
+        {
+          "from": "subpoena",
+          "to": "subpoena"
+        },
+        {
+          "from": "affidavit",
+          "to": "affidavit"
+        },
+        {
+          "from": "lien",
+          "to": "lien"
+        },
+        {
+          "from": "tort",
+          "to": "tort"
+        },
+        {
+          "from": "statute",
+          "to": "statute"
+        },
+        {
+          "from": "jurisdiction",
+          "to": "jurisdiction"
+        },
+        {
+          "from": "force majeure",
+          "to": "force majeure"
+        },
+        {
+          "from": "choice of law",
+          "to": "choice of law"
+        },
+        {
+          "from": "severability",
+          "to": "severability"
+        },
+        {
+          "from": "waiver",
+          "to": "waiver"
+        }
+      ]
+    },
+    {
+      "id": "hr-recruiting",
+      "title": "HR / recruiting",
+      "category": "Profession",
+      "description": "Hiring, benefits, and people operations.",
+      "entries": [
+        {
+          "from": "ats",
+          "to": "ATS"
+        },
+        {
+          "from": "eor",
+          "to": "EOR"
+        },
+        {
+          "from": "peo",
+          "to": "PEO"
+        },
+        {
+          "from": "hris",
+          "to": "HRIS"
+        },
+        {
+          "from": "onboarding",
+          "to": "onboarding"
+        },
+        {
+          "from": "offboarding",
+          "to": "offboarding"
+        },
+        {
+          "from": "background check",
+          "to": "background check"
+        },
+        {
+          "from": "i9",
+          "to": "I-9"
+        },
+        {
+          "from": "w4",
+          "to": "W-4"
+        },
+        {
+          "from": "cobra",
+          "to": "COBRA"
+        },
+        {
+          "from": "fmla",
+          "to": "FMLA"
+        },
+        {
+          "from": "ada",
+          "to": "ADA"
+        },
+        {
+          "from": "eeoc",
+          "to": "EEOC"
+        },
+        {
+          "from": "pto",
+          "to": "PTO"
+        },
+        {
+          "from": "espp",
+          "to": "ESPP"
+        },
+        {
+          "from": "rsu",
+          "to": "RSU"
+        },
+        {
+          "from": "401k",
+          "to": "401(k)"
+        },
+        {
+          "from": "open enrollment",
+          "to": "open enrollment"
+        },
+        {
+          "from": "comp band",
+          "to": "comp band"
+        },
+        {
+          "from": "headcount",
+          "to": "headcount"
+        },
+        {
+          "from": "req",
+          "to": "requisition"
+        }
+      ]
+    },
+    {
+      "id": "medical-physician",
+      "title": "Medical (physician)",
+      "category": "Profession",
+      "description": "Charting and clinical terms often mis-transcribed (spelling only).",
+      "entries": [
+        {
+          "from": "dyspnea",
+          "to": "dyspnea"
+        },
+        {
+          "from": "tachycardia",
+          "to": "tachycardia"
+        },
+        {
+          "from": "bradycardia",
+          "to": "bradycardia"
+        },
+        {
+          "from": "hypertension",
+          "to": "hypertension"
+        },
+        {
+          "from": "hypotension",
+          "to": "hypotension"
+        },
+        {
+          "from": "echocardiogram",
+          "to": "echocardiogram"
+        },
+        {
+          "from": "electrocardiogram",
+          "to": "electrocardiogram"
+        },
+        {
+          "from": "ekg",
+          "to": "EKG"
+        },
+        {
+          "from": "cbc",
+          "to": "CBC"
+        },
+        {
+          "from": "bmp",
+          "to": "BMP"
+        },
+        {
+          "from": "cmp",
+          "to": "CMP"
+        },
+        {
+          "from": "cbc with diff",
+          "to": "CBC with differential"
+        },
+        {
+          "from": "hemoglobin",
+          "to": "hemoglobin"
+        },
+        {
+          "from": "creatinine",
+          "to": "creatinine"
+        },
+        {
+          "from": "bilirubin",
+          "to": "bilirubin"
+        },
+        {
+          "from": "glucose",
+          "to": "glucose"
+        },
+        {
+          "from": "acetaminophen",
+          "to": "acetaminophen"
+        },
+        {
+          "from": "ibuprofen",
+          "to": "ibuprofen"
+        },
+        {
+          "from": "prednisone",
+          "to": "prednisone"
+        },
+        {
+          "from": "levothyroxine",
+          "to": "levothyroxine"
+        }
+      ]
+    },
+    {
+      "id": "nursing-clinical",
+      "title": "Nursing / clinical",
+      "category": "Profession",
+      "description": "Bedside and EMR terminology.",
+      "entries": [
+        {
+          "from": "vitals",
+          "to": "vitals"
+        },
+        {
+          "from": "qid",
+          "to": "QID"
+        },
+        {
+          "from": "tid",
+          "to": "TID"
+        },
+        {
+          "from": "gcs",
+          "to": "GCS"
+        },
+        {
+          "from": "prn",
+          "to": "PRN"
+        },
+        {
+          "from": "npo",
+          "to": "NPO"
+        },
+        {
+          "from": "emr",
+          "to": "EMR"
+        },
+        {
+          "from": "ehr",
+          "to": "EHR"
+        },
+        {
+          "from": "iv",
+          "to": "IV"
+        },
+        {
+          "from": "im",
+          "to": "IM"
+        },
+        {
+          "from": "subq",
+          "to": "subcutaneous"
+        },
+        {
+          "from": "ng tube",
+          "to": "NG tube"
+        },
+        {
+          "from": "foley",
+          "to": "Foley"
+        },
+        {
+          "from": "telemetry",
+          "to": "telemetry"
+        },
+        {
+          "from": "o2 sat",
+          "to": "O2 sat"
+        },
+        {
+          "from": "blood pressure",
+          "to": "blood pressure"
+        },
+        {
+          "from": "spo2",
+          "to": "SpO2"
+        },
+        {
+          "from": "respiratory rate",
+          "to": "respiratory rate"
+        },
+        {
+          "from": "cbc",
+          "to": "CBC"
+        },
+        {
+          "from": "bmp",
+          "to": "BMP"
+        },
+        {
+          "from": "wound vac",
+          "to": "wound VAC"
+        }
+      ]
+    },
+    {
+      "id": "laboratory-research",
+      "title": "Laboratory / research",
+      "category": "Profession",
+      "description": "Bench science and assay vocabulary.",
+      "entries": [
+        {
+          "from": "pcr",
+          "to": "PCR"
+        },
+        {
+          "from": "elisa",
+          "to": "ELISA"
+        },
+        {
+          "from": "western blot",
+          "to": "Western blot"
+        },
+        {
+          "from": "centrifuge",
+          "to": "centrifuge"
+        },
+        {
+          "from": "pipette",
+          "to": "pipette"
+        },
+        {
+          "from": "microplate",
+          "to": "microplate"
+        },
+        {
+          "from": "buffer",
+          "to": "buffer"
+        },
+        {
+          "from": "reagent",
+          "to": "reagent"
+        },
+        {
+          "from": "rna",
+          "to": "RNA"
+        },
+        {
+          "from": "dna",
+          "to": "DNA"
+        },
+        {
+          "from": "cdna",
+          "to": "cDNA"
+        },
+        {
+          "from": "mrna",
+          "to": "mRNA"
+        },
+        {
+          "from": "crispr",
+          "to": "CRISPR"
+        },
+        {
+          "from": "gel electrophoresis",
+          "to": "gel electrophoresis"
+        },
+        {
+          "from": "spectrophotometer",
+          "to": "spectrophotometer"
+        },
+        {
+          "from": "chromatography",
+          "to": "chromatography"
+        },
+        {
+          "from": "hplc",
+          "to": "HPLC"
+        },
+        {
+          "from": "gc ms",
+          "to": "GC-MS"
+        },
+        {
+          "from": "ph meter",
+          "to": "pH meter"
+        },
+        {
+          "from": "biosafety cabinet",
+          "to": "biosafety cabinet"
+        },
+        {
+          "from": "autoclave",
+          "to": "autoclave"
+        }
+      ]
+    },
+    {
+      "id": "education-teaching",
+      "title": "Education / teaching",
+      "category": "Profession",
+      "description": "Classroom, LMS, and assessment terms.",
+      "entries": [
+        {
+          "from": "lms",
+          "to": "LMS"
+        },
+        {
+          "from": "scorm",
+          "to": "SCORM"
+        },
+        {
+          "from": "lti",
+          "to": "LTI"
+        },
+        {
+          "from": "rubric",
+          "to": "rubric"
+        },
+        {
+          "from": "syllabus",
+          "to": "syllabus"
+        },
+        {
+          "from": "iep",
+          "to": "IEP"
+        },
+        {
+          "from": "504 plan",
+          "to": "504 plan"
+        },
+        {
+          "from": "ell",
+          "to": "ELL"
+        },
+        {
+          "from": "esl",
+          "to": "ESL"
+        },
+        {
+          "from": "stem",
+          "to": "STEM"
+        },
+        {
+          "from": "pd day",
+          "to": "PD day"
+        },
+        {
+          "from": "slo",
+          "to": "SLO"
+        },
+        {
+          "from": "formative",
+          "to": "formative"
+        },
+        {
+          "from": "summative",
+          "to": "summative"
+        },
+        {
+          "from": "gpa",
+          "to": "GPA"
+        },
+        {
+          "from": "sat test",
+          "to": "SAT"
+        },
+        {
+          "from": "act test",
+          "to": "ACT"
+        },
+        {
+          "from": "ap course",
+          "to": "AP course"
+        },
+        {
+          "from": "ib program",
+          "to": "IB program"
+        },
+        {
+          "from": "plc",
+          "to": "PLC"
+        },
+        {
+          "from": "rti",
+          "to": "RTI"
+        }
+      ]
+    },
+    {
+      "id": "journalism-editorial",
+      "title": "Journalism / editorial",
+      "category": "Profession",
+      "description": "Publishing and editorial workflow.",
+      "entries": [
+        {
+          "from": "byline",
+          "to": "byline"
+        },
+        {
+          "from": "dateline",
+          "to": "dateline"
+        },
+        {
+          "from": "embargo",
+          "to": "embargo"
+        },
+        {
+          "from": "fact check",
+          "to": "fact-check"
+        },
+        {
+          "from": "copy edit",
+          "to": "copyedit"
+        },
+        {
+          "from": "line edit",
+          "to": "line edit"
+        },
+        {
+          "from": "proofread",
+          "to": "proofread"
+        },
+        {
+          "from": "ap style",
+          "to": "AP Style"
+        },
+        {
+          "from": "chicago style",
+          "to": "Chicago style"
+        },
+        {
+          "from": "lede",
+          "to": "lede"
+        },
+        {
+          "from": "slug",
+          "to": "slug"
+        },
+        {
+          "from": "dek",
+          "to": "dek"
+        },
+        {
+          "from": "hed",
+          "to": "hed"
+        },
+        {
+          "from": "kicker",
+          "to": "kicker"
+        },
+        {
+          "from": "nut graf",
+          "to": "nut graf"
+        },
+        {
+          "from": "op ed",
+          "to": "op-ed"
+        },
+        {
+          "from": "press release",
+          "to": "press release"
+        },
+        {
+          "from": "masthead",
+          "to": "masthead"
+        },
+        {
+          "from": "stringer",
+          "to": "stringer"
+        },
+        {
+          "from": "wire copy",
+          "to": "wire copy"
+        },
+        {
+          "from": "stet",
+          "to": "stet"
+        }
+      ]
+    },
+    {
+      "id": "architecture-construction",
+      "title": "Architecture / construction",
+      "category": "Profession",
+      "description": "Design and field documentation terms.",
+      "entries": [
+        {
+          "from": "bim",
+          "to": "BIM"
+        },
+        {
+          "from": "rfi",
+          "to": "RFI"
+        },
+        {
+          "from": "submittal",
+          "to": "submittal"
+        },
+        {
+          "from": "change order",
+          "to": "change order"
+        },
+        {
+          "from": "punch list",
+          "to": "punch list"
+        },
+        {
+          "from": "as built",
+          "to": "as-built"
+        },
+        {
+          "from": "joist",
+          "to": "joist"
+        },
+        {
+          "from": "stud",
+          "to": "stud"
+        },
+        {
+          "from": "header",
+          "to": "header"
+        },
+        {
+          "from": "footing",
+          "to": "footing"
+        },
+        {
+          "from": "rebar",
+          "to": "rebar"
+        },
+        {
+          "from": "hvac",
+          "to": "HVAC"
+        },
+        {
+          "from": "mep",
+          "to": "MEP"
+        },
+        {
+          "from": "ada",
+          "to": "ADA"
+        },
+        {
+          "from": "occupancy load",
+          "to": "occupancy load"
+        },
+        {
+          "from": "egress",
+          "to": "egress"
+        },
+        {
+          "from": "sprinkler head",
+          "to": "sprinkler head"
+        },
+        {
+          "from": "dwg",
+          "to": "DWG"
+        },
+        {
+          "from": "r value",
+          "to": "R-value"
+        },
+        {
+          "from": "u factor",
+          "to": "U-factor"
+        },
+        {
+          "from": "leed",
+          "to": "LEED"
+        }
+      ]
+    },
+    {
+      "id": "mechanical-engineering",
+      "title": "Mechanical engineering",
+      "category": "Profession",
+      "description": "CAD, manufacturing, and materials vocabulary.",
+      "entries": [
+        {
+          "from": "cad",
+          "to": "CAD"
+        },
+        {
+          "from": "cam",
+          "to": "CAM"
+        },
+        {
+          "from": "cnc",
+          "to": "CNC"
+        },
+        {
+          "from": "billet",
+          "to": "billet"
+        },
+        {
+          "from": "forging",
+          "to": "forging"
+        },
+        {
+          "from": "casting",
+          "to": "casting"
+        },
+        {
+          "from": "tolerance",
+          "to": "tolerance"
+        },
+        {
+          "from": "datum",
+          "to": "datum"
+        },
+        {
+          "from": "gd and t",
+          "to": "GD&T"
+        },
+        {
+          "from": "bom",
+          "to": "BOM"
+        },
+        {
+          "from": "fmea",
+          "to": "FMEA"
+        },
+        {
+          "from": "dfm",
+          "to": "DFM"
+        },
+        {
+          "from": "fea",
+          "to": "FEA"
+        },
+        {
+          "from": "cfd",
+          "to": "CFD"
+        },
+        {
+          "from": "torque",
+          "to": "torque"
+        },
+        {
+          "from": "rpm",
+          "to": "RPM"
+        },
+        {
+          "from": "psi",
+          "to": "PSI"
+        },
+        {
+          "from": "shaft",
+          "to": "shaft"
+        },
+        {
+          "from": "bearing",
+          "to": "bearing"
+        },
+        {
+          "from": "gear ratio",
+          "to": "gear ratio"
+        },
+        {
+          "from": "heat treat",
+          "to": "heat treat"
+        },
+        {
+          "from": "anneal",
+          "to": "anneal"
+        }
+      ]
+    },
+    {
+      "id": "real-estate",
+      "title": "Real estate",
+      "category": "Profession",
+      "description": "Transactions and property vocabulary.",
+      "entries": [
+        {
+          "from": "mls",
+          "to": "MLS"
+        },
+        {
+          "from": "hoa",
+          "to": "HOA"
+        },
+        {
+          "from": "ccr",
+          "to": "CCR"
+        },
+        {
+          "from": "escrow",
+          "to": "escrow"
+        },
+        {
+          "from": "earnest money",
+          "to": "earnest money"
+        },
+        {
+          "from": "title insurance",
+          "to": "title insurance"
+        },
+        {
+          "from": "deed",
+          "to": "deed"
+        },
+        {
+          "from": "lien",
+          "to": "lien"
+        },
+        {
+          "from": "appraisal",
+          "to": "appraisal"
+        },
+        {
+          "from": "comps",
+          "to": "comps"
+        },
+        {
+          "from": "cap rate",
+          "to": "cap rate"
+        },
+        {
+          "from": "noi",
+          "to": "NOI"
+        },
+        {
+          "from": "dscr",
+          "to": "DSCR"
+        },
+        {
+          "from": "arm",
+          "to": "ARM"
+        },
+        {
+          "from": "fha",
+          "to": "FHA"
+        },
+        {
+          "from": "va loan",
+          "to": "VA loan"
+        },
+        {
+          "from": "pmi",
+          "to": "PMI"
+        },
+        {
+          "from": "closing disclosure",
+          "to": "Closing Disclosure"
+        },
+        {
+          "from": "trid",
+          "to": "TRID"
+        },
+        {
+          "from": "1031 exchange",
+          "to": "1031 exchange"
+        },
+        {
+          "from": "fsbo",
+          "to": "FSBO"
+        }
+      ]
+    },
+    {
+      "id": "logistics-supply-chain",
+      "title": "Logistics / supply chain",
+      "category": "Profession",
+      "description": "Warehousing, freight, and inventory terms.",
+      "entries": [
+        {
+          "from": "sku",
+          "to": "SKU"
+        },
+        {
+          "from": "upc",
+          "to": "UPC"
+        },
+        {
+          "from": "ean",
+          "to": "EAN"
+        },
+        {
+          "from": "asn",
+          "to": "ASN"
+        },
+        {
+          "from": "po",
+          "to": "PO"
+        },
+        {
+          "from": "bol",
+          "to": "BOL"
+        },
+        {
+          "from": "ltl",
+          "to": "LTL"
+        },
+        {
+          "from": "ftl",
+          "to": "FTL"
+        },
+        {
+          "from": "3pl",
+          "to": "3PL"
+        },
+        {
+          "from": "4pl",
+          "to": "4PL"
+        },
+        {
+          "from": "wms",
+          "to": "WMS"
+        },
+        {
+          "from": "tms",
+          "to": "TMS"
+        },
+        {
+          "from": "erp",
+          "to": "ERP"
+        },
+        {
+          "from": "cross dock",
+          "to": "cross-dock"
+        },
+        {
+          "from": "pick pack",
+          "to": "pick and pack"
+        },
+        {
+          "from": "slotting",
+          "to": "slotting"
+        },
+        {
+          "from": "fifo",
+          "to": "FIFO"
+        },
+        {
+          "from": "lifo",
+          "to": "LIFO"
+        },
+        {
+          "from": "dunnage",
+          "to": "dunnage"
+        },
+        {
+          "from": "pallet",
+          "to": "pallet"
+        },
+        {
+          "from": "container",
+          "to": "container"
+        },
+        {
+          "from": "incoterms",
+          "to": "Incoterms"
+        }
+      ]
+    }
+  ]
+}

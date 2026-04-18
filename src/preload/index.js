@@ -62,6 +62,9 @@ contextBridge.exposeInMainWorld('tellaflow', {
   addDictionaryEntry: (from, to) => ipcRenderer.invoke('add-dictionary-entry', { from, to }),
   removeDictionaryEntry: (id) => ipcRenderer.invoke('remove-dictionary-entry', id),
   updateDictionaryEntry: (id, from, to) => ipcRenderer.invoke('update-dictionary-entry', { id, from, to }),
+  getDictionaryPacksCatalog: () => ipcRenderer.invoke('get-dictionary-packs-catalog'),
+  installDictionaryPack: (packId) => ipcRenderer.invoke('install-dictionary-pack', packId),
+  uninstallDictionaryPack: (packId) => ipcRenderer.invoke('uninstall-dictionary-pack', packId),
 
   // Snippets management
   getSnippets: () => ipcRenderer.invoke('get-snippets'),

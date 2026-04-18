@@ -31,6 +31,7 @@ const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFlo
 const { showMainWindow, sendToMainWindow, destroyMainWindow, createMainWindow } = require('./main-window');
 const history = require('./history');
 const { closeDb } = require('./db');
+const { registerDictionaryPackIpc } = require('./dictionary-pack-ipc');
 const sounds = require('./sounds');
 const { runStartupSmokeTest } = require('./startup-smoke-test');
 
@@ -172,6 +173,7 @@ app.whenReady().then(async () => {
   }
 
   registerIPC();
+  registerDictionaryPackIpc();
 
   // Ensure recordings directory exists
   const fs = require('fs');

@@ -52,6 +52,12 @@ function getDb() {
     if (!err.message?.includes('duplicate column name')) throw err;
   }
 
+  try {
+    db.exec(`ALTER TABLE dictionary ADD COLUMN pack_id TEXT`);
+  } catch (err) {
+    if (!err.message?.includes('duplicate column name')) throw err;
+  }
+
   migrateFromJson(app.getPath('userData'));
   seedDefaults();
 
@@ -84,7 +90,9 @@ function migrateFromJson(userDataPath) {
       console.log('Migrating settings from JSON to SQLite...');
 
       const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
-      const insertDict = db.prepare('INSERT INTO dictionary (from_word, to_word) VALUES (?, ?)');
+      const insertDict = db.prepare(
+        'INSERT INTO dictionary (from_word, to_word, pack_id) VALUES (?, ?, NULL)',
+      );
 
       const migrate = db.transaction(() => {
         for (const [key, val] of Object.entries(raw)) {
