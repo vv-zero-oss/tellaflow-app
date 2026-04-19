@@ -1,5 +1,7 @@
-import type { SVGProps } from 'react';
+import type { ComponentType, SVGProps } from 'react';
+import { Mic } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Separator } from '@/components/ui/separator';
 
 function HomeIcon(props: SVGProps<SVGSVGElement>) {
   return (
@@ -99,14 +101,47 @@ interface SidebarProps {
   isLoading: boolean;
 }
 
-const navItems = [
+const coreNavItems = [
   { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon },
   { id: 'transcripts', label: 'Transcripts', icon: HomeIcon },
   { id: 'snippets', label: 'Snippets', icon: SnippetsIcon },
   { id: 'dictionary', label: 'Dictionary', icon: DictionaryIcon },
+];
+
+const practiceNavItems = [{ id: 'practice', label: 'Practice', icon: Mic }];
+
+const settingsNavItems = [
   { id: 'models', label: 'Models', icon: ModelsIcon },
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
+
+type NavIcon = ComponentType<{ className?: string; strokeWidth?: number }>;
+
+function NavButton({
+  item,
+  activePage,
+  onNavigate,
+}: {
+  item: { id: string; label: string; icon: NavIcon };
+  activePage: string;
+  onNavigate: (page: string) => void;
+}) {
+  const Icon = item.icon;
+  return (
+    <button
+      type="button"
+      onClick={() => onNavigate(item.id)}
+      className={cn(
+        'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+        'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+        activePage === item.id && 'bg-sidebar-accent text-sidebar-accent-foreground',
+      )}
+    >
+      <Icon className="h-4 w-4 shrink-0" strokeWidth={item.id === 'practice' ? 2 : 1.8} />
+      {item.label}
+    </button>
+  );
+}
 
 export function Sidebar({ activePage, onNavigate, status, isError, isLoading }: SidebarProps) {
   return (
@@ -115,20 +150,22 @@ export function Sidebar({ activePage, onNavigate, status, isError, isLoading }: 
         <img src={`${import.meta.env.BASE_URL}tellaflow-logo-site.svg`} alt="Tellaflow" className="h-25 w-25 object-contain" />
       </div>
 
-      <nav className="flex-1 flex flex-col gap-1 px-3 [-webkit-app-region:no-drag]">
-        {navItems.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => onNavigate(item.id)}
-            className={cn(
-              'flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-              'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-              activePage === item.id && 'bg-sidebar-accent text-sidebar-accent-foreground',
-            )}
-          >
-            <item.icon className="w-4 h-4" strokeWidth={1.8} />
-            {item.label}
-          </button>
+      <nav className="flex flex-1 flex-col gap-1 px-3 [-webkit-app-region:no-drag]">
+        {coreNavItems.map((item) => (
+          <NavButton key={item.id} item={item} activePage={activePage} onNavigate={onNavigate} />
+        ))}
+        <div className="py-2">
+          <Separator className="bg-sidebar-border/60" />
+        </div>
+        <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">Practice</p>
+        {practiceNavItems.map((item) => (
+          <NavButton key={item.id} item={item} activePage={activePage} onNavigate={onNavigate} />
+        ))}
+        <div className="py-2">
+          <Separator className="bg-sidebar-border/60" />
+        </div>
+        {settingsNavItems.map((item) => (
+          <NavButton key={item.id} item={item} activePage={activePage} onNavigate={onNavigate} />
         ))}
       </nav>
 

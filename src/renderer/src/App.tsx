@@ -6,6 +6,7 @@ import { HomePage } from '@/components/home/HomePage';
 import { ModelsPage } from '@/components/models/ModelsPage';
 import { SnippetsPage } from '@/components/snippets/SnippetsPage';
 import { DictionaryPage } from '@/components/dictionary/DictionaryPage';
+import { PracticePage } from '@/components/practice/PracticePage';
 import { SettingsPage } from '@/components/settings/SettingsPage';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -36,8 +37,8 @@ export default function App() {
         isError={isError}
         isLoading={isLoading}
       />
-      <div className="flex-1 p-3 flex h-screen flex-col overflow-hidden relative">
-      <main className="flex-1 main-panel rounded-lg flex flex-col overflow-hidden relative">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden p-3 relative">
+      <main className="main-panel relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg">
         <AnimatePresence mode="wait">
           {page === 'transcripts' && (
             <motion.div
@@ -119,6 +120,19 @@ export default function App() {
               className="flex flex-col flex-1 overflow-hidden"
             >
               <DictionaryPage />
+            </motion.div>
+          )}
+          {page === 'practice' && (
+            <motion.div
+              key="practice"
+              variants={pageVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+              className="flex min-w-0 flex-1 flex-col overflow-hidden"
+            >
+              <PracticePage />
             </motion.div>
           )}
           {page === 'settings' && (

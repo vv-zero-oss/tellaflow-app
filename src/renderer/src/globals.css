@@ -205,6 +205,31 @@
   }
 }
 
+/* Tellaflow Practice — scoped gamified tokens (light + dark) */
+[data-practice-root] {
+  --practice-success: oklch(0.58 0.19 145);
+  --practice-success-soft: oklch(0.92 0.06 145);
+  --practice-warn: oklch(0.62 0.18 55);
+  --practice-warn-soft: oklch(0.95 0.05 85);
+  --practice-cta: oklch(0.62 0.17 250);
+  --practice-cta-fg: oklch(0.99 0.01 250);
+  --practice-accent: oklch(0.55 0.22 295);
+  --practice-card: oklch(0.99 0.01 95);
+  --practice-card-border: oklch(0.88 0.02 95);
+}
+
+.dark [data-practice-root] {
+  --practice-success: oklch(0.68 0.16 150);
+  --practice-success-soft: oklch(0.28 0.06 150);
+  --practice-warn: oklch(0.62 0.16 25);
+  --practice-warn-soft: oklch(0.32 0.06 25);
+  --practice-cta: oklch(0.62 0.14 250);
+  --practice-cta-fg: oklch(0.15 0.02 250);
+  --practice-accent: oklch(0.7 0.14 295);
+  --practice-card: oklch(0.22 0.02 280);
+  --practice-card-border: oklch(0.34 0.03 280);
+}
+
 @layer base {
   * {
     border-color: var(--color-border);

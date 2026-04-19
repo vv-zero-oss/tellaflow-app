@@ -35,6 +35,20 @@ contextBridge.exposeInMainWorld('tellaflow', {
   onPlaygroundText: (cb) => ipcRenderer.on('playground-text', (_, text) => cb(text)),
   offPlaygroundText: () => ipcRenderer.removeAllListeners('playground-text'),
 
+  setPracticeMode: (on) => ipcRenderer.send(on ? 'practice-mode-on' : 'practice-mode-off'),
+  /** Register listener; returns dispose fn (prefer over removeAllListeners). */
+  onPracticeText: (cb) => {
+    const h = (_, text) => cb(text);
+    ipcRenderer.on('practice-text', h);
+    return () => ipcRenderer.removeListener('practice-text', h);
+  },
+  offPracticeText: () => ipcRenderer.removeAllListeners('practice-text'),
+  onPracticeAudioLevel: (cb) => {
+    const h = (_, level) => cb(level);
+    ipcRenderer.on('practice-audio-level', h);
+    return () => ipcRenderer.removeListener('practice-audio-level', h);
+  },
+
   // Settings IPC
   getConfig: () => ipcRenderer.invoke('get-config'),
   setModel: (model) => ipcRenderer.send('set-model', model),

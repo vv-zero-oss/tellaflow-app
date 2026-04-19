@@ -1,0 +1,26 @@
+{
+  "id": "default-echo",
+  "title": "Echo Ladder — full course",
+  "rounds": [
+    { "id": "e1", "exerciseType": "echo", "tier": 1, "target": "Hello world", "passThreshold": 0.85 },
+    { "id": "e2", "exerciseType": "echo", "tier": 1, "target": "The quick brown fox", "passThreshold": 0.85 },
+    { "id": "e3", "exerciseType": "echo", "tier": 1, "target": "Meeting at three tomorrow", "passThreshold": 0.85 },
+    { "id": "e4", "exerciseType": "echo", "tier": 2, "target": "Ship the smallest thing that works", "passThreshold": 0.82 },
+    { "id": "e5", "exerciseType": "echo", "tier": 2, "target": "Voice first dictation practice mode", "passThreshold": 0.82 },
+    { "id": "e6", "exerciseType": "echo", "tier": 2, "target": "Please send the revised document today", "passThreshold": 0.82 },
+    { "id": "e7", "exerciseType": "echo", "tier": 3, "target": "Sphinx of black quartz judge my vow", "passThreshold": 0.78 },
+    { "id": "e8", "exerciseType": "echo", "tier": 3, "target": "She sells seashells by the seashore", "passThreshold": 0.78 },
+    { "id": "e9", "exerciseType": "echo", "tier": 3, "target": "How much wood would a woodchuck chuck", "passThreshold": 0.78 },
+    { "id": "e10", "exerciseType": "echo", "tier": 3, "target": "Tellaflow practice round complete", "passThreshold": 0.78 },
+    { "id": "e11", "exerciseType": "echo", "tier": 4, "target": "I would like to schedule a follow up meeting next week", "passThreshold": 0.76 },
+    { "id": "e12", "exerciseType": "echo", "tier": 4, "target": "The quarterly roadmap depends on solid customer research", "passThreshold": 0.76 },
+    { "id": "e13", "exerciseType": "echo", "tier": 4, "target": "Please attach the spreadsheet with the revised budget numbers", "passThreshold": 0.76 },
+    { "id": "e14", "exerciseType": "echo", "tier": 4, "target": "We should prioritize accessibility and keyboard shortcuts for power users", "passThreshold": 0.76 },
+    { "id": "e15", "exerciseType": "echo", "tier": 5, "target": "Red leather yellow leather red leather yellow leather", "passThreshold": 0.74 },
+    { "id": "e16", "exerciseType": "echo", "tier": 5, "target": "Transcription runs locally on your device for privacy and lower latency", "passThreshold": 0.74 },
+    { "id": "e17", "exerciseType": "echo", "tier": 5, "target": "Double check microphone permissions before starting a longer dictation session", "passThreshold": 0.74 },
+    { "id": "e18", "exerciseType": "echo", "tier": 5, "target": "Technical documentation is easier when you speak naturally and edit lightly afterward", "passThreshold": 0.72 },
+    { "id": "e19", "exerciseType": "echo", "tier": 5, "target": "Peter Piper picked a peck of pickled peppers by the pickle patch", "passThreshold": 0.72 },
+    { "id": "e20", "exerciseType": "echo", "tier": 5, "target": "Unique New York you know you need unique New York", "passThreshold": 0.7 }
+  ]
+}

@@ -152,6 +152,11 @@ interface TellaflowAPI {
   onPlaygroundText: (cb: (text: string) => void) => void;
   offPlaygroundText: () => void;
 
+  setPracticeMode: (on: boolean) => void;
+  onPracticeText: (cb: (text: string) => void) => () => void;
+  offPracticeText?: () => void;
+  onPracticeAudioLevel: (cb: (level: number) => void) => () => void;
+
   getConfig: () => Promise<AppConfig>;
   setModel: (model: string) => void;
   setGrammarEnabled: (enabled: boolean) => void;

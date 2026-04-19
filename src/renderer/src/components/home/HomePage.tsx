@@ -606,11 +606,7 @@ export function HomePage({ entries, totalWords, onCopy, onDelete, hotkey, missin
   return (
     <AudioPlayerProvider>
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PermissionBanner
-        missingMic={missingMic}
-        missingAccessibility={missingAccessibility}
-        onGoToSettings={onGoToSettings}
-      />
+      
       {/* Header */}
       <div className="px-7 pt-12 pb-2 [-webkit-app-region:drag]">
         <p className="text-[11px] text-muted-foreground font-medium tracking-wide uppercase mb-1">
@@ -622,7 +618,7 @@ export function HomePage({ entries, totalWords, onCopy, onDelete, hotkey, missin
           <h1 className="text-[26px] font-semibold tracking-tight leading-snug">
             {getGreeting()}.
           </h1>
-
+        
           <div className="[-webkit-app-region:no-drag] shrink-0 flex items-center gap-2">
             {entries.length > 0 && (
               <button
@@ -647,7 +643,7 @@ export function HomePage({ entries, totalWords, onCopy, onDelete, hotkey, missin
             )}
           </div>
         </div>
-
+       
         {entries.length > 0 && (
           <p className="text-[14px] text-muted-foreground leading-snug mt-0.5">
             {isSearching ? (
@@ -697,7 +693,7 @@ export function HomePage({ entries, totalWords, onCopy, onDelete, hotkey, missin
           )}
         </AnimatePresence>
       </div>
-
+      
       {entries.length === 0 ? (
         <HotkeyEmptyState hotkey={hotkey} />
       ) : filteredEntries.length === 0 ? (
@@ -709,6 +705,11 @@ export function HomePage({ entries, totalWords, onCopy, onDelete, hotkey, missin
       ) : (
         <div className="flex-1 relative overflow-hidden">
           {/* Top fade */}
+          <PermissionBanner
+        missingMic={missingMic}
+        missingAccessibility={missingAccessibility}
+        onGoToSettings={onGoToSettings}
+      />
           <div className="absolute top-0 left-0 right-0 h-8 z-10 pointer-events-none bg-gradient-to-b from-background/60 dark:from-background/30 to-transparent" />
           {/* Bottom fade */}
           <div className="absolute bottom-0 left-0 right-0 h-10 z-10 pointer-events-none bg-gradient-to-t from-background/60 dark:from-background/30 to-transparent" />

@@ -620,9 +620,20 @@ function registerIPC() {
 
   // Playground mode: when active, transcription results are routed back to the
   // onboarding window instead of being pasted into external apps.
+  // Practice mode: route ASR (pre-dictionary) to main window; mutually exclusive with playground.
   let playgroundMode = false;
-  ipcMain.on('playground-mode-on',  () => { playgroundMode = true; });
+  let practiceMode = false;
+  ipcMain.on('playground-mode-on',  () => {
+    playgroundMode = true;
+    practiceMode = false;
+  });
   ipcMain.on('playground-mode-off', () => { playgroundMode = false; });
+
+  ipcMain.on('practice-mode-on', () => {
+    practiceMode = true;
+    playgroundMode = false;
+  });
+  ipcMain.on('practice-mode-off', () => { practiceMode = false; });
 
   // Settings
   ipcMain.handle('get-config', () => {
@@ -1059,6 +1070,9 @@ function registerIPC() {
 
   ipcMain.on('audio-level', (_, level) => {
     sendToToast('audio-level', level);
+    if (practiceMode) {
+      sendToMainWindow('practice-audio-level', level);
+    }
   });
 
   // ── Floating bar: capture frontmost app before click steals focus ─────────
@@ -1208,6 +1222,9 @@ function registerIPC() {
           playgroundMode = false; // window gone — clear stale flag
         }
       }
+      if (practiceMode) {
+        sendToMainWindow('practice-text', '');
+      }
       return;
     }
 
@@ -1260,8 +1277,25 @@ function registerIPC() {
             playgroundMode = false; // window gone — clear stale flag
           }
         }
+        if (practiceMode) {
+          sendToMainWindow('practice-text', '');
+        }
         return;
       }
+
+      // Practice scoring uses ASR output before dictionary / grammar / snippets.
+      const transcriptForPractice = (rawText || '').trim();
+      if (practiceMode) {
+        clickPasteTargetApp = null;
+        hideToast();
+        broadcastStatus('Ready');
+        if (savedAudioPath) {
+          try { fs.unlinkSync(savedAudioPath); } catch (_) {}
+        }
+        sendToMainWindow('practice-text', transcriptForPractice);
+        return;
+      }
+
       rawText = applyDictionary(rawText);
 
       if (config.getGrammarEnabled() && grammar.isModelAvailable()) {
@@ -1346,6 +1380,10 @@ function registerIPC() {
       }).show();
 
       if (isModelMissing) broadcastStatus('No model downloaded');
+
+      if (practiceMode) {
+        sendToMainWindow('practice-text', '');
+      }
     }
 
     broadcastStatus('Ready');
