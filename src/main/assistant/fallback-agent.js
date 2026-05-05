@@ -52,8 +52,13 @@ const OLLAMA_TOOLS = [
   { type: 'function', function: { name: 'play_music', description: 'Play music', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'pause_music', description: 'Pause music', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'next_track', description: 'Skip to next track', parameters: { type: 'object', properties: {}, required: [] } } },
-  // Screenshots & screen
-  { type: 'function', function: { name: 'screenshot', description: 'Take a screenshot', parameters: { type: 'object', properties: {}, required: [] } } },
+  // CUA desktop control
+  { type: 'function', function: { name: 'screenshot', description: 'Take a screenshot of the screen via CUA', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'click_at', description: 'Click at screen coordinates (x, y)', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, button: { type: 'string', description: 'left or right' } }, required: ['x', 'y'] } } },
+  { type: 'function', function: { name: 'scroll_screen', description: 'Scroll the screen', parameters: { type: 'object', properties: { direction: { type: 'string', description: 'up or down' }, amount: { type: 'number' } }, required: [] } } },
+  { type: 'function', function: { name: 'get_screen_size', description: 'Get screen resolution', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'get_accessibility_tree', description: 'Get UI elements of frontmost window (buttons, text fields, labels) via CUA accessibility API', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'get_window_list', description: 'List all visible windows', parameters: { type: 'object', properties: {}, required: [] } } },
   // Timers
   { type: 'function', function: { name: 'set_timer', description: 'Set a countdown timer', parameters: { type: 'object', properties: { seconds: { type: 'number' }, label: { type: 'string' } }, required: ['seconds'] } } },
   { type: 'function', function: { name: 'show_notification', description: 'Show a notification', parameters: { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' } }, required: ['title'] } } },

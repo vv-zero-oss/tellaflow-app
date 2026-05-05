@@ -2,12 +2,19 @@
  * Action executors for voice assistant tool calls.
  * Uses osascript for macOS automation + CUA server for desktop control.
  */
-const { exec, execSync } = require('child_process');
+const { exec } = require('child_process');
 const { shell, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
 const HOME = process.env.HOME || '/Users/' + process.env.USER;
+
+// CUA server for desktop control (screenshot, click, type, accessibility)
+let cua = null;
+function getCUA() {
+  if (!cua) cua = require('./cua-server');
+  return cua;
+}
 
 function execAS(script) {
   return new Promise((resolve, reject) => {
@@ -198,23 +205,65 @@ const ACTIONS = {
     },
   },
 
-  // ─── Text Input ─────────────────────────────────────────────────────────────
+  // ─── Text Input (via CUA or fallback) ────────────────────────────────────────
   type_text: {
     execute: async ({ text }) => {
-      const paste = require('../paste');
-      await paste.pasteText(text);
-      return `Typed: "${text.slice(0, 50)}"`;
+      try {
+        await getCUA().typeText(text);
+        return `Typed: "${text.slice(0, 50)}"`;
+      } catch {
+        const paste = require('../paste');
+        await paste.pasteText(text);
+        return `Typed: "${text.slice(0, 50)}"`;
+      }
     },
   },
   press_keys: {
     execute: async ({ keys }) => {
-      // keys like "cmd+c", "cmd+shift+4"
-      const parts = keys.toLowerCase().split('+');
-      const key = parts.pop();
-      const mods = parts.map(m => ({ cmd: 'command', ctrl: 'control', alt: 'option', shift: 'shift' }[m] || m));
-      const using = mods.length ? ` using {${mods.map(m => m + ' down').join(', ')}}` : '';
-      await execAS(`tell application "System Events" to keystroke "${key}"${using}`);
-      return `Pressed: ${keys}`;
+      try {
+        const keyList = keys.split('+').map(k => k.trim());
+        await getCUA().pressKey(keyList);
+        return `Pressed: ${keys}`;
+      } catch {
+        const parts = keys.toLowerCase().split('+');
+        const key = parts.pop();
+        const mods = parts.map(m => ({ cmd: 'command', ctrl: 'control', alt: 'option', shift: 'shift' }[m] || m));
+        const using = mods.length ? ` using {${mods.map(m => m + ' down').join(', ')}}` : '';
+        await execAS(`tell application "System Events" to keystroke "${key}"${using}`);
+        return `Pressed: ${keys}`;
+      }
+    },
+  },
+
+  // ─── CUA Desktop Control ───────────────────────────────────────────────────
+  click_at: {
+    execute: async ({ x, y, button }) => {
+      await getCUA().click(x, y, button || 'left');
+      return `Clicked at (${x}, ${y})`;
+    },
+  },
+  scroll_screen: {
+    execute: async ({ x, y, direction, amount }) => {
+      await getCUA().scroll(x || 500, y || 500, direction || 'down', amount || 3);
+      return `Scrolled ${direction || 'down'}`;
+    },
+  },
+  get_screen_size: {
+    execute: async () => {
+      const result = await getCUA().getScreenSize();
+      return `Screen: ${result.width}x${result.height}`;
+    },
+  },
+  get_accessibility_tree: {
+    execute: async () => {
+      const result = await getCUA().getAccessibilityTree();
+      return `App: ${result.app} | Window: ${result.window} | Elements: ${result.elements?.slice(0, 200) || 'none'}`;
+    },
+  },
+  get_window_list: {
+    execute: async () => {
+      const result = await getCUA().getWindowList();
+      return result.windows || 'No windows found';
     },
   },
 
@@ -233,8 +282,7 @@ const ACTIONS = {
     },
   },
   create_calendar_event: {
-    execute: async ({ title, date, time }) => {
-      // Simplified — creates an all-day event for today
+    execute: async ({ title }) => {
       await execAS(`tell application "Calendar" to tell calendar "Home" to make new event with properties {summary:"${title}", start date:current date}`);
       return `Calendar event created: "${title}"`;
     },
@@ -264,9 +312,21 @@ const ACTIONS = {
     },
   },
 
-  // ─── Screenshots (via CUA or native) ────────────────────────────────────────
+  // ─── Screenshots (via CUA server) ────────────────────────────────────────────
   screenshot: {
     execute: async () => {
+      try {
+        const result = await getCUA().screenshot();
+        if (result.image) {
+          const { app } = require('electron');
+          const dir = path.join(app.getPath('userData'), 'screenshots');
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          const dest = path.join(dir, `screenshot-${Date.now()}.png`);
+          fs.writeFileSync(dest, Buffer.from(result.image, 'base64'));
+          return `Screenshot saved (${Math.round(result.image.length * 0.75 / 1024)} KB) at ${dest}`;
+        }
+      } catch {}
+      // Fallback to native
       const { app } = require('electron');
       const dir = path.join(app.getPath('userData'), 'screenshots');
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
