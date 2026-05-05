@@ -711,21 +711,25 @@ function registerIPC() {
       const fallbackAgent = require('./assistant/fallback-agent');
       const actions = require('./assistant/actions');
 
-      // Stream partial responses to the renderer as they arrive
-      let fullResponse = '';
+      console.log(`[assistant-ipc] Message: "${message}"`);
+
       const response = await fallbackAgent.query(message, {
         onPartial: (chunk) => {
-          fullResponse += chunk;
-          sendToMainWindow('assistant-partial-response', fullResponse);
+          sendToMainWindow('assistant-partial-response', chunk);
         },
         onToolCall: async (name, params) => {
+          console.log(`[assistant-ipc] TOOL CALL: ${name}(${JSON.stringify(params)})`);
           sendToMainWindow('assistant-tool-call', { name, params });
-          return actions.executeAction(name, params);
+          const result = await actions.executeAction(name, params);
+          console.log(`[assistant-ipc] TOOL RESULT: ${result}`);
+          return result;
         },
       });
 
-      return { ok: true, response: response || fullResponse };
+      console.log(`[assistant-ipc] Final response: "${(response || '').slice(0, 80)}"`);
+      return { ok: true, response: response };
     } catch (err) {
+      console.error(`[assistant-ipc] Error:`, err.message);
       return { ok: false, response: `Error: ${err.message}` };
     }
   });

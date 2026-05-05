@@ -79,13 +79,16 @@ async function queryOllama(userMessage, { onToolCall, signal } = {}) {
   if (userMessage) addMessage({ role: 'user', content: userMessage });
 
   const model = toOllamaModel(assistantConfig.getModel());
+  const provider = assistantConfig.getProvider();
   const useTools = onToolCall && modelSupportsTools(model);
+  console.log(`[fallback-agent] provider=${provider} model=${model} useTools=${useTools} supportsTools=${modelSupportsTools(model)}`);
 
   const body = {
     model,
     messages: conversationMessages,
     stream: false,
-    options: { num_predict: 512 },
+    // Higher token budget when tools enabled — model needs tokens for thinking + tool call JSON
+    options: { num_predict: useTools ? 2048 : 512 },
   };
   if (useTools) body.tools = OLLAMA_TOOLS;
 
@@ -108,20 +111,30 @@ async function queryOllama(userMessage, { onToolCall, signal } = {}) {
     // Add assistant message with tool calls to history
     addMessage(msg);
 
-    // Execute each tool call
+    // Execute each tool call and collect results
+    const toolResults = [];
     for (const tc of msg.tool_calls) {
       const name = tc.function.name;
       const args = tc.function.arguments || {};
       console.log(`[assistant] TOOL CALL: ${name}(${JSON.stringify(args)})`);
 
       const result = await onToolCall(name, args);
-      console.log(`[assistant] TOOL RESULT: ${result}`);
+      console.log(`[assistant] TOOL RESULT: ${String(result).slice(0, 100)}`);
 
-      addMessage({ role: 'tool', content: typeof result === 'string' ? result : JSON.stringify(result) });
+      const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+      toolResults.push({ name, result: resultStr });
+      addMessage({ role: 'tool', content: resultStr });
     }
 
     // Re-query so model generates a natural language response after tool results
-    return queryOllama(null, { onToolCall, signal });
+    const response = await queryOllama(null, { onToolCall, signal });
+
+    // If model just says "Done." or similar terse reply, include the actual tool output
+    if (!response || response === 'Done.' || response.length < 10) {
+      const summary = toolResults.map(t => `[${t.name}]: ${t.result}`).join('\n');
+      return summary;
+    }
+    return response;
   }
 
   const text = stripThinking(msg?.content || 'Done.');
