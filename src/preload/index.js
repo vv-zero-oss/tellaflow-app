@@ -98,6 +98,24 @@ contextBridge.exposeInMainWorld('tellaflow', {
   setTranscriptionEngine: (engine) => ipcRenderer.send('set-transcription-engine', engine),
   onConfigChanged: (cb) => { const h = (_, c) => cb(c); ipcRenderer.on('config-changed', h); return () => ipcRenderer.removeListener('config-changed', h); },
 
+  // Voice Assistant IPC
+  getAssistantConfig: () => ipcRenderer.invoke('assistant-get-config'),
+  setAssistantEnabled: (v) => ipcRenderer.send('assistant-set-enabled', v),
+  setAssistantProvider: (v) => ipcRenderer.send('assistant-set-provider', v),
+  setAssistantModel: (v) => ipcRenderer.send('assistant-set-model', v),
+  setAssistantHotkey: (v) => ipcRenderer.send('assistant-set-hotkey', v),
+  setAssistantVoice: (v) => ipcRenderer.send('assistant-set-voice', v),
+  setAssistantApiKey: (data) => ipcRenderer.send('assistant-set-api-key', data),
+  testAssistantConnection: () => ipcRenderer.invoke('assistant-test-connection'),
+  getAssistantTTSStatus: () => ipcRenderer.invoke('assistant-get-tts-status'),
+  getAssistantStoredProviders: () => ipcRenderer.invoke('assistant-get-stored-providers'),
+  onAssistantConfigChanged: (cb) => { const h = (_, c) => cb(c); ipcRenderer.on('assistant-config-changed', h); return () => ipcRenderer.removeListener('assistant-config-changed', h); },
+  sendAssistantMessage: (message) => ipcRenderer.invoke('assistant-send-message', message),
+  clearAssistantHistory: () => ipcRenderer.invoke('assistant-clear-history'),
+  onAssistantChatMessage: (cb) => { const h = (_, msg) => cb(msg); ipcRenderer.on('assistant-chat-message', h); return () => ipcRenderer.removeListener('assistant-chat-message', h); },
+  onAssistantPartialResponse: (cb) => { const h = (_, text) => cb(text); ipcRenderer.on('assistant-partial-response', h); return () => ipcRenderer.removeListener('assistant-partial-response', h); },
+  onAssistantToolCall: (cb) => { const h = (_, data) => cb(data); ipcRenderer.on('assistant-tool-call', h); return () => ipcRenderer.removeListener('assistant-tool-call', h); },
+
   // Permission grant actions
   grantMic: () => ipcRenderer.invoke('grant-mic'),
   grantAccessibility: () => ipcRenderer.send('grant-accessibility'),

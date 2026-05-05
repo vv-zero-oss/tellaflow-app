@@ -8,3 +8,4 @@ out/
 *.pem
 resources/models/*.bin
 resources/models/*.gguf
+.research/

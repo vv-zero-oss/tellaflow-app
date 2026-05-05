@@ -34,6 +34,7 @@ const { closeDb } = require('./db');
 const { registerDictionaryPackIpc } = require('./dictionary-pack-ipc');
 const sounds = require('./sounds');
 const { runStartupSmokeTest } = require('./startup-smoke-test');
+const assistantOrchestrator = require('./assistant/orchestrator');
 
 // Whisper outputs non-speech annotations in several forms — strip them all
 // so they never reach history or clipboard.
@@ -113,6 +114,7 @@ app.on('second-instance', () => {
 });
 
 function performCleanup() {
+  try { assistantOrchestrator.dispose(); } catch (e) { console.error('assistant.dispose error:', e); }
   try { parakeet.free(); } catch (e) { console.error('parakeet.free error:', e); }
   try { hotkey.stop(); } catch (e) { console.error('hotkey.stop error:', e); }
   try { grammar.dispose(); } catch (e) { console.error('grammar.dispose error:', e); }
@@ -298,6 +300,13 @@ async function startApp() {
   startHotkeyListener();
   initFloatingBar();
 
+  // Initialize voice assistant (lazy — sidecars start on first hotkey press)
+  require('./assistant/index-bridge').register({
+    createAudioCaptureWindow,
+    destroyAudioCaptureWindow,
+  });
+  assistantOrchestrator.init();
+
   // Respect showInDock setting on startup
   if (!config.getShowInDock()) {
     if (app.dock) app.dock.hide();
@@ -375,6 +384,35 @@ function startHotkeyListener() {
 
         recordingTimeout = setTimeout(forceStopRecording, MAX_RECORDING_MS);
       },
+      // Assistant hotkey: same audio capture but marks mode for routing
+      onAssistantStart: () => {
+        assistantOrchestrator._lastMode = 'assistant';
+        pendingStop = false;
+        clearRecordingTimeout();
+        sounds.playStart();
+        createAudioCaptureWindow();
+        recordingTimeout = setTimeout(forceStopRecording, MAX_RECORDING_MS);
+      },
+      onAssistantStop: ({ cancelled, reason }) => {
+        clearRecordingTimeout();
+        sounds.playStop();
+
+        if (cancelled) {
+          pendingStop = false;
+          assistantOrchestrator._lastMode = null;
+          destroyAudioCaptureWindow();
+          return;
+        }
+
+        if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+          if (audioCaptureWindow.webContents.isLoading()) {
+            pendingStop = true;
+          } else {
+            audioCaptureWindow.webContents.send('stop-recording');
+          }
+        }
+      },
+
       onStop: ({ cancelled, reason }) => {
         clearRecordingTimeout();
         sounds.playStop();
@@ -623,6 +661,82 @@ function registerIPC() {
   let playgroundMode = false;
   ipcMain.on('playground-mode-on',  () => { playgroundMode = true; });
   ipcMain.on('playground-mode-off', () => { playgroundMode = false; });
+
+  // ─── Voice Assistant IPC ──────────────────────────────────────────────────────
+  let assistantConfig, assistantSecureStore;
+  try {
+    assistantConfig = require('./assistant/config');
+    assistantSecureStore = require('./assistant/secure-store');
+  } catch (e) {
+    console.error('[assistant-ipc] Failed to load assistant modules:', e.message);
+    // Register stub handlers so renderer doesn't get unhandled rejection
+    ipcMain.handle('assistant-get-config', () => ({ assistantEnabled: false, assistantProvider: 'ollama', assistantModel: 'qwen3:4b', assistantHotkey: { names: ['RIGHT ALT'], label: '⌥ Right' }, assistantVoice: 'alba', assistantAutoUnload: true, assistantStreamTTS: true, assistantMaxContext: 4096, assistantIdleTimeout: 300000 }));
+    ipcMain.handle('assistant-get-tts-status', () => ({ name: 'Kokoro 82M', downloaded: false, status: 'not_downloaded', totalBytes: 220000000 }));
+    ipcMain.handle('assistant-get-stored-providers', () => []);
+    ipcMain.handle('assistant-test-connection', () => ({ ok: false, error: 'Assistant not initialized' }));
+    assistantConfig = null;
+    assistantSecureStore = null;
+  }
+
+  if (assistantConfig) {
+    ipcMain.handle('assistant-get-config', () => {
+      try { return assistantConfig.getAll(); }
+      catch (e) { console.error('[assistant-ipc] get-config error:', e.message); return assistantConfig.DEFAULTS; }
+    });
+    ipcMain.on('assistant-set-enabled', (_, v) => { assistantConfig.setEnabled(v); sendToMainWindow('assistant-config-changed', assistantConfig.getAll()); });
+    ipcMain.on('assistant-set-provider', (_, v) => { assistantConfig.setProvider(v); sendToMainWindow('assistant-config-changed', assistantConfig.getAll()); });
+    ipcMain.on('assistant-set-model', (_, v) => { assistantConfig.setModel(v); sendToMainWindow('assistant-config-changed', assistantConfig.getAll()); });
+    ipcMain.on('assistant-set-hotkey', (_, v) => { assistantConfig.setHotkey(v); sendToMainWindow('assistant-config-changed', assistantConfig.getAll()); });
+    ipcMain.on('assistant-set-voice', (_, v) => { assistantConfig.setVoice(v); sendToMainWindow('assistant-config-changed', assistantConfig.getAll()); });
+    ipcMain.on('assistant-set-api-key', (_, { provider, key }) => { assistantSecureStore.setApiKey(provider, key); });
+    ipcMain.handle('assistant-test-connection', async () => {
+      const fallback = require('./assistant/fallback-agent');
+      return fallback.testConnection();
+    });
+    ipcMain.handle('assistant-get-tts-status', () => {
+      try {
+        const tts = require('./assistant/tts');
+        return tts.getTTSModelStatus();
+      } catch { return { name: 'Kokoro 82M', downloaded: false, status: 'not_downloaded', totalBytes: 220000000 }; }
+    });
+    ipcMain.handle('assistant-get-stored-providers', () => {
+      try { return assistantSecureStore.getStoredProviders(); }
+      catch { return []; }
+    });
+  }
+
+  // ─── Assistant chat message handler (real LLM call — direct Ollama with streaming) ──
+  ipcMain.handle('assistant-send-message', async (_, message) => {
+    try {
+      const fallbackAgent = require('./assistant/fallback-agent');
+      const actions = require('./assistant/actions');
+
+      // Stream partial responses to the renderer as they arrive
+      let fullResponse = '';
+      const response = await fallbackAgent.query(message, {
+        onPartial: (chunk) => {
+          fullResponse += chunk;
+          sendToMainWindow('assistant-partial-response', fullResponse);
+        },
+        onToolCall: async (name, params) => {
+          sendToMainWindow('assistant-tool-call', { name, params });
+          return actions.executeAction(name, params);
+        },
+      });
+
+      return { ok: true, response: response || fullResponse };
+    } catch (err) {
+      return { ok: false, response: `Error: ${err.message}` };
+    }
+  });
+
+  ipcMain.handle('assistant-clear-history', () => {
+    try {
+      const zeroclawClient = require('./assistant/zeroclaw-client');
+      zeroclawClient.clearHistory();
+    } catch {}
+    return { ok: true };
+  });
 
   // Settings
   ipcMain.handle('get-config', () => {
@@ -1194,6 +1308,38 @@ function registerIPC() {
   const MAX_AUDIO_SAMPLES = 16000 * 120; // 120 seconds at 16kHz
   ipcMain.on('audio-captured', async (_, pcmArray) => {
     destroyAudioCaptureWindow();
+
+    // Route to assistant if it was the assistant hotkey that triggered recording
+    const assistantHandler = require('./assistant/hotkey-handler');
+    if (assistantHandler.getIsRecording() || assistantOrchestrator._lastMode === 'assistant') {
+      assistantOrchestrator._lastMode = null;
+      if (!pcmArray || pcmArray.length === 0) {
+        require('./ai-toast').idle();
+        return;
+      }
+      // Transcribe using existing Whisper, then send to assistant
+      try {
+        let pcm = new Float32Array(pcmArray);
+        pcm = trimSilence(pcm);
+        pcm = normalizeVolume(pcm);
+        let transcript;
+        if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
+          transcript = await parakeet.transcribe(pcm);
+        } else {
+          transcript = await whisper.transcribe(pcm);
+          transcript = stripWhisperArtifacts(transcript);
+        }
+        if (transcript) {
+          assistantOrchestrator.processTranscript(transcript);
+        } else {
+          require('./ai-toast').idle();
+        }
+      } catch (err) {
+        console.error('[assistant] Transcription error:', err.message);
+        require('./ai-toast').error('Transcription failed');
+      }
+      return;
+    }
 
     if (!pcmArray || pcmArray.length === 0) {
       console.log('Empty audio received — skipping transcription.');

@@ -253,4 +253,7 @@ module.exports = {
   getDictionaryPacksCatalog,
   installDictionaryPack,
   uninstallDictionaryPack,
+  // Generic get/set for extension modules (assistant, etc.)
+  getSetting,
+  setSetting,
 };

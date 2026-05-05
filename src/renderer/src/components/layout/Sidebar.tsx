@@ -99,9 +99,32 @@ interface SidebarProps {
   isLoading: boolean;
 }
 
+function AssistantIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" fill="none" {...props}>
+      <path d="M9 2C5.686 2 3 4.686 3 8c0 1.636.654 3.12 1.715 4.203L4 15l2.797-.714C7.79 14.744 8.874 15 9 15h0c3.314 0 6-2.686 6-6s-2.686-6-6-6z" fill="currentColor" fillOpacity="0.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+      <circle cx="6.5" cy="8.5" r="0.75" fill="currentColor"/>
+      <circle cx="9" cy="8.5" r="0.75" fill="currentColor"/>
+      <circle cx="11.5" cy="8.5" r="0.75" fill="currentColor"/>
+    </svg>
+  );
+}
+
+function IntegrationsIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" fill="none" {...props}>
+      <path d="M7.5 2.5h3a1 1 0 0 1 1 1V5h-5V3.5a1 1 0 0 1 1-1z" fill="currentColor" fillOpacity="0.4"/>
+      <rect x="2.5" y="5" width="13" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.3"/>
+      <path d="M6 8.5h6M6 11h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon },
   { id: 'transcripts', label: 'Transcripts', icon: HomeIcon },
+  { id: 'assistant', label: 'Assistant', icon: AssistantIcon },
+  { id: 'integrations', label: 'Integrations', icon: IntegrationsIcon },
   { id: 'snippets', label: 'Snippets', icon: SnippetsIcon },
   { id: 'dictionary', label: 'Dictionary', icon: DictionaryIcon },
   { id: 'models', label: 'Models', icon: ModelsIcon },

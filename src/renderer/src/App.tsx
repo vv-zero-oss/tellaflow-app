@@ -8,6 +8,8 @@ import { SnippetsPage } from '@/components/snippets/SnippetsPage';
 import { DictionaryPage } from '@/components/dictionary/DictionaryPage';
 import { SettingsPage } from '@/components/settings/SettingsPage';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
+import { AssistantPage } from '@/components/assistant/AssistantPage';
+import { IntegrationsPage } from '@/components/integrations/IntegrationsPage';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useHistory } from '@/hooks/use-history';
 import { useStatus } from '@/hooks/use-status';
@@ -75,6 +77,19 @@ export default function App() {
               <DashboardPage />
             </motion.div>
           )}
+          {page === 'assistant' && (
+            <motion.div
+              key="assistant"
+              variants={pageVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+              className="flex flex-col flex-1 overflow-hidden"
+            >
+              <AssistantPage />
+            </motion.div>
+          )}
           {page === 'models' && (
             <motion.div
               key="models"
@@ -93,6 +108,19 @@ export default function App() {
                 setTranslationLanguage={appConfig.setTranslationLanguage}
                 setTranscriptionEngine={appConfig.setTranscriptionEngine}
               />
+            </motion.div>
+          )}
+          {page === 'integrations' && (
+            <motion.div
+              key="integrations"
+              variants={pageVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+              className="flex flex-col flex-1 overflow-hidden"
+            >
+              <IntegrationsPage />
             </motion.div>
           )}
           {page === 'snippets' && (

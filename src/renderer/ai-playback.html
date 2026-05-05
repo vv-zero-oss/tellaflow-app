@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>AI Audio Playback</title></head>
+<body>
+<script>
+// Audio playback via Web Audio API
+// Receives PCM samples from main process and plays them
+let audioCtx = null;
+let currentSource = null;
+
+function getAudioContext() {
+  if (!audioCtx) audioCtx = new AudioContext();
+  return audioCtx;
+}
+
+window.audioPlayback?.onPlayAudio(({ samples, sampleRate }) => {
+  const ctx = getAudioContext();
+  const buffer = ctx.createBuffer(1, samples.length, sampleRate);
+  buffer.getChannelData(0).set(new Float32Array(samples));
+
+  // Stop previous if still playing
+  if (currentSource) {
+    try { currentSource.stop(); } catch {}
+  }
+
+  currentSource = ctx.createBufferSource();
+  currentSource.buffer = buffer;
+  currentSource.connect(ctx.destination);
+  currentSource.start();
+  currentSource.onended = () => { currentSource = null; };
+});
+
+window.audioPlayback?.onStopAudio(() => {
+  if (currentSource) {
+    try { currentSource.stop(); } catch {}
+    currentSource = null;
+  }
+});
+</script>
+</body>
+</html>
