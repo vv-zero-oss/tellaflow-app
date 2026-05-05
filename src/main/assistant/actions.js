@@ -142,6 +142,89 @@ const ACTIONS = {
       });
     },
   },
+
+  // CUA-style computer control actions (native macOS, no Python needed)
+  screenshot: {
+    name: 'screenshot',
+    description: 'Take a screenshot of the current screen',
+    execute: async () => {
+      const path = require('path');
+      const { app } = require('electron');
+      const dest = path.join(app.getPath('userData'), 'screenshots', `screenshot-${Date.now()}.png`);
+      const fs = require('fs');
+      const dir = path.dirname(dest);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      return new Promise((resolve, reject) => {
+        exec(`screencapture -x "${dest}"`, (err) => {
+          if (err) reject(err);
+          else resolve(`Screenshot saved to ${dest}`);
+        });
+      });
+    },
+  },
+
+  run_shortcut: {
+    name: 'run_shortcut',
+    description: 'Run a macOS Shortcut by name',
+    execute: async ({ name }) => {
+      return new Promise((resolve, reject) => {
+        exec(`shortcuts run "${name}"`, { timeout: 15000 }, (err, stdout) => {
+          if (err) reject(err);
+          else resolve(stdout.trim() || `Shortcut "${name}" executed`);
+        });
+      });
+    },
+  },
+
+  list_apps: {
+    name: 'list_apps',
+    description: 'List currently running applications',
+    execute: async () => {
+      return execAppleScript('tell application "System Events" to get name of every process whose background only is false');
+    },
+  },
+
+  create_note: {
+    name: 'create_note',
+    description: 'Create a note in Apple Notes',
+    execute: async ({ title, body }) => {
+      const script = `tell application "Notes" to make new note at folder "Notes" with properties {name:"${title}", body:"${body || ''}"}`;
+      await execAppleScript(script);
+      return `Note created: "${title}"`;
+    },
+  },
+
+  set_brightness: {
+    name: 'set_brightness',
+    description: 'Set display brightness (0.0 to 1.0)',
+    execute: async ({ level }) => {
+      const l = Math.max(0, Math.min(1, parseFloat(level)));
+      return new Promise((resolve, reject) => {
+        exec(`brightness ${l}`, (err) => {
+          if (err) resolve(`Brightness command not available. Install: brew install brightness`);
+          else resolve(`Brightness set to ${Math.round(l * 100)}%`);
+        });
+      });
+    },
+  },
+
+  run_command: {
+    name: 'run_command',
+    description: 'Run a shell command and return the output (safe commands only)',
+    execute: async ({ command }) => {
+      // Safety: block destructive commands
+      const BLOCKED = ['rm ', 'sudo ', 'mkfs', 'dd ', 'format', '> /dev', 'shutdown', 'reboot'];
+      if (BLOCKED.some(b => command.toLowerCase().includes(b))) {
+        return 'Blocked: that command is not allowed for safety reasons.';
+      }
+      return new Promise((resolve) => {
+        exec(command, { timeout: 10000 }, (err, stdout, stderr) => {
+          if (err) resolve(`Error: ${stderr || err.message}`);
+          else resolve(stdout.trim() || 'Command executed (no output)');
+        });
+      });
+    },
+  },
 };
 
 /**

@@ -65,6 +65,70 @@ const TOOLS = [
       parameters: { type: 'object', properties: { text: { type: 'string', description: 'Text to type' } }, required: ['text'] },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'toggle_dark_mode',
+      description: 'Toggle system dark mode on/off',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'screenshot',
+      description: 'Take a screenshot of the current screen',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_reminder',
+      description: 'Create a reminder in Apple Reminders',
+      parameters: { type: 'object', properties: { title: { type: 'string' }, notes: { type: 'string' } }, required: ['title'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_note',
+      description: 'Create a note in Apple Notes',
+      parameters: { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' } }, required: ['title'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'file_search',
+      description: 'Search for files on this Mac using Spotlight',
+      parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' } }, required: ['query'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_active_app',
+      description: 'Get the currently active/frontmost application name',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_apps',
+      description: 'List all currently running applications',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_command',
+      description: 'Run a shell command and return output (safe commands only, no rm/sudo)',
+      parameters: { type: 'object', properties: { command: { type: 'string', description: 'Shell command to run' } }, required: ['command'] },
+    },
+  },
 ];
 
 /**
@@ -154,7 +218,7 @@ function clearHistory() {
  * @returns {Promise<string>} Full response text
  */
 async function query(userMessage, { onPartial, onToolCall, signal } = {}) {
-  addMessage('user', userMessage);
+  if (userMessage) addMessage('user', userMessage);
 
   const endpoint = resolveEndpoint();
   if (!endpoint.apiKey) {
@@ -163,17 +227,20 @@ async function query(userMessage, { onPartial, onToolCall, signal } = {}) {
     return msg;
   }
 
-  // Not all models support tool calling (e.g. gemma3 doesn't).
-  // Only include tools for models known to support them.
+  // Check tool support
   const TOOL_CAPABLE = ['qwen', 'gpt', 'claude', 'llama', 'mistral', 'deepseek', 'command'];
   const modelLower = (endpoint.model || '').toLowerCase();
   const supportsTools = onToolCall && TOOL_CAPABLE.some(t => modelLower.includes(t));
+
+  // When tools are available, use NON-streaming to get complete tool calls.
+  // When no tools, use streaming for faster perceived response.
+  const useStreaming = !supportsTools && !!onPartial;
 
   const body = {
     model: endpoint.model,
     messages: messages,
     tools: supportsTools ? TOOLS : undefined,
-    stream: !!onPartial,
+    stream: useStreaming,
     max_tokens: 300,
     temperature: 0.7,
   };
@@ -195,8 +262,8 @@ async function query(userMessage, { onPartial, onToolCall, signal } = {}) {
     throw new Error(msg);
   }
 
-  if (onPartial && response.body) {
-    // Streaming response
+  if (useStreaming && response.body) {
+    // Streaming (no tools)
     let fullText = '';
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -206,29 +273,15 @@ async function query(userMessage, { onPartial, onToolCall, signal } = {}) {
       if (done) break;
 
       const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
-
-      for (const line of lines) {
+      for (const line of chunk.split('\n').filter(l => l.startsWith('data: '))) {
         const data = line.slice(6).trim();
-        if (data === '[DONE]') break;
+        if (data === '[DONE]') continue;
         try {
           const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta;
-
-          if (delta?.tool_calls && onToolCall) {
-            // Handle tool call in streaming mode
-            const tc = delta.tool_calls[0];
-            if (tc?.function?.name) {
-              const result = await onToolCall(tc.function.name, JSON.parse(tc.function.arguments || '{}'));
-              addMessage('tool', result);
-              // Re-query with tool result
-              return query('', { onPartial, onToolCall, signal });
-            }
-          }
-
-          if (delta?.content) {
-            fullText += delta.content;
-            onPartial(delta.content);
+          const content = parsed.choices?.[0]?.delta?.content;
+          if (content) {
+            fullText += content;
+            onPartial(content);
           }
         } catch {}
       }
@@ -237,24 +290,43 @@ async function query(userMessage, { onPartial, onToolCall, signal } = {}) {
     fullText = stripThinking(fullText);
     addMessage('assistant', fullText);
     return fullText;
-  } else {
-    // Non-streaming response
-    const data = await response.json();
-    const choice = data.choices?.[0];
+  }
 
-    if (choice?.message?.tool_calls && onToolCall) {
-      const tc = choice.message.tool_calls[0];
-      const result = await onToolCall(tc.function.name, JSON.parse(tc.function.arguments || '{}'));
-      addMessage('assistant', choice.message.content || '');
-      addMessage('tool', result);
-      return query('', { onPartial, onToolCall, signal });
+  // Non-streaming (with or without tools)
+  const data = await response.json();
+  const choice = data.choices?.[0];
+
+  if (choice?.message?.tool_calls?.length && onToolCall) {
+    // Execute ALL tool calls
+    const assistantMsg = choice.message;
+    messages.push(assistantMsg); // add assistant message with tool_calls
+
+    for (const tc of assistantMsg.tool_calls) {
+      const name = tc.function.name;
+      let params = {};
+      try { params = JSON.parse(tc.function.arguments || '{}'); } catch {}
+
+      console.log(`[assistant] Tool call: ${name}(${JSON.stringify(params)})`);
+      const result = await onToolCall(name, params);
+      console.log(`[assistant] Tool result: ${result}`);
+
+      // Add tool result in OpenAI format
+      messages.push({
+        role: 'tool',
+        tool_call_id: tc.id,
+        content: typeof result === 'string' ? result : JSON.stringify(result),
+      });
     }
 
-    let text = choice?.message?.content || 'I could not generate a response.';
-    text = stripThinking(text);
-    addMessage('assistant', text);
-    return text;
+    // Re-query with tool results so LLM generates final response
+    return query(null, { onPartial, onToolCall, signal });
   }
+
+  let text = choice?.message?.content || 'Done.';
+  text = stripThinking(text);
+  addMessage('assistant', text);
+  if (onPartial) onPartial(text);
+  return text;
 }
 
 /**
