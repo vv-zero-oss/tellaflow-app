@@ -6,30 +6,61 @@
 const assistantConfig = require('./config');
 const secureStore = require('./secure-store');
 
-const SYSTEM_PROMPT = `You are a helpful voice assistant running locally on the user's Mac.
-You respond concisely — keep answers under 2-3 sentences unless asked for detail.
-You have access to tools for controlling the computer. ALWAYS use tools when the user asks to perform an action.
-Respond naturally as if speaking — avoid markdown, bullet points, or formatted text.`;
+const SYSTEM_PROMPT = `You are a voice assistant on the user's Mac with full system control via tools.
+RULES:
+- ALWAYS use tools for actions. Never pretend to do something — call the tool.
+- For file listings use list_files with folder path like ~/Downloads, ~/Desktop, ~/Documents.
+- For shell tasks use run_command with full paths (~/Downloads not Downloads).
+- Keep responses concise (1-3 sentences). Report what the tool returned.
+- No markdown formatting. Speak naturally.`;
 
-// Tool definitions in Ollama native format
+// Tool definitions — the model picks from these to execute actions
 const OLLAMA_TOOLS = [
-  { type: 'function', function: { name: 'open_app', description: 'Launch or activate a macOS application', parameters: { type: 'object', properties: { name: { type: 'string', description: 'App name' } }, required: ['name'] } } },
-  { type: 'function', function: { name: 'open_url', description: 'Open a URL in the default browser', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
-  { type: 'function', function: { name: 'search_web', description: 'Search the web', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
-  { type: 'function', function: { name: 'get_time', description: 'Get current date and time', parameters: { type: 'object', properties: {}, required: [] } } },
-  { type: 'function', function: { name: 'get_clipboard', description: 'Read clipboard contents', parameters: { type: 'object', properties: {}, required: [] } } },
-  { type: 'function', function: { name: 'type_text', description: 'Type text into active app', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } } },
+  // App control
+  { type: 'function', function: { name: 'open_app', description: 'Launch or activate a macOS application', parameters: { type: 'object', properties: { name: { type: 'string', description: 'App name e.g. Safari, Notes, Finder' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'close_app', description: 'Quit an application', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'get_active_app', description: 'Get the currently active/frontmost application', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'list_apps', description: 'List all running applications', parameters: { type: 'object', properties: {}, required: [] } } },
+  // System
+  { type: 'function', function: { name: 'toggle_dark_mode', description: 'Toggle system dark/light mode', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'set_volume', description: 'Set system volume 0-100', parameters: { type: 'object', properties: { level: { type: 'number' } }, required: ['level'] } } },
-  { type: 'function', function: { name: 'toggle_dark_mode', description: 'Toggle system dark mode on/off', parameters: { type: 'object', properties: {}, required: [] } } },
-  { type: 'function', function: { name: 'get_active_app', description: 'Get frontmost application name', parameters: { type: 'object', properties: {}, required: [] } } },
-  { type: 'function', function: { name: 'list_apps', description: 'List running applications', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'get_volume', description: 'Get current system volume', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'get_time', description: 'Get current date and time', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'get_battery', description: 'Get battery status', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'get_wifi', description: 'Get current WiFi network', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'lock_screen', description: 'Lock the screen', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'get_system_info', description: 'Get Mac system info (hostname, OS, CPU, RAM)', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'get_disk_space', description: 'Get disk usage', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'get_ip_address', description: 'Get local IP address', parameters: { type: 'object', properties: {}, required: [] } } },
+  // Files
+  { type: 'function', function: { name: 'list_files', description: 'List files in a folder sorted by newest first. Use ~/Downloads for downloads, ~/Desktop for desktop, ~/Documents for documents', parameters: { type: 'object', properties: { folder: { type: 'string', description: 'Folder path e.g. ~/Downloads, ~/Desktop, ~/Documents' }, count: { type: 'number', description: 'Number of files to show (default 10)' } }, required: [] } } },
+  { type: 'function', function: { name: 'file_search', description: 'Search for files by name in user home directory', parameters: { type: 'object', properties: { query: { type: 'string' }, folder: { type: 'string', description: 'Folder to search in, e.g. ~/Documents' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'read_file', description: 'Read contents of a text file', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
+  { type: 'function', function: { name: 'open_file', description: 'Open a file with its default application', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
+  { type: 'function', function: { name: 'move_file', description: 'Move/rename a file', parameters: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'] } } },
+  // Web
+  { type: 'function', function: { name: 'open_url', description: 'Open a URL in the browser', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
+  { type: 'function', function: { name: 'search_web', description: 'Google search', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+  // Clipboard & typing
+  { type: 'function', function: { name: 'get_clipboard', description: 'Read clipboard', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'set_clipboard', description: 'Copy text to clipboard', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } } },
+  { type: 'function', function: { name: 'type_text', description: 'Type/paste text into active app', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } } },
+  // Apple apps
+  { type: 'function', function: { name: 'create_reminder', description: 'Create a reminder', parameters: { type: 'object', properties: { title: { type: 'string' }, notes: { type: 'string' } }, required: ['title'] } } },
+  { type: 'function', function: { name: 'create_note', description: 'Create a note in Apple Notes', parameters: { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' } }, required: ['title'] } } },
+  // Music
+  { type: 'function', function: { name: 'play_music', description: 'Play music', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'pause_music', description: 'Pause music', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'next_track', description: 'Skip to next track', parameters: { type: 'object', properties: {}, required: [] } } },
+  // Screenshots & screen
   { type: 'function', function: { name: 'screenshot', description: 'Take a screenshot', parameters: { type: 'object', properties: {}, required: [] } } },
-  { type: 'function', function: { name: 'file_search', description: 'Search files using Spotlight', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
-  { type: 'function', function: { name: 'create_reminder', description: 'Create reminder in Apple Reminders', parameters: { type: 'object', properties: { title: { type: 'string' }, notes: { type: 'string' } }, required: ['title'] } } },
-  { type: 'function', function: { name: 'create_note', description: 'Create note in Apple Notes', parameters: { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' } }, required: ['title'] } } },
-  { type: 'function', function: { name: 'set_timer', description: 'Set a timer (notification when done)', parameters: { type: 'object', properties: { seconds: { type: 'number' }, label: { type: 'string' } }, required: ['seconds'] } } },
-  { type: 'function', function: { name: 'run_command', description: 'Run a safe shell command', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
-  { type: 'function', function: { name: 'run_shortcut', description: 'Run a macOS Shortcut by name', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
+  // Timers
+  { type: 'function', function: { name: 'set_timer', description: 'Set a countdown timer', parameters: { type: 'object', properties: { seconds: { type: 'number' }, label: { type: 'string' } }, required: ['seconds'] } } },
+  { type: 'function', function: { name: 'show_notification', description: 'Show a notification', parameters: { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' } }, required: ['title'] } } },
+  // Shell & system
+  { type: 'function', function: { name: 'run_command', description: 'Run a shell command (safe only, no rm -rf or sudo). Use full paths like ~/Downloads not just Downloads', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
+  { type: 'function', function: { name: 'run_shortcut', description: 'Run a macOS Shortcut', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'list_processes', description: 'List top processes by CPU or memory', parameters: { type: 'object', properties: { sort_by: { type: 'string', description: 'cpu or memory' } }, required: [] } } },
 ];
 
 /** Strip <think>...</think> blocks */
