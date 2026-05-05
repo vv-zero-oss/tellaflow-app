@@ -1,51 +1,26 @@
 /**
- * CUA Computer Server — sidecar process manager.
- * Manages the PyInstaller-compiled CUA binary that provides desktop control.
- * Communicates via WebSocket on localhost.
+ * CUA Computer Server — manages the bundled PyInstaller binary.
+ * Provides desktop control: screenshots, clicks, keyboard, window management.
+ * Communicates via HTTP on localhost (no ws dependency needed).
  */
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
 
-// Lazy-require ws to avoid crash if not installed (CUA is Phase 3, optional)
-let WebSocket;
-function getWS() {
-  if (!WebSocket) {
-    try { WebSocket = require('ws'); } catch {
-      // ws not available — use Node's built-in (Electron 35+ has it)
-      // Fallback: CUA tools will be unavailable
-      console.warn('[cua] ws module not available — CUA tools disabled');
-      return null;
-    }
-  }
-  return WebSocket;
-}
-
 let process_ = null;
 let port = null;
-let ws = null;
-let reconnectTimer = null;
 
-/**
- * Find the CUA server binary path.
- */
 function getBinaryPath() {
   const { app } = require('electron');
-  const isDev = !app.isPackaged;
-
-  if (isDev) {
+  if (!app.isPackaged) {
     const devPath = path.join(app.getAppPath(), 'resources', 'cua-server', 'cua-server');
     if (fs.existsSync(devPath)) return devPath;
-    return null; // CUA not available in dev without building
+    return null;
   }
-
   return path.join(process.resourcesPath, 'cua-server', 'cua-server');
 }
 
-/**
- * Find an available port.
- */
 function findPort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -58,177 +33,90 @@ function findPort() {
 }
 
 /**
- * Start the CUA server (lazy — only called when computer-use tool is first invoked).
+ * Start the CUA server (lazy — called on first computer-use action).
  */
 async function start() {
-  if (process_) return port;
+  if (process_ && port) return port;
 
   const binaryPath = getBinaryPath();
-  if (!binaryPath || !fs.existsSync(binaryPath)) {
-    console.warn('[cua] Binary not found — computer-use tools disabled');
+  if (!binaryPath) {
+    console.warn('[cua] Binary not found');
     return null;
   }
 
   port = await findPort();
+  console.log(`[cua] Starting on port ${port}`);
 
-  console.log(`[cua] Starting server on port ${port}`);
-
-  process_ = spawn(binaryPath, ['--port', String(port), '--host', '127.0.0.1'], {
+  process_ = spawn(binaryPath, ['--port', String(port)], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env },
   });
 
-  process_.stdout.on('data', (d) => console.log(`[cua] ${d.toString().trim()}`));
+  process_.stdout.on('data', (d) => {
+    const line = d.toString().trim();
+    if (line) console.log(`[cua] ${line}`);
+  });
   process_.stderr.on('data', (d) => console.error(`[cua:err] ${d.toString().trim()}`));
+  process_.on('exit', (code) => { console.log(`[cua] Exited ${code}`); process_ = null; });
+  process_.on('error', (e) => { console.error(`[cua] Error: ${e.message}`); process_ = null; });
 
-  process_.on('exit', (code) => {
-    console.warn(`[cua] Exited with code ${code}`);
-    process_ = null;
-    ws = null;
-  });
-
-  process_.on('error', (err) => {
-    console.error(`[cua] Spawn error:`, err.message);
-    process_ = null;
-  });
-
-  // Wait for server to be ready
-  await waitForReady();
-  await connect();
-
+  // Wait for server to be ready (CUA takes ~3-4s to start)
+  await waitForReady(10000);
   return port;
 }
 
-/**
- * Wait for the CUA server to accept connections.
- */
-function waitForReady(timeoutMs = 10000) {
+function waitForReady(timeoutMs) {
   return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const check = () => {
-      if (!port) { reject(new Error('No port')); return; }
-      const socket = new net.Socket();
-      socket.setTimeout(1000);
-      socket.on('connect', () => { socket.destroy(); resolve(); });
-      socket.on('error', () => { socket.destroy(); retry(); });
-      socket.on('timeout', () => { socket.destroy(); retry(); });
-      socket.connect(port, '127.0.0.1');
-    };
-    const retry = () => {
-      if (Date.now() - start > timeoutMs) { reject(new Error('CUA server timeout')); return; }
-      setTimeout(check, 300);
+    const t0 = Date.now();
+    const check = async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) });
+        if (res.ok) { resolve(); return; }
+      } catch {}
+      if (Date.now() - t0 > timeoutMs) { reject(new Error('CUA startup timeout')); return; }
+      setTimeout(check, 500);
     };
     check();
   });
 }
 
-/**
- * Connect WebSocket to CUA server.
- */
-async function connect() {
-  if (ws) return;
-  if (!port) return;
-  const WS = getWS();
-  if (!WS) return;
-
-  ws = new WS(`ws://127.0.0.1:${port}`);
-
-  ws.on('open', () => console.log('[cua] WebSocket connected'));
-  ws.on('close', () => { ws = null; });
-  ws.on('error', (err) => { console.error('[cua] WS error:', err.message); ws = null; });
-}
-
-/**
- * Send a command to CUA and get the result.
- * @param {string} action - Action type (click, type, screenshot, etc.)
- * @param {object} params - Action parameters
- * @returns {Promise<object>} Result from CUA
- */
-async function sendCommand(action, params = {}) {
-  // Auto-start if not running
-  if (!process_) {
-    const p = await start();
-    if (!p) return { error: 'CUA server not available' };
-  }
-
-  const WS = getWS();
-  if (!ws || ws.readyState !== (WS?.OPEN ?? 1)) {
-    await connect();
-    if (!ws) return { error: 'CUA WebSocket not connected' };
-  }
-
-  return new Promise((resolve) => {
-    const id = Math.random().toString(36).slice(2);
-    const timeout = setTimeout(() => resolve({ error: 'CUA command timeout' }), 10000);
-
-    const handler = (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        if (msg.id === id) {
-          clearTimeout(timeout);
-          ws.removeListener('message', handler);
-          resolve(msg.result || msg);
-        }
-      } catch {}
-    };
-
-    ws.on('message', handler);
-    ws.send(JSON.stringify({ id, action, ...params }));
-  });
-}
-
-/**
- * Stop the CUA server.
- */
 function stop() {
-  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  if (ws) { try { ws.close(); } catch {} ws = null; }
-  if (process_) {
-    process_.kill('SIGTERM');
-    setTimeout(() => { try { process_?.kill('SIGKILL'); } catch {} }, 3000);
-    process_ = null;
-  }
+  if (process_) { process_.kill('SIGTERM'); process_ = null; }
   port = null;
 }
 
 /**
- * Check if CUA is running.
+ * Send a command to CUA server.
  */
-function isRunning() {
-  return process_ !== null;
+async function sendCommand(action, params = {}) {
+  if (!port) {
+    const p = await start();
+    if (!p) return { error: 'CUA not available' };
+  }
+
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...params }),
+    signal: AbortSignal.timeout(15000),
+  });
+
+  return res.json();
 }
 
-// ─── High-level actions (exposed as tools to ZeroClaw/agent) ────────────────────
-
-async function screenshot() {
-  return sendCommand('screenshot');
-}
-
-async function click(x, y, button = 'left') {
-  return sendCommand('click', { x, y, button });
-}
-
-async function typeText(text) {
-  return sendCommand('type', { text });
-}
-
-async function pressKey(keys) {
-  return sendCommand('keypress', { keys });
-}
-
-async function scroll(x, y, direction = 'down', amount = 3) {
-  return sendCommand('scroll', { x, y, direction, amount });
-}
-
-async function getScreenSize() {
-  return sendCommand('get_screen_size');
-}
-
-async function getAccessibilityTree() {
-  return sendCommand('get_accessibility_tree');
-}
+// High-level actions
+const screenshot = () => sendCommand('screenshot');
+const click = (x, y, button) => sendCommand('click', { x, y, button });
+const typeText = (text) => sendCommand('type', { text });
+const pressKey = (keys) => sendCommand('keypress', { keys });
+const scroll = (x, y, direction, amount) => sendCommand('scroll', { x, y, direction, amount });
+const getScreenSize = () => sendCommand('get_screen_size');
+const getAccessibilityTree = () => sendCommand('get_accessibility_tree');
+const getFrontmostApp = () => sendCommand('get_frontmost_app');
+const launchApp = (name) => sendCommand('launch_app', { name });
+const getWindowList = () => sendCommand('get_window_list');
 
 module.exports = {
-  start, stop, isRunning, sendCommand, getBinaryPath,
-  screenshot, click, typeText, pressKey, scroll, getScreenSize, getAccessibilityTree,
+  start, stop, sendCommand, getBinaryPath,
+  screenshot, click, typeText, pressKey, scroll,
+  getScreenSize, getAccessibilityTree, getFrontmostApp, launchApp, getWindowList,
 };

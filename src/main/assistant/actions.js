@@ -143,23 +143,34 @@ const ACTIONS = {
     },
   },
 
-  // CUA-style computer control actions (native macOS, no Python needed)
+  // CUA-powered computer control actions (uses bundled CUA server binary)
   screenshot: {
     name: 'screenshot',
     description: 'Take a screenshot of the current screen',
     execute: async () => {
-      const path = require('path');
-      const { app } = require('electron');
-      const dest = path.join(app.getPath('userData'), 'screenshots', `screenshot-${Date.now()}.png`);
-      const fs = require('fs');
-      const dir = path.dirname(dest);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      return new Promise((resolve, reject) => {
-        exec(`screencapture -x "${dest}"`, (err) => {
-          if (err) reject(err);
-          else resolve(`Screenshot saved to ${dest}`);
+      try {
+        const cua = require('./cua-server');
+        const result = await cua.screenshot();
+        if (result.image) {
+          // Save screenshot to disk
+          const path = require('path');
+          const { app } = require('electron');
+          const dir = path.join(app.getPath('userData'), 'screenshots');
+          const fs = require('fs');
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          const dest = path.join(dir, `screenshot-${Date.now()}.png`);
+          fs.writeFileSync(dest, Buffer.from(result.image, 'base64'));
+          return `Screenshot saved (${Math.round(result.image.length * 0.75 / 1024)} KB)`;
+        }
+        return 'Screenshot captured';
+      } catch {
+        // Fallback to native screencapture
+        return new Promise((resolve, reject) => {
+          exec('screencapture -x /tmp/screenshot.png', (err) => {
+            if (err) reject(err); else resolve('Screenshot saved to /tmp/screenshot.png');
+          });
         });
-      });
+      }
     },
   },
 
