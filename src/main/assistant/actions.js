@@ -401,8 +401,9 @@ const ACTIONS = {
   },
   list_processes: {
     execute: async ({ sort_by }) => {
-      const sort = sort_by === 'memory' ? '-m' : '-r';
-      return await sh(`ps aux --sort=${sort === '-m' ? '-%mem' : '-%cpu'} | head -6`);
+      // macOS ps doesn't support --sort, use this instead
+      const col = sort_by === 'memory' ? 4 : 3; // %MEM=4, %CPU=3
+      return await sh(`ps aux | sort -nrk${col} | head -6`);
     },
   },
   kill_process: {
