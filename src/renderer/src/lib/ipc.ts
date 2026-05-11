@@ -133,6 +133,7 @@ interface TellaflowAPI {
   clickFinishRecording: () => void;
   recordFrontmostApp: () => void;
   suppressToastActivation: () => void;
+  setToastInteractive: (interactive: boolean) => void;
 
   setHotkey: (hotkey: HotkeyConfig) => void;
   startHotkeyRecording: () => void;

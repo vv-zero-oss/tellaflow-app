@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('tellaflow', {
   clickFinishRecording: () => ipcRenderer.send('click-finish-recording'),
   recordFrontmostApp: () => ipcRenderer.send('record-frontmost-app'),
   suppressToastActivation: () => ipcRenderer.send('suppress-toast-activation'),
+  setToastInteractive: (interactive) => ipcRenderer.send('set-toast-interactive', !!interactive),
 
   // Onboarding IPC
   setHotkey: (hotkey) => ipcRenderer.send('set-hotkey', hotkey),

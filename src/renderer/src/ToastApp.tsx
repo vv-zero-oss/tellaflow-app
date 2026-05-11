@@ -32,6 +32,35 @@ export default function ToastApp() {
   const audioLevelRef = useRef(0);
   const shouldReduceMotion = useReducedMotion();
 
+  // The floating bar window is 280×68 but the visible UI is much smaller
+  // (an 8px trigger strip and a ~32px pill). The main process keeps the
+  // window in click-through mode by default; we flip it to capture mode
+  // only while the cursor is actually over a visible element. The leave is
+  // debounced so the mouse can travel the 16px transparent gap between the
+  // trigger strip and the pill without losing capture mid-click.
+  const captureDisableTimerRef = useRef<number | null>(null);
+  const enableCapture = useCallback(() => {
+    if (captureDisableTimerRef.current !== null) {
+      window.clearTimeout(captureDisableTimerRef.current);
+      captureDisableTimerRef.current = null;
+    }
+    ipc.setToastInteractive(true);
+  }, []);
+  const disableCapture = useCallback(() => {
+    if (captureDisableTimerRef.current !== null) {
+      window.clearTimeout(captureDisableTimerRef.current);
+    }
+    captureDisableTimerRef.current = window.setTimeout(() => {
+      ipc.setToastInteractive(false);
+      captureDisableTimerRef.current = null;
+    }, 80);
+  }, []);
+  useEffect(() => () => {
+    if (captureDisableTimerRef.current !== null) {
+      window.clearTimeout(captureDisableTimerRef.current);
+    }
+  }, []);
+
   useEffect(() => {
     const cleanups = [
       ipc.onToastState((s) => {
@@ -154,6 +183,8 @@ export default function ToastApp() {
                 overflow: 'hidden',
                 whiteSpace: 'nowrap',
               } as React.CSSProperties}
+              onMouseEnter={enableCapture}
+              onMouseLeave={disableCapture}
               onClick={handleClick}
             >
 
@@ -252,7 +283,8 @@ export default function ToastApp() {
       {/* ── DIV 1: Trigger strip — 8px at the very bottom, detects hover ── */}
       {state === 'floating-idle' && (
         <div
-          onMouseEnter={() => { setIsHovered(true); handleHoverStart(); }}
+          onMouseEnter={() => { setIsHovered(true); handleHoverStart(); enableCapture(); }}
+          onMouseLeave={disableCapture}
           onMouseDown={() => ipc.suppressToastActivation()}
           onClick={handleClick}
           style={{

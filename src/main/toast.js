@@ -8,7 +8,20 @@ let pendingState = null;
 // Track current state so we can restore to correct idle when needed
 let currentState = 'idle';
 
-const INTERACTIVE_STATES = new Set(['floating-idle', 'click-recording']);
+// States where the renderer drives mouse capture via hover.
+// In all other states, the window stays click-through so apps behind it stay clickable.
+const HOVER_INTERACTIVE_STATES = new Set(['floating-idle', 'click-recording']);
+
+// Apply the default click-through mode. With { forward: true } on macOS/Windows,
+// the window passes mouse events through to apps below but still forwards
+// mousemove events to the renderer, so DOM mouseenter/mouseleave keep working.
+// This is what lets the renderer toggle capture only while the cursor is over
+// a visibly-rendered element (the pill or the 8px trigger strip), instead of
+// blocking the entire 280×68 transparent area.
+function applyClickThrough(win) {
+  if (!win || win.isDestroyed()) return;
+  win.setIgnoreMouseEvents(true, { forward: true });
+}
 
 function getToastPosition() {
   const cursor = screen.getCursorScreenPoint();
@@ -51,8 +64,9 @@ function createToastWindow() {
   });
 
   toastWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  // Default to ignoring mouse events; enabled only for interactive states
-  toastWindow.setIgnoreMouseEvents(true);
+  // Default: click-through with mousemove forwarded so the renderer can detect
+  // hover over visible elements and request capture only for those regions.
+  applyClickThrough(toastWindow);
 
   toastWindow.webContents.on('did-finish-load', () => {
     toastReady = true;
@@ -93,9 +107,27 @@ function sendState(state) {
   currentState = state;
   toastWindow.webContents.send('toast-state', state);
 
-  // Toggle mouse events based on whether the state needs interaction
-  const interactive = INTERACTIVE_STATES.has(state);
-  toastWindow.setIgnoreMouseEvents(!interactive);
+  // For visual-only states (idle, recording, transcribing) the user has no
+  // reason to click the bar — force click-through so apps behind stay usable.
+  // For hover-interactive states (floating-idle, click-recording) leave the
+  // capture state alone; the renderer toggles it via setToastInteractive
+  // based on real-time cursor position over visible elements.
+  if (!HOVER_INTERACTIVE_STATES.has(state)) {
+    applyClickThrough(toastWindow);
+  }
+}
+
+// Called from the renderer when the cursor enters/leaves a visibly-rendered
+// interactive element. `true` captures mouse events (so clicks land on the
+// pill / trigger strip); `false` returns to click-through so the transparent
+// areas of the window stop blocking icons and buttons behind it.
+function setToastInteractive(interactive) {
+  if (!toastWindow || toastWindow.isDestroyed()) return;
+  if (interactive) {
+    toastWindow.setIgnoreMouseEvents(false);
+  } else {
+    applyClickThrough(toastWindow);
+  }
 }
 
 function showToast(state) {
@@ -175,4 +207,4 @@ function getCurrentToastState() {
   return currentState;
 }
 
-module.exports = { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled, getToastWindow, getCurrentToastState };
+module.exports = { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled, getToastWindow, getCurrentToastState, setToastInteractive };

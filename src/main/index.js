@@ -27,7 +27,7 @@ const { formatTranscription } = require('./formatter');
 const grammar = require('./grammar');
 const { applyDictionary } = require('./dictionary');
 const snippets = require('./snippets');
-const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState } = require('./toast');
+const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState, setToastInteractive } = require('./toast');
 const { showMainWindow, sendToMainWindow, destroyMainWindow, createMainWindow } = require('./main-window');
 const history = require('./history');
 const { closeDb } = require('./db');
@@ -1154,6 +1154,13 @@ function registerIPC() {
   // in case the hover timer already expired.
   ipcMain.on('suppress-toast-activation', () => {
     suppressNextActivation();
+  });
+
+  // Renderer hover signal — captures the mouse only while the cursor is over a
+  // visibly-rendered element (pill or trigger strip). Outside those elements
+  // the floating bar stays click-through so apps behind it stay usable.
+  ipcMain.on('set-toast-interactive', (_, interactive) => {
+    setToastInteractive(!!interactive);
   });
 
   // ── Floating bar click-to-dictate ─────────────────────────────────────────
