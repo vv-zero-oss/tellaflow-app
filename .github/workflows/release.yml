@@ -85,7 +85,9 @@ jobs:
         with:
           files: |
             dist/Tellaflow-*-arm64.dmg
+            dist/Tellaflow-*-arm64.dmg.blockmap
             dist/Tellaflow-*-arm64-mac.zip
+            dist/Tellaflow-*-arm64-mac.zip.blockmap
             dist/latest-mac.yml
           draft: false
           generate_release_notes: true

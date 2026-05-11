@@ -243,6 +243,37 @@ interface TellaflowAPI {
   openTestWav: () => void;
   openExternal: (url: string) => void;
   getAppVersion: () => Promise<string>;
+
+  getUpdateStatus: () => Promise<UpdateStatus>;
+  checkForUpdates: () => void;
+  installUpdate: () => void;
+  onUpdateStatus: (cb: (status: UpdateStatus) => void) => () => void;
+}
+
+export type UpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'not-available'
+  | 'error';
+
+export interface UpdateProgress {
+  percent: number;
+  bytesPerSecond: number;
+  transferred: number;
+  total: number;
+}
+
+export interface UpdateStatus {
+  phase: UpdatePhase;
+  currentVersion: string;
+  updateVersion: string | null;
+  progress: UpdateProgress | null;
+  error: string | null;
+  userInitiated: boolean;
+  checkedAt: number | null;
 }
 
 declare global {

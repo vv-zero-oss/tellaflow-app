@@ -1,6 +1,10 @@
 appId: com.tellaflow.app
 productName: Tellaflow
 afterSign: scripts/after-sign.js
+publish:
+  provider: github
+  owner: vv-zero-oss
+  repo: tellaflow-app
 mac:
   category: public.app-category.productivity
   hardenedRuntime: true
