@@ -136,4 +136,9 @@ function getIsRecording() {
   return isRecording;
 }
 
-module.exports = { start, stop, isRunning, getIsRecording };
+function resetRecordingState() {
+  isRecording = false;
+  keyDownTime = 0;
+}
+
+module.exports = { start, stop, isRunning, getIsRecording, resetRecordingState };

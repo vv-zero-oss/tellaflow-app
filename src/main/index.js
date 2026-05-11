@@ -322,6 +322,7 @@ function forceStopRecording() {
   console.warn('Force-stopping click-mode recording (30-min safety cap reached).');
   clearRecordingTimeout();
   pendingStop = false;
+  hotkey.resetRecordingState();
   sounds.unmuteMusic();
   // Long click-mode recording: the captured target app is stale; let
   // getFrontmostApp() at paste time pick the current window instead.
