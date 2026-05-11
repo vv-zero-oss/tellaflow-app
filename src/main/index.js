@@ -53,7 +53,10 @@ let audioCaptureWindow = null;
 let isQuitting = false;
 let pendingStop = false;
 let recordingTimeout = null;
-const MAX_RECORDING_MS = 60000;
+// Safety cap for *click-to-record* only. The hotkey path is bounded by key
+// release, so it has no auto-stop. Click mode has no terminator, so without
+// this an accidental click would leave the mic running until the app quits.
+const CLICK_MODE_MAX_RECORDING_MS = 30 * 60 * 1000;
 let accessibilityInitialState = null; // null = not yet checked
 
 // App captured at recording-start (before Electron stole focus).
@@ -316,12 +319,12 @@ function clearRecordingTimeout() {
 }
 
 function forceStopRecording() {
-  console.warn('Force-stopping recording (safety timeout).');
+  console.warn('Force-stopping click-mode recording (30-min safety cap reached).');
   clearRecordingTimeout();
   pendingStop = false;
   sounds.unmuteMusic();
-  // EC5 — target captured at start is now up to 60 s stale; discard it so
-  // getFrontmostApp() at paste time picks the correct current window instead.
+  // Long click-mode recording: the captured target app is stale; let
+  // getFrontmostApp() at paste time pick the current window instead.
   clickPasteTargetApp = null;
 
   if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
@@ -342,7 +345,7 @@ function startClickRecording() {
   broadcastStatus('Recording...');
   showToast('click-recording');
   createAudioCaptureWindow();
-  recordingTimeout = setTimeout(forceStopRecording, MAX_RECORDING_MS);
+  recordingTimeout = setTimeout(forceStopRecording, CLICK_MODE_MAX_RECORDING_MS);
 }
 
 function startHotkeyListener() {
@@ -372,8 +375,6 @@ function startHotkeyListener() {
         broadcastStatus('Recording...');
         showToast('recording');
         createAudioCaptureWindow();
-
-        recordingTimeout = setTimeout(forceStopRecording, MAX_RECORDING_MS);
       },
       onStop: ({ cancelled, reason }) => {
         clearRecordingTimeout();
@@ -386,12 +387,6 @@ function startHotkeyListener() {
           destroyAudioCaptureWindow();
           hideToast();
           broadcastStatus('Ready');
-          if (reason === 'too_short') {
-            new Notification({
-              title: 'Tellaflow',
-              body: 'Recording too short. Hold the hotkey longer.',
-            }).show();
-          }
           return;
         }
 
@@ -1191,7 +1186,6 @@ function registerIPC() {
   });
 
   // Audio captured from renderer -> preprocess -> transcribe -> format -> paste
-  const MAX_AUDIO_SAMPLES = 16000 * 120; // 120 seconds at 16kHz
   ipcMain.on('audio-captured', async (_, pcmArray) => {
     destroyAudioCaptureWindow();
 
@@ -1209,11 +1203,6 @@ function registerIPC() {
         }
       }
       return;
-    }
-
-    if (pcmArray.length > MAX_AUDIO_SAMPLES) {
-      console.warn(`Audio too large (${pcmArray.length} samples), truncating to ${MAX_AUDIO_SAMPLES}.`);
-      pcmArray = pcmArray.slice(0, MAX_AUDIO_SAMPLES);
     }
 
     showToast('transcribing');
@@ -1315,18 +1304,8 @@ function registerIPC() {
           ? currentFrontmost
           : recordedTarget;
         pasteText(text, pasteTarget);
-
-        new Notification({
-          title: 'Tellaflow',
-          body: text.length > 80 ? text.substring(0, 80) + '...' : text,
-          silent: true,
-        }).show();
       } else {
         clickPasteTargetApp = null;
-        new Notification({
-          title: 'Tellaflow',
-          body: 'No speech detected.',
-        }).show();
       }
     } catch (err) {
       console.error('Transcription failed:', err);
