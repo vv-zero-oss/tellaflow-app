@@ -35,6 +35,7 @@ const { registerDictionaryPackIpc } = require('./dictionary-pack-ipc');
 const sounds = require('./sounds');
 const { runStartupSmokeTest } = require('./startup-smoke-test');
 const updater = require('./updater');
+const { createAppMenu, refreshAppMenu } = require('./app-menu');
 
 // Whisper outputs non-speech annotations in several forms — strip them all
 // so they never reach history or clipboard.
@@ -145,6 +146,12 @@ function gracefulQuit() {
 }
 
 app.whenReady().then(async () => {
+  createAppMenu({
+    onCheckForUpdates: () => updater.checkForUpdates({ silent: false }),
+    onInstallUpdate: () => updater.quitAndInstall(),
+    getUpdaterStatus: () => updater.getStatus(),
+  });
+
   createTray({
     onQuit: gracefulQuit,
     onChangeHotkeyFn: () => {
@@ -252,7 +259,12 @@ async function startApp() {
   // in dev (app is not packaged), and the first silent check is delayed 30s
   // internally so it never competes with startup work.
   updater.initAutoUpdater({
-    broadcast: (status) => sendToMainWindow('update-status', status),
+    broadcast: (status) => {
+      sendToMainWindow('update-status', status);
+      // Rebuild the app menu so the item flips between "Check for Updates…"
+      // and "Restart to Install Update (vX.Y.Z)" as state changes.
+      refreshAppMenu();
+    },
   });
 
   if (app.dock) app.dock.show();
