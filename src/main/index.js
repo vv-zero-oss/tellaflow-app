@@ -34,6 +34,7 @@ const { closeDb } = require('./db');
 const { registerDictionaryPackIpc } = require('./dictionary-pack-ipc');
 const sounds = require('./sounds');
 const { runStartupSmokeTest } = require('./startup-smoke-test');
+const updater = require('./updater');
 
 // Whisper outputs non-speech annotations in several forms — strip them all
 // so they never reach history or clipboard.
@@ -152,6 +153,13 @@ app.whenReady().then(async () => {
     onTrayClick: () => {
       showMainWindow();
     },
+    onCheckForUpdates: () => {
+      updater.checkForUpdates({ silent: false });
+    },
+    onInstallUpdate: () => {
+      updater.quitAndInstall();
+    },
+    getUpdaterStatus: () => updater.getStatus(),
     onStartRecording: () => {
       // Capture frontmost app synchronously before the menu click steals focus
       clickPasteTargetApp = null;
@@ -235,6 +243,14 @@ app.on('window-all-closed', () => {
 
 async function startApp() {
   createMainWindow();
+
+  // Wire updater listeners BEFORE the slow model load below so the tray's
+  // "Check for Updates…" works even during startup. initAutoUpdater is a no-op
+  // in dev (app is not packaged), and the first silent check is delayed 30s
+  // internally so it never competes with startup work.
+  updater.initAutoUpdater({
+    broadcast: (status) => sendToMainWindow('update-status', status),
+  });
 
   if (app.dock) app.dock.show();
 
@@ -1040,6 +1056,15 @@ function registerIPC() {
 
   ipcMain.handle('get-app-version', () => {
     return app.getVersion();
+  });
+
+  // Auto-update IPC
+  ipcMain.handle('get-update-status', () => updater.getStatus());
+  ipcMain.on('check-for-updates', () => {
+    updater.checkForUpdates({ silent: false });
+  });
+  ipcMain.on('install-update', () => {
+    updater.quitAndInstall();
   });
 
   ipcMain.on('open-test-wav', async () => {

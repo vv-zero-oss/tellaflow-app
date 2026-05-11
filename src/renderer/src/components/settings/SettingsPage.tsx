@@ -13,6 +13,7 @@ import {
 import { GeneralSettings } from './GeneralSettings';
 import { PermissionsSettings } from './PermissionsSettings';
 import { SystemSettings } from './SystemSettings';
+import { UpdateRow } from './UpdateRow';
 import { usePermissions } from '@/hooks/use-permissions';
 import type { AppConfig, Theme } from '@/lib/ipc';
 import { Check } from 'lucide-react';
@@ -283,6 +284,7 @@ export function SettingsPage({
                   <span className="text-sm text-muted-foreground">{appVersion}</span>
                 </div>
               </WellItem>
+              <UpdateRow />
               <WellItem>
                 <div className="flex items-center justify-between">
                   <span className="text-sm">Help &amp; Support</span>

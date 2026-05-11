@@ -141,6 +141,16 @@ contextBridge.exposeInMainWorld('tellaflow', {
   openExternal: (url) => ipcRenderer.send('open-external', url),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
+  // Auto-update
+  getUpdateStatus: () => ipcRenderer.invoke('get-update-status'),
+  checkForUpdates: () => ipcRenderer.send('check-for-updates'),
+  installUpdate: () => ipcRenderer.send('install-update'),
+  onUpdateStatus: (cb) => {
+    const h = (_, status) => cb(status);
+    ipcRenderer.on('update-status', h);
+    return () => ipcRenderer.removeListener('update-status', h);
+  },
+
   // Test WAV
   openTestWav: () => ipcRenderer.send('open-test-wav'),
 

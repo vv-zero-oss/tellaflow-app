@@ -4,6 +4,9 @@ const path = require('path');
 let tray = null;
 let onTrayClickFn = null;
 let onStartRecordingFn = null;
+let onCheckForUpdatesFn = null;
+let onInstallUpdateFn = null;
+let getUpdaterStatusFn = null;
 let quitCallback = null;
 
 function getIconPath() {
@@ -14,9 +17,21 @@ function getIconPath() {
   return path.join(__dirname, '..', '..', 'resources', 'trayIconTemplate.png');
 }
 
-function createTray({ onQuit, onChangeHotkeyFn, onRetryHotkeyFn, onTrayClick, onStartRecording }) {
+function createTray({
+  onQuit,
+  onChangeHotkeyFn,
+  onRetryHotkeyFn,
+  onTrayClick,
+  onStartRecording,
+  onCheckForUpdates,
+  onInstallUpdate,
+  getUpdaterStatus,
+}) {
   onTrayClickFn = onTrayClick;
   onStartRecordingFn = onStartRecording;
+  onCheckForUpdatesFn = onCheckForUpdates;
+  onInstallUpdateFn = onInstallUpdate;
+  getUpdaterStatusFn = getUpdaterStatus;
   quitCallback = onQuit;
 
   const iconPath = getIconPath();
@@ -43,7 +58,11 @@ function createTray({ onQuit, onChangeHotkeyFn, onRetryHotkeyFn, onTrayClick, on
 }
 
 function buildTrayMenu() {
-  return Menu.buildFromTemplate([
+  const status = getUpdaterStatusFn ? getUpdaterStatusFn() : null;
+  const updateDownloaded = status && status.phase === 'downloaded';
+  const updateChecking = status && status.phase === 'checking';
+
+  const template = [
     {
       label: 'Open Tellaflow',
       click: () => { if (onTrayClickFn) onTrayClickFn(); },
@@ -53,11 +72,31 @@ function buildTrayMenu() {
       click: () => { if (onStartRecordingFn) onStartRecordingFn(); },
     },
     { type: 'separator' },
+  ];
+
+  if (updateDownloaded) {
+    const ver = status.updateVersion ? ` (v${status.updateVersion})` : '';
+    template.push({
+      label: `Restart to install update${ver}`,
+      click: () => { if (onInstallUpdateFn) onInstallUpdateFn(); },
+    });
+  } else {
+    template.push({
+      label: updateChecking ? 'Checking for Updates…' : 'Check for Updates…',
+      enabled: !updateChecking,
+      click: () => { if (onCheckForUpdatesFn) onCheckForUpdatesFn(); },
+    });
+  }
+
+  template.push(
+    { type: 'separator' },
     {
       label: 'Quit Tellaflow',
       click: () => { if (quitCallback) quitCallback(); },
     },
-  ]);
+  );
+
+  return Menu.buildFromTemplate(template);
 }
 
 function getTray() {
