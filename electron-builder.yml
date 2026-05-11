@@ -43,12 +43,11 @@ win:
       arch:
         - x64
   icon: resources/icon.png
-  # signtoolOptions are populated by electron-builder when CSC_LINK /
-  # CSC_KEY_PASSWORD env vars are present in CI. With no certificate the
-  # installer is built unsigned — SmartScreen will warn first-run users but
-  # the app still installs and runs.
+  # When CSC_LINK / CSC_KEY_PASSWORD env vars are present in CI,
+  # electron-builder picks them up via signtoolOptions automatically. With no
+  # certificate the installer is built unsigned — SmartScreen will warn
+  # first-run users but the app still installs and runs.
   artifactName: ${productName}-${version}-${arch}-setup.${ext}
-  publisherName: Tellaflow
 nsis:
   oneClick: false
   perMachine: false
