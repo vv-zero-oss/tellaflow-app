@@ -29,6 +29,7 @@ const { applyDictionary } = require('./dictionary');
 const snippets = require('./snippets');
 const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState, setToastInteractive } = require('./toast');
 const { showMainWindow, sendToMainWindow, destroyMainWindow, createMainWindow } = require('./main-window');
+const { getFrontmostAppSync, getFrontmostAppAsync } = require('./platform-shell');
 const history = require('./history');
 const { closeDb } = require('./db');
 const { registerDictionaryPackIpc } = require('./dictionary-pack-ipc');
@@ -85,23 +86,11 @@ let accessibilityInitialState = null; // null = not yet checked
 let clickPasteTargetApp = null;
 
 // Returns the name of the current frontmost application asynchronously.
-// EC2 — resolves null after 800 ms if osascript hangs, preventing the
-// audio-captured handler from stalling indefinitely.
+// EC2 — resolves null after 800 ms if the underlying OS query hangs, preventing
+// the audio-captured handler from stalling indefinitely. Cross-platform:
+// osascript on macOS, PowerShell + Win32 GetForegroundWindow on Windows.
 function getFrontmostApp() {
-  return new Promise((resolve) => {
-    const { execFile } = require('child_process');
-    const timer = setTimeout(() => {
-      console.warn('getFrontmostApp timed out');
-      resolve(null);
-    }, 800);
-    execFile('osascript', [
-      '-e',
-      'tell application "System Events" to get name of first process whose frontmost is true',
-    ], (err, stdout) => {
-      clearTimeout(timer);
-      resolve(err ? null : (stdout.trim() || null));
-    });
-  });
+  return getFrontmostAppAsync(800);
 }
 
 // True when the given app name is our own Electron process (not a real user app).
@@ -189,14 +178,8 @@ app.whenReady().then(async () => {
     onStartRecording: () => {
       // Capture frontmost app synchronously before the menu click steals focus
       clickPasteTargetApp = null;
-      try {
-        const { execFileSync } = require('child_process');
-        const name = execFileSync('osascript', [
-          '-e',
-          'tell application "System Events" to get name of first process whose frontmost is true',
-        ]).toString().trim();
-        if (name && !isOwnApp(name)) clickPasteTargetApp = name;
-      } catch {}
+      const name = getFrontmostAppSync(800);
+      if (name && !isOwnApp(name)) clickPasteTargetApp = name;
       startClickRecording();
     },
   });
@@ -261,10 +244,9 @@ app.on('will-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  // On macOS tray apps, don't quit when all windows close — user reopens via tray or dock
-  if (process.platform !== 'darwin') {
-    gracefulQuit();
-  }
+  // Tellaflow is a tray-resident app on every platform — when the last window
+  // closes the app keeps running so the user can dictate via the hotkey and
+  // reopen the main window from the tray icon.
 });
 
 async function startApp() {
@@ -401,20 +383,14 @@ function startHotkeyListener() {
     hotkey.start({
       onStart: () => {
         // Capture the frontmost app SYNCHRONOUSLY and BEFORE createAudioCaptureWindow().
-        // An async query races with window creation — on macOS, creating a new
-        // BrowserWindow can briefly activate Electron, corrupting a concurrent
-        // osascript query and making it return 'Electron' instead of the user's app.
+        // An async query races with window creation — creating a new BrowserWindow
+        // can briefly activate Electron, corrupting a concurrent foreground query
+        // and making it return 'Electron' instead of the user's app.
         clickPasteTargetApp = null;
-        try {
-          const { execFileSync } = require('child_process');
-          const name = execFileSync('osascript', [
-            '-e',
-            'tell application "System Events" to get name of first process whose frontmost is true',
-          ], { timeout: 500 }).toString().trim();
-          if (name && !isOwnApp(name)) {
-            clickPasteTargetApp = name;
-          }
-        } catch {}
+        const name = getFrontmostAppSync(500);
+        if (name && !isOwnApp(name)) {
+          clickPasteTargetApp = name;
+        }
 
         pendingStop = false;
         clearRecordingTimeout();
@@ -1134,19 +1110,13 @@ function registerIPC() {
     // leaves a stale value from a previous recording session in place.
     clickPasteTargetApp = null;
 
-    // Sync call on hover: blocks for ~100ms but that's invisible to the user
+    // Sync call on hover: blocks briefly but that's invisible to the user
     // since no animation has started yet. Eliminates the race where the user
     // clicks before the async result returns and clickPasteTargetApp is still null.
-    try {
-      const { execFileSync } = require('child_process');
-      const name = execFileSync('osascript', [
-        '-e',
-        'tell application "System Events" to get name of first process whose frontmost is true',
-      ]).toString().trim();
-      if (name && !isOwnApp(name)) {
-        clickPasteTargetApp = name;
-      }
-    } catch {}
+    const name = getFrontmostAppSync(800);
+    if (name && !isOwnApp(name)) {
+      clickPasteTargetApp = name;
+    }
   });
 
   // Fired on mousedown on the trigger strip — runs suppressNextActivation again
