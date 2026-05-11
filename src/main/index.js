@@ -53,6 +53,9 @@ let audioCaptureWindow = null;
 let isQuitting = false;
 let pendingStop = false;
 let recordingTimeout = null;
+// Grace period after hotkey release — keeps the mic open a little longer so the
+// user's last word isn't clipped when they lift the key slightly before finishing.
+const RELEASE_GRACE_MS = 400;
 // Safety cap for *click-to-record* only. The hotkey path is bounded by key
 // release, so it has no auto-stop. Click mode has no terminator, so without
 // this an accidental click would leave the mic running until the app quits.
@@ -391,17 +394,22 @@ function startHotkeyListener() {
           return;
         }
 
-        if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
-          if (audioCaptureWindow.webContents.isLoading()) {
-            console.log('Audio window still loading — deferring stop.');
-            pendingStop = true;
+        // Keep the mic open briefly after key release so the user's last
+        // syllable isn't clipped — they often lift the key a split-second
+        // before finishing the final word.
+        setTimeout(() => {
+          if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+            if (audioCaptureWindow.webContents.isLoading()) {
+              console.log('Audio window still loading — deferring stop.');
+              pendingStop = true;
+            } else {
+              audioCaptureWindow.webContents.send('stop-recording');
+            }
           } else {
-            audioCaptureWindow.webContents.send('stop-recording');
+            hideToast();
+            broadcastStatus('Ready');
           }
-        } else {
-          hideToast();
-          broadcastStatus('Ready');
-        }
+        }, RELEASE_GRACE_MS);
       },
     });
     // Hotkey started successfully.
