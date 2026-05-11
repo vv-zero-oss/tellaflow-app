@@ -44,7 +44,7 @@ async function startCapture(deviceId) {
       mediaStream = null;
       startingUp = false;
       console.log('Stop was requested during mic init — sending empty audio.');
-      window.tellaflow.sendAudio([]);
+      window.tellaflow.sendAudio(new Float32Array(0));
       return;
     }
 
@@ -120,11 +120,14 @@ function stopCapture() {
 
   if (rms < 0.005) {
     console.log('No speech detected (RMS too low). Sending empty audio for cleanup.');
-    window.tellaflow.sendAudio([]);
+    window.tellaflow.sendAudio(new Float32Array(0));
     return;
   }
 
-  window.tellaflow.sendAudio(Array.from(merged));
+  // Send the Float32Array as-is — Electron IPC uses structured clone, which
+  // preserves typed arrays. Avoids the O(n) Array.from() conversion (~480k
+  // samples for a 30s clip) and roughly halves the IPC payload size.
+  window.tellaflow.sendAudio(merged);
 }
 
 window.tellaflow.onStartRecording((data) => startCapture(data?.deviceId));

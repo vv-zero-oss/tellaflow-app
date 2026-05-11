@@ -51,6 +51,22 @@ function stripWhisperArtifacts(text) {
   return cleaned;
 }
 
+// Throttles a progress callback so it fires at most once per `intervalMs`. The
+// terminal event (downloaded === total) is always forwarded so the UI doesn't
+// stall at 99% just because the previous tick fell inside the throttle window.
+// Without this, multi-GB model downloads can fire thousands of IPC messages.
+function throttleProgress(fn, intervalMs = 100) {
+  let lastSent = 0;
+  return (progress) => {
+    const now = Date.now();
+    const isTerminal = progress && progress.total > 0 && progress.downloaded >= progress.total;
+    if (isTerminal || now - lastSent >= intervalMs) {
+      lastSent = now;
+      fn(progress);
+    }
+  };
+}
+
 let audioCaptureWindow = null;
 let isQuitting = false;
 let pendingStop = false;
@@ -716,7 +732,7 @@ function registerIPC() {
 
   ipcMain.on('start-parakeet-download', () => {
     models.startParakeetDownload({
-      onProgress: (p) => sendToMainWindow('parakeet-download-progress', p),
+      onProgress: throttleProgress((p) => sendToMainWindow('parakeet-download-progress', p)),
       onComplete: () => {
         sendToMainWindow('parakeet-status-changed', models.getParakeetStatus());
         // Auto-load model after download
@@ -822,9 +838,9 @@ function registerIPC() {
 
   ipcMain.on('start-download', (_, modelKey) => {
     models.startDownload(modelKey, {
-      onProgress: (progress) => {
+      onProgress: throttleProgress((progress) => {
         sendToMainWindow('download-progress', progress);
-      },
+      }),
       onComplete: () => {
         sendToMainWindow('models-changed', models.getModelsStatus());
       },
@@ -858,9 +874,9 @@ function registerIPC() {
 
   ipcMain.on('start-grammar-download', (_, modelKey) => {
     grammar.startGrammarDownload(modelKey, {
-      onProgress: (p) => {
+      onProgress: throttleProgress((p) => {
         sendToMainWindow('grammar-model-progress', p);
-      },
+      }),
       onComplete: () => {
         console.log(`Grammar model ${modelKey} downloaded successfully`);
         sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
@@ -1047,14 +1063,18 @@ function registerIPC() {
   });
 
   ipcMain.handle('get-audio-data', async (_, filePath) => {
-    const fs = require('fs');
+    const fsp = require('fs').promises;
     if (!filePath || typeof filePath !== 'string') return null;
     // Prevent path traversal — only allow files inside the recordings directory
     const recordingsDir = path.join(app.getPath('userData'), 'recordings');
     const resolved = path.resolve(filePath);
     if (!resolved.startsWith(recordingsDir)) return null;
-    if (!fs.existsSync(resolved)) return null;
-    const buf = fs.readFileSync(resolved);
+    let buf;
+    try {
+      buf = await fsp.readFile(resolved);
+    } catch {
+      return null;
+    }
     // buf.buffer returns the underlying ArrayBuffer from Node's pool, which may
     // be larger than the file contents. Slice to the exact byte range.
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
@@ -1235,7 +1255,14 @@ function registerIPC() {
   ipcMain.on('audio-captured', async (_, pcmArray) => {
     destroyAudioCaptureWindow();
 
-    if (!pcmArray || pcmArray.length === 0) {
+    // Renderer sends a Float32Array (preserved across IPC by structured clone).
+    // Older callers may still send a plain Array; normalise once here so the
+    // rest of the pipeline can avoid redundant typed-array allocations.
+    const pcm = pcmArray instanceof Float32Array
+      ? pcmArray
+      : (pcmArray && pcmArray.length ? new Float32Array(pcmArray) : null);
+
+    if (!pcm || pcm.length === 0) {
       console.log('Empty audio received — skipping transcription.');
       clickPasteTargetApp = null;
       hideToast();
@@ -1254,38 +1281,45 @@ function registerIPC() {
     showToast('transcribing');
     broadcastStatus('Transcribing...');
 
-    // Save the raw audio to disk before transcription so it is always preserved
+    // Save the raw audio to disk before transcription so it is always preserved.
+    // Async write keeps the event loop responsive — transcription only needs
+    // `savedAudioPath` for the unlink-on-failure paths, not the bytes on disk.
     const fs = require('fs');
     const recordingsDir = path.join(app.getPath('userData'), 'recordings');
     const audioPath = path.join(recordingsDir, `recording-${Date.now()}.wav`);
     let savedAudioPath = null;
+    let writePromise = Promise.resolve();
     try {
-      const pcmRaw = new Float32Array(pcmArray);
-      const wavBuf = encodePcmToWav(pcmRaw, 16000);
-      fs.writeFileSync(audioPath, wavBuf);
-      savedAudioPath = audioPath;
-    } catch (writeErr) {
-      console.warn('Failed to save audio file:', writeErr.message);
+      const wavBuf = encodePcmToWav(pcm, 16000);
+      writePromise = fs.promises.writeFile(audioPath, wavBuf)
+        .then(() => { savedAudioPath = audioPath; })
+        .catch((writeErr) => {
+          console.warn('Failed to save audio file:', writeErr.message);
+        });
+    } catch (encErr) {
+      console.warn('Failed to encode WAV:', encErr.message);
     }
 
     try {
-      let pcm = new Float32Array(pcmArray);
-      pcm = trimSilence(pcm);
-      pcm = normalizeVolume(pcm);
+      let processed = trimSilence(pcm);
+      processed = normalizeVolume(processed);
 
       let rawText;
       if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
-        rawText = await parakeet.transcribe(pcm);
+        rawText = await parakeet.transcribe(processed);
       } else {
-        rawText = await whisper.transcribe(pcm);
+        rawText = await whisper.transcribe(processed);
         rawText = stripWhisperArtifacts(rawText);
       }
+      // Make sure the async WAV write completed before any downstream branch
+      // either persists `savedAudioPath` in history or attempts to unlink it.
+      await writePromise;
       if (!rawText) {
         clickPasteTargetApp = null;
         hideToast();
         broadcastStatus('Ready');
         if (savedAudioPath) {
-          try { fs.unlinkSync(savedAudioPath); } catch (_) {}
+          fs.promises.unlink(savedAudioPath).catch(() => {});
         }
         if (playgroundMode) {
           const win = getOnboardingWindow();
@@ -1321,7 +1355,7 @@ function registerIPC() {
         if (win && !win.isDestroyed()) {
           clickPasteTargetApp = null;
           broadcastStatus('Ready');
-          if (savedAudioPath) { try { fs.unlinkSync(savedAudioPath); } catch (_) {} }
+          if (savedAudioPath) { fs.promises.unlink(savedAudioPath).catch(() => {}); }
           // Always send (even empty text) so the renderer can reset its recording state.
           // Re-focus the onboarding window so subsequent hotkey presses are captured.
           win.webContents.send('playground-text', text || '');
@@ -1358,8 +1392,11 @@ function registerIPC() {
       clickPasteTargetApp = null;
       hideToast();
 
+      // Await any in-flight WAV write so the unlink targets the real file
+      // rather than racing against the writer.
+      try { await writePromise; } catch (_) {}
       if (savedAudioPath) {
-        try { fs.unlinkSync(savedAudioPath); } catch (_) {}
+        fs.promises.unlink(savedAudioPath).catch(() => {});
       }
 
       const isModelMissing = err.message && err.message.includes('not found');

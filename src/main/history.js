@@ -7,18 +7,21 @@ function addEntry(text, audioPath = null) {
   const db = getDb();
   db.prepare('INSERT INTO history (text, timestamp, audio_path) VALUES (?, ?, ?)').run(text, Date.now(), audioPath);
 
-  const rows = db.prepare(`
-    SELECT id, audio_path FROM history ORDER BY timestamp ASC LIMIT ?
-  `).all(Math.max(0, db.prepare('SELECT COUNT(*) as cnt FROM history').get().cnt - MAX_ENTRIES));
+  // SQLite allows LIMIT -1 OFFSET N to mean "all rows after the first N". Combined
+  // with DESC ordering and RETURNING, this trims overflow + returns the deleted
+  // audio paths for unlink in a single statement (saves a SELECT vs the prior impl).
+  const removed = db.prepare(`
+    DELETE FROM history
+    WHERE id IN (
+      SELECT id FROM history ORDER BY timestamp DESC LIMIT -1 OFFSET ?
+    )
+    RETURNING audio_path
+  `).all(MAX_ENTRIES);
 
-  if (rows.length > 0) {
-    for (const row of rows) {
-      if (row.audio_path) {
-        try { fs.unlinkSync(row.audio_path); } catch { /* already gone */ }
-      }
+  for (const row of removed) {
+    if (row.audio_path) {
+      fs.promises.unlink(row.audio_path).catch(() => { /* already gone */ });
     }
-    const ids = rows.map(r => r.id);
-    db.prepare(`DELETE FROM history WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids);
   }
 }
 
