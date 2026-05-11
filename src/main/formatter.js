@@ -48,6 +48,7 @@ function formatTranscription(raw) {
   text = applyVoiceCommands(text);
   text = detectAndFormatLists(text);
   text = cleanWhitespace(text);
+  text = normalizeTranscriptArtifacts(text);
   text = capitalizeSentences(text);
 
   return text;
@@ -208,7 +209,78 @@ function cleanWhitespace(text) {
     .trim();
 }
 
+// ── Common TLDs Whisper tends to mangle ──────────────────────────────────
+const TLDS = 'com|org|net|io|dev|co|ai|app|edu|gov|me|info|biz|us|uk|ca|au|de|fr|in|jp|xyz|tech|cloud|gg|tv|fm|so|sh';
+const TLD_RE = new RegExp(`(?<=\\S)\\s*\\.\\s*(${TLDS})\\b`, 'gi');
+
+// "dot com", "dot org", etc. immediately after a word
+const DOT_WORD_TLD_RE = new RegExp(`(\\S)\\s+dot\\s+(${TLDS})\\b`, 'gi');
+
+// Protocol spoken out: "HTTP colon slash slash", "HTTPS colon slash slash"
+const PROTOCOL_RE = /\bHTTPS?\s*colon\s*(?:forward\s*)?slash\s*(?:forward\s*)?slash\s*/gi;
+
+// "www dot" or "www ."
+const WWW_DOT_RE = /\bwww\s*(?:dot|\.) */gi;
+
+// Spaces around @ in email-like patterns: "user @ domain"
+const EMAIL_AT_RE = /(\S+)\s*@\s*(\S+)/g;
+
+// "at the rate" / "at sign" used instead of @
+const AT_SPOKEN_RE = /(\S+)\s+(?:at the rate(?: of)?|at sign)\s+(\S+)/gi;
+
+// Slash spoken out: "slash" between path segments (only after a domain-like token)
+const SLASH_SPOKEN_RE = /(\.[a-z]{2,6}(?:\/\S*)?)\s+slash\s+/gi;
+
+// Repeated stutters: "I I think", "the the"
+const STUTTER_RE = /\b(\w+)\s+\1\b/gi;
+
+/**
+ * Fix common Whisper transcription artifacts — URLs, emails, tech terms,
+ * spacing anomalies — before capitalisation has a chance to break them.
+ */
+function normalizeTranscriptArtifacts(text) {
+  // 1. Protocols: "HTTPS colon slash slash" → "https://"
+  text = text.replace(PROTOCOL_RE, (m) => {
+    const proto = m.trim().split(/\s/)[0].toLowerCase();
+    return proto + '://';
+  });
+
+  // 2. "www dot" / "www ." → "www."
+  text = text.replace(WWW_DOT_RE, 'www.');
+
+  // 3. "dot com" → ".com"  (only when preceded by a non-space char)
+  text = text.replace(DOT_WORD_TLD_RE, '$1.$2');
+
+  // 4. Spaces around dots before TLDs: "google .com" / "google . com" → "google.com"
+  text = text.replace(TLD_RE, (_, tld) => '.' + tld.toLowerCase());
+
+  // 5. Email @ spacing: "user @ gmail" → "user@gmail"
+  text = text.replace(EMAIL_AT_RE, '$1@$2');
+
+  // 6. Spoken "@": "user at the rate gmail" → "user@gmail"
+  text = text.replace(AT_SPOKEN_RE, '$1@$2');
+
+  // 7. Spoken slashes in paths after a domain
+  text = text.replace(SLASH_SPOKEN_RE, '$1/');
+
+  // 8. Lowercase full URLs/emails so capitalisation doesn't break them
+  text = text.replace(/https?:\/\/\S+/gi, (m) => m.toLowerCase());
+  text = text.replace(/\S+@\S+\.\S+/g, (m) => m.toLowerCase());
+
+  // 9. Stutter removal: "the the" → "the"
+  text = text.replace(STUTTER_RE, '$1');
+
+  return text;
+}
+
 function capitalizeSentences(text) {
+  // Protect URLs and emails from capitalisation by replacing with placeholders
+  const preserved = [];
+  text = text.replace(/https?:\/\/\S+|\S+@\S+\.\S+/g, (m) => {
+    preserved.push(m);
+    return `\x00URL${preserved.length - 1}\x00`;
+  });
+
   // Capitalize after sentence-ending punctuation
   text = text.replace(/([.!?]\s+)([a-z])/g, (_, punct, char) => punct + char.toUpperCase());
   // Capitalize after newlines
@@ -217,6 +289,9 @@ function capitalizeSentences(text) {
   if (text.length > 0) {
     text = text[0].toUpperCase() + text.slice(1);
   }
+
+  // Restore URLs and emails
+  text = text.replace(/\x00URL(\d+)\x00/g, (_, i) => preserved[Number(i)]);
   return text;
 }
 
