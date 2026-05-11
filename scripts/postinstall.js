@@ -9,17 +9,21 @@ if (!fs.existsSync(addonDist)) {
   process.exit(0);
 }
 
-// Create symlinks for darwin naming convention
-const links = { 'darwin-arm64': 'mac-arm64', 'darwin-x64': 'mac-x64' };
-for (const [link, target] of Object.entries(links)) {
-  const linkPath = path.join(addonDist, link);
-  const targetPath = path.join(addonDist, target);
-  if (fs.existsSync(targetPath) && !fs.existsSync(linkPath)) {
-    try {
-      fs.symlinkSync(target, linkPath, 'dir');
-      console.log(`Symlink: ${link} -> ${target}`);
-    } catch (err) {
-      console.warn(`Symlink failed for ${link}:`, err.message);
+// Create symlinks for darwin naming convention. Windows skips this entirely:
+// directory symlinks require elevated privileges or developer-mode there, and
+// the win32-x64 binaries are already at the path whisper.js looks them up at.
+if (process.platform === 'darwin') {
+  const links = { 'darwin-arm64': 'mac-arm64', 'darwin-x64': 'mac-x64' };
+  for (const [link, target] of Object.entries(links)) {
+    const linkPath = path.join(addonDist, link);
+    const targetPath = path.join(addonDist, target);
+    if (fs.existsSync(targetPath) && !fs.existsSync(linkPath)) {
+      try {
+        fs.symlinkSync(target, linkPath, 'dir');
+        console.log(`Symlink: ${link} -> ${target}`);
+      } catch (err) {
+        console.warn(`Symlink failed for ${link}:`, err.message);
+      }
     }
   }
 }

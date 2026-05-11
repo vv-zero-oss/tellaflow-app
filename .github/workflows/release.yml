@@ -10,24 +10,42 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build, sign, notarize, publish
+  verify:
+    name: Verify tag matches package.json
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            PKG_VERSION=$(node -p "require('./package.json').version")
+            if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME (= $TAG_VERSION) does not match package.json version $PKG_VERSION"
+              exit 1
+            fi
+            echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+            echo "Releasing version $PKG_VERSION"
+          else
+            PKG_VERSION=$(node -p "require('./package.json').version")
+            echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch — building version $PKG_VERSION"
+          fi
+
+  build-mac:
+    name: Build & notarize macOS
+    needs: verify
     runs-on: macos-latest
     timeout-minutes: 60
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Verify tag matches package.json version
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME (= $TAG_VERSION) does not match package.json version $PKG_VERSION"
-            exit 1
-          fi
-          echo "Releasing version $PKG_VERSION"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -80,14 +98,106 @@ jobs:
           codesign -dv --verbose=2 dist/mac-arm64/Tellaflow.app
           spctl -a -vv dist/mac-arm64/Tellaflow.app
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
         with:
-          files: |
+          name: mac-artifacts
+          path: |
             dist/Tellaflow-*-arm64.dmg
             dist/Tellaflow-*-arm64.dmg.blockmap
             dist/Tellaflow-*-arm64-mac.zip
             dist/Tellaflow-*-arm64-mac.zip.blockmap
             dist/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  build-win:
+    name: Build Windows installer
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Cache Whisper model
+        uses: actions/cache@v4
+        with:
+          path: resources/models
+          key: whisper-ggml-small-v1
+
+      - name: Download Whisper model (if not cached)
+        run: npm run download-model
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer
+        run: npm run build:renderer
+
+      # Windows code signing is intentionally NOT configured. The installer
+      # ships unsigned — first-run users will see a SmartScreen "unrecognized
+      # app" prompt (More info → Run anyway) but the installer works and
+      # auto-updates work via SHA512 verification in latest.yml.
+      #
+      # To turn signing on later (Azure Trusted Signing recommended), see
+      # the README "Windows code signing" section and add the appropriate
+      # AZURE_* / CSC_* env vars to this step.
+      - name: Build Windows installer (unsigned)
+        env:
+          # Suppress electron-builder's auto-detection of any stray cert in
+          # the runner's trust store — we only sign when secrets are explicit.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder --win --publish never
+
+      - name: List build output (debug)
+        shell: pwsh
+        run: Get-ChildItem -Path dist -Recurse | Select-Object FullName, Length
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-artifacts
+          path: |
+            dist/Tellaflow-*-x64-setup.exe
+            dist/Tellaflow-*-x64-setup.exe.blockmap
+            dist/Tellaflow-*-x64-win.zip
+            dist/Tellaflow-*-x64-win.zip.blockmap
+            dist/latest.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-mac, build-win]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-artifacts
+          path: artifacts/
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: win-artifacts
+          path: artifacts/
+
+      - name: List release artifacts
+        run: ls -la artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
           draft: false
           generate_release_notes: true

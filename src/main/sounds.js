@@ -1,26 +1,32 @@
 const { execFile } = require('child_process');
 const config = require('./config');
+const { IS_MAC, IS_WIN, playSystemSound, pauseMediaApps, resumeMediaApps } = require('./platform-shell');
 
-// macOS system sounds — built-in, no bundling needed
-const SOUND_START = '/System/Library/Sounds/Tink.aiff';
-const SOUND_STOP  = '/System/Library/Sounds/Glass.aiff';
-
-function play(file) {
+function playStart() {
   if (!config.getSoundsEnabled()) return;
-  execFile('afplay', ['-v', '0.4', file], (err) => {
-    if (err) console.warn('Sound playback failed:', err.message);
-  });
+  playSystemSound('start');
 }
 
-function playStart() { play(SOUND_START); }
-function playStop()  { play(SOUND_STOP);  }
+function playStop() {
+  if (!config.getSoundsEnabled()) return;
+  playSystemSound('stop');
+}
 
-// Track which apps we actually paused so we only resume those
+// Track which apps we actually paused so we only resume those (mac only).
 let pausedApps = { music: false, spotify: false };
+let pausedWin = null;
 
-// Pause Apple Music and Spotify via AppleScript
 function muteMusic() {
   if (!config.getMuteWhileDictating()) return;
+
+  if (IS_WIN) {
+    pausedWin = pauseMediaApps();
+    return;
+  }
+
+  if (!IS_MAC) return;
+
+  // Pause Apple Music and Spotify via AppleScript
   pausedApps = { music: false, spotify: false };
   const script = `
     set pausedList to ""
@@ -52,9 +58,19 @@ function muteMusic() {
   });
 }
 
-// Resume only the apps that we actually paused
 function unmuteMusic() {
   if (!config.getMuteWhileDictating()) return;
+
+  if (IS_WIN) {
+    if (pausedWin) {
+      resumeMediaApps(pausedWin);
+      pausedWin = null;
+    }
+    return;
+  }
+
+  if (!IS_MAC) return;
+
   if (!pausedApps.music && !pausedApps.spotify) return;
 
   const parts = [];

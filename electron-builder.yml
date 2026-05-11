@@ -34,6 +34,33 @@ dmg:
       y: 140
       type: link
       path: /Applications
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+  icon: resources/icon.png
+  # When CSC_LINK / CSC_KEY_PASSWORD env vars are present in CI,
+  # electron-builder picks them up via signtoolOptions automatically. With no
+  # certificate the installer is built unsigned — SmartScreen will warn
+  # first-run users but the app still installs and runs.
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  # allowElevation:false keeps the installer strictly per-user — it will never
+  # request UAC, so auto-updates can run silently in the background without
+  # interrupting the user (Slack/Discord/VS Code model).
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Tellaflow
+  deleteAppDataOnUninstall: false
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}
 extraResources:
   - from: resources/models/
     to: models/
@@ -55,6 +82,8 @@ asarUnpack:
   - node_modules/node-llama-cpp/**/*
   - node_modules/@node-llama-cpp/**/*
   - node_modules/better-sqlite3/**/*
+  - node_modules/keyspy/runtime/**/*
+  - node_modules/keyspy/build/**/*
   - src/main/grammar-worker.js
   - dist/renderer/*.mp4
   - dist/renderer/*.png

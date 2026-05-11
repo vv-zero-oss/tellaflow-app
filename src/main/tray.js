@@ -9,12 +9,29 @@ let onInstallUpdateFn = null;
 let getUpdaterStatusFn = null;
 let quitCallback = null;
 
+const IS_MAC = process.platform === 'darwin';
+
 function getIconPath() {
   const { app } = require('electron');
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'trayIconTemplate.png');
+  // On macOS we use a black-on-transparent template image so the menu-bar
+  // auto-inverts it for light/dark themes. On Windows the system tray is
+  // typically dark in the default theme and accepts full-colour icons —
+  // we ship a coloured 16/32px PNG built from the app icon.
+  if (IS_MAC) {
+    return app.isPackaged
+      ? path.join(process.resourcesPath, 'trayIconTemplate.png')
+      : path.join(__dirname, '..', '..', 'resources', 'trayIconTemplate.png');
   }
-  return path.join(__dirname, '..', '..', 'resources', 'trayIconTemplate.png');
+  // Windows tray icon — use the app icon. .ico is preferred on Windows; we
+  // fall back to the high-resolution PNG if no .ico is shipped.
+  const winIco = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(__dirname, '..', '..', 'resources', 'icon.ico');
+  const fs = require('fs');
+  if (fs.existsSync(winIco)) return winIco;
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.join(__dirname, '..', '..', 'resources', 'icon.png');
 }
 
 function createTray({
@@ -38,7 +55,15 @@ function createTray({
   let icon;
   try {
     icon = nativeImage.createFromPath(iconPath);
-    icon.setTemplateImage(true);
+    if (IS_MAC) icon.setTemplateImage(true);
+    // On Windows, downscale large source PNGs so the tray icon renders at
+    // the right size in the notification area (typically 16x16 or 24x24).
+    if (!IS_MAC && !icon.isEmpty()) {
+      const size = icon.getSize();
+      if (size.width > 32 || size.height > 32) {
+        icon = icon.resize({ width: 16, height: 16 });
+      }
+    }
   } catch {
     icon = nativeImage.createEmpty();
   }
@@ -47,12 +72,24 @@ function createTray({
   tray.setToolTip('Tellaflow');
 
   tray.on('click', () => {
-    tray.popUpContextMenu(buildTrayMenu());
+    if (IS_MAC) {
+      tray.popUpContextMenu(buildTrayMenu());
+    } else {
+      // On Windows, a single click on the tray icon traditionally opens the
+      // app; right-click shows the context menu (handled below).
+      if (onTrayClickFn) onTrayClickFn();
+    }
   });
 
   tray.on('right-click', () => {
     tray.popUpContextMenu(buildTrayMenu());
   });
+
+  if (!IS_MAC) {
+    // Also set a default context menu so the Windows shell exposes it even
+    // before our right-click handler fires.
+    tray.setContextMenu(buildTrayMenu());
+  }
 
   return tray;
 }
