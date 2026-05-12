@@ -26,6 +26,7 @@ export interface AppConfig {
   transcriptionEngine?: TranscriptionEngine;
   parakeetAvailable?: boolean;
   microphoneDeviceId?: string;
+  hotkeyActivationDelay?: number;
 }
 
 export interface ParakeetModelInfo {
@@ -164,6 +165,8 @@ interface TellaflowAPI {
   setSoundsEnabled: (enabled: boolean) => void;
   getMuteWhileDictating: () => Promise<boolean>;
   setMuteWhileDictating: (enabled: boolean) => void;
+  getHotkeyActivationDelay: () => Promise<number>;
+  setHotkeyActivationDelay: (ms: number) => void;
   getShowInDock: () => Promise<boolean>;
   setShowInDock: (enabled: boolean) => void;
   getLaunchAtLogin: () => Promise<boolean>;

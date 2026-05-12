@@ -49,6 +49,8 @@ contextBridge.exposeInMainWorld('tellaflow', {
   setSoundsEnabled: (enabled) => ipcRenderer.send('set-sounds-enabled', enabled),
   getMuteWhileDictating: () => ipcRenderer.invoke('get-mute-while-dictating'),
   setMuteWhileDictating: (enabled) => ipcRenderer.send('set-mute-while-dictating', enabled),
+  getHotkeyActivationDelay: () => ipcRenderer.invoke('get-hotkey-activation-delay'),
+  setHotkeyActivationDelay: (ms) => ipcRenderer.send('set-hotkey-activation-delay', ms),
   getShowInDock: () => ipcRenderer.invoke('get-show-in-dock'),
   setShowInDock: (enabled) => ipcRenderer.send('set-show-in-dock', enabled),
   getLaunchAtLogin: () => ipcRenderer.invoke('get-launch-at-login'),

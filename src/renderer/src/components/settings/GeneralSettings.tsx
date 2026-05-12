@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Sun, Moon, Monitor, Pencil, RotateCcw, Check, X } from 'lucide-react';
+import { Sun, Moon, Monitor, Pencil, RotateCcw, Check, X, Minus, Plus } from 'lucide-react';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -288,12 +288,19 @@ function useMicLabel(deviceId: string | undefined) {
 interface GeneralSettingsProps {
   config: AppConfig;
   onSetTheme: (theme: Theme) => void;
+  refreshConfig: () => Promise<void>;
 }
 
-export function GeneralSettings({ config, onSetTheme }: GeneralSettingsProps) {
+const DEFAULT_ACTIVATION_DELAY = 300;
+const MIN_DELAY = 0;
+const MAX_DELAY = 2000;
+const DELAY_STEP = 100;
+
+export function GeneralSettings({ config, onSetTheme, refreshConfig }: GeneralSettingsProps) {
   const currentTheme = config.theme || 'dark';
   const [micDialogOpen, setMicDialogOpen] = useState(false);
   const micLabel = useMicLabel(config.microphoneDeviceId);
+  const activationDelay = config.hotkeyActivationDelay ?? DEFAULT_ACTIVATION_DELAY;
 
   const handleMicSelect = (deviceId: string) => {
     ipc.setMicrophoneDeviceId(deviceId);
@@ -336,6 +343,53 @@ export function GeneralSettings({ config, onSetTheme }: GeneralSettingsProps) {
               <p className="text-xs text-muted-foreground/60 mt-0.5">Hold to Transcribe, shortcut to start/stop transcription</p>
             </div>
             <HotkeyEditor currentHotkey={config.hotkey} />
+          </div>
+        </WellItem>
+
+        <WellItem>
+          <div className="flex items-center justify-between">
+            <div className="min-w-0">
+              <span className="text-sm">Activation delay</span>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">
+                Hold the hotkey for this long before recording starts
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => {
+                  const next = Math.max(MIN_DELAY, activationDelay - DELAY_STEP);
+                  ipc.setHotkeyActivationDelay(next);
+                  refreshConfig();
+                }}
+                disabled={activationDelay <= MIN_DELAY}
+                className="flex items-center justify-center w-7 h-7 rounded-md border border-input text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <span className="text-sm font-mono w-14 text-center tabular-nums">
+                {activationDelay >= 1000 ? `${(activationDelay / 1000).toFixed(1)}s` : `${activationDelay}ms`}
+              </span>
+              <button
+                onClick={() => {
+                  const next = Math.min(MAX_DELAY, activationDelay + DELAY_STEP);
+                  ipc.setHotkeyActivationDelay(next);
+                  refreshConfig();
+                }}
+                disabled={activationDelay >= MAX_DELAY}
+                className="flex items-center justify-center w-7 h-7 rounded-md border border-input text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+              {activationDelay !== DEFAULT_ACTIVATION_DELAY && (
+                <button
+                  onClick={() => { ipc.setHotkeyActivationDelay(DEFAULT_ACTIVATION_DELAY); refreshConfig(); }}
+                  title="Reset to default (300ms)"
+                  className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors ml-1"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                </button>
+              )}
+            </div>
           </div>
         </WellItem>
 

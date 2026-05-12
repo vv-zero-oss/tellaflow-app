@@ -4,6 +4,8 @@ let listener = null;
 let onRecordStart = null;
 let onRecordStop = null;
 let isRecording = false;
+let isWaitingForActivation = false;
+let activationTimer = null;
 let running = false;
 let keyDownTime = 0;
 let restartCount = 0;
@@ -66,6 +68,8 @@ function start({ onStart, onStop }) {
         listener = null;
         running = false;
         isRecording = false;
+        isWaitingForActivation = false;
+        if (activationTimer) { clearTimeout(activationTimer); activationTimer = null; }
         restartCount++;
         if (restartCount > MAX_RESTARTS) {
           console.error(`keyspy crashed ${restartCount} times, giving up. Use tray menu to retry.`);
@@ -80,15 +84,37 @@ function start({ onStart, onStop }) {
 
   listener.addListener((e, down) => {
     if (e.state === 'DOWN') {
-      if (isRecording) return;
+      if (isRecording || isWaitingForActivation) return;
       if (!matchesHotkey(e, down)) return;
 
-      isRecording = true;
       keyDownTime = Date.now();
-      if (onRecordStart) onRecordStart();
+      const delay = config.getHotkeyActivationDelay();
+
+      if (delay > 0) {
+        // Wait for the activation delay before starting recording
+        isWaitingForActivation = true;
+        activationTimer = setTimeout(() => {
+          activationTimer = null;
+          isWaitingForActivation = false;
+          isRecording = true;
+          if (onRecordStart) onRecordStart();
+        }, delay);
+      } else {
+        // No delay — start immediately (original behaviour)
+        isRecording = true;
+        if (onRecordStart) onRecordStart();
+      }
     } else if (e.state === 'UP') {
-      if (!isRecording) return;
       if (!matchesTrigger(e)) return;
+
+      // Released during activation wait — cancel silently (no recording started)
+      if (isWaitingForActivation) {
+        if (activationTimer) { clearTimeout(activationTimer); activationTimer = null; }
+        isWaitingForActivation = false;
+        return;
+      }
+
+      if (!isRecording) return;
 
       isRecording = false;
       const holdDuration = Date.now() - keyDownTime;
@@ -137,6 +163,8 @@ function getIsRecording() {
 }
 
 function resetRecordingState() {
+  if (activationTimer) { clearTimeout(activationTimer); activationTimer = null; }
+  isWaitingForActivation = false;
   isRecording = false;
   keyDownTime = 0;
 }

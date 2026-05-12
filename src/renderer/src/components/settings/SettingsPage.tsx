@@ -220,6 +220,7 @@ export function SettingsPage({
            <GeneralSettings
             config={config}
             onSetTheme={setTheme}
+            refreshConfig={refreshConfig}
           />
           <SystemSettings
             config={config}

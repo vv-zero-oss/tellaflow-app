@@ -693,6 +693,7 @@ function registerIPC() {
       transcriptionEngine: config.getTranscriptionEngine(),
       parakeetAvailable: models.isParakeetAvailable(),
       microphoneDeviceId: config.getMicrophoneDeviceId(),
+      hotkeyActivationDelay: config.getHotkeyActivationDelay(),
     };
   });
 
@@ -1211,6 +1212,11 @@ function registerIPC() {
   ipcMain.handle('get-mute-while-dictating', () => config.getMuteWhileDictating());
   ipcMain.on('set-mute-while-dictating', (_, enabled) => {
     config.setMuteWhileDictating(enabled);
+  });
+
+  ipcMain.handle('get-hotkey-activation-delay', () => config.getHotkeyActivationDelay());
+  ipcMain.on('set-hotkey-activation-delay', (_, ms) => {
+    config.setHotkeyActivationDelay(ms);
   });
 
   ipcMain.handle('get-show-in-dock', () => config.getShowInDock());

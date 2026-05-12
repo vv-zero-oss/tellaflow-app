@@ -16,6 +16,7 @@ const DEFAULTS = {
   translationLanguage: 'ja',
   transcriptionEngine: 'whisper',
   microphoneDeviceId: 'auto',
+  hotkeyActivationDelay: 300,
 };
 
 // Map from uiohook scan codes to keyspy key names (for migrating old configs)
@@ -107,6 +108,9 @@ function setTranscriptionEngine(engine) { setSetting('transcriptionEngine', engi
 
 function getMicrophoneDeviceId() { return getSetting('microphoneDeviceId') || 'auto'; }
 function setMicrophoneDeviceId(deviceId) { setSetting('microphoneDeviceId', deviceId); }
+
+function getHotkeyActivationDelay() { return getSetting('hotkeyActivationDelay') ?? 300; }
+function setHotkeyActivationDelay(ms) { setSetting('hotkeyActivationDelay', ms); }
 
 function getDictionary() {
   const rows = getDb()
@@ -244,6 +248,8 @@ module.exports = {
   setTranscriptionEngine,
   getMicrophoneDeviceId,
   setMicrophoneDeviceId,
+  getHotkeyActivationDelay,
+  setHotkeyActivationDelay,
   getDictionary,
   setDictionary,
   addDictionaryEntry,
