@@ -96,7 +96,7 @@ describe('config defaults', () => {
     const hotkey = config.getHotkey();
     expect(hotkey).toHaveProperty('names');
     expect(hotkey).toHaveProperty('label');
-    expect(hotkey.names).toContain('LEFT ALT');
+    expect(hotkey.names).toContain('FN');
   });
 });
 

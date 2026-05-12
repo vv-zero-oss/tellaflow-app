@@ -5,8 +5,8 @@ import { cn } from '@/lib/utils';
 import { ipc, type HotkeyConfig } from '@/lib/ipc';
 
 const defaultHotkey: HotkeyConfig = {
-  names: ['LEFT ALT'],
-  label: 'Left Option (⌥)',
+  names: ['FN'],
+  label: 'fn',
 };
 
 // ─── Coloured keyword chip ────────────────────────────────────────────────────
@@ -299,6 +299,20 @@ function WelcomePermissionsStep({
         )}
       </AnimatePresence>
 
+      {/* fn key tip — always visible */}
+      <div
+        className="rounded-xl px-3.5 py-2.5 border mt-2.5"
+        style={{ borderColor: 'rgba(234,82,40,0.25)', background: 'rgba(234,82,40,0.04)' }}
+      >
+        <p className="text-[11px] leading-relaxed" style={{ color: '#444444' }}>
+          <span className="font-semibold" style={{ color: '#EA5228' }}>Tip:</span>{' '}
+          If pressing <kbd className="font-mono font-semibold text-[10px] px-1 py-px rounded border" style={{ background: '#f0f0f0', borderColor: '#d0d0d0' }}>fn</kbd> opens the emoji picker, go to{' '}
+          <span className="font-semibold">System Settings → Keyboard</span> and set{' '}
+          <span className="font-semibold" style={{ color: '#111111' }}>"Press 🌐 key to"</span> to{' '}
+          <span className="font-semibold" style={{ color: '#111111' }}>"Do Nothing"</span>.
+        </p>
+      </div>
+
       {/* Hidden sentinel for parent to advance */}
       <button
         id="__permissions-next"
@@ -323,7 +337,7 @@ interface ChatMessage {
 const SEED_MESSAGES: ChatMessage[] = [
   { id: 1, fromBot: true,  text: 'Hey, welcome to Tellaflow! 👋 I\'m your voice assistant.' },
   { id: 2, fromBot: true,  text: 'You can dictate into any app on your Mac — emails, docs, chats, anywhere.' },
-  { id: 3, fromBot: true,  text: 'Give it a go right now. Hold ⌥ Option, say one of these, then release:',
+  { id: 3, fromBot: true,  text: 'Give it a go right now. Hold fn, say one of these, then release:',
     suggestions: ['Hey, this is pretty cool!', 'Meeting at 3 PM tomorrow.', 'The weather is nice today.'] },
 ];
 
@@ -394,34 +408,24 @@ function PlaygroundStep() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Alt-key → start/stop recording.
-  // recordStateRef is updated synchronously here (before React re-renders) so the
-  // guard never sees a stale value on rapid repeated presses.
+  // Listen to native hotkey status changes — the fn key cannot be detected via
+  // browser DOM events, so we rely on the keyspy listener broadcasting status
+  // through the main process.  This works for any configured hotkey.
   useEffect(() => {
     if (modelState !== 'ready') return;
-    const onDown = (e: KeyboardEvent) => {
-      if (e.repeat || recordStateRef.current !== 'idle') return;
-      if (e.key === 'Alt') {
-        e.preventDefault();
+    const cleanup = ipc?.onStatusChange?.((status: string) => {
+      if (status === 'Recording...' && recordStateRef.current === 'idle') {
         recordStateRef.current = 'recording';
         setRecordState('recording');
         inputRef.current?.focus();
-        if (ipc?.clickStartRecording) ipc.clickStartRecording();
-      }
-    };
-    const onUp = (e: KeyboardEvent) => {
-      if (e.key === 'Alt' && recordStateRef.current === 'recording') {
+      } else if (status === 'Transcribing...' && recordStateRef.current === 'recording') {
         recordStateRef.current = 'transcribing';
         setRecordState('transcribing');
-        if (ipc?.clickFinishRecording) ipc.clickFinishRecording();
+      } else if (status === 'Ready' && recordStateRef.current === 'transcribing') {
+        // Transcription result arrives separately via playground-text
       }
-    };
-    window.addEventListener('keydown', onDown);
-    window.addEventListener('keyup', onUp);
-    return () => {
-      window.removeEventListener('keydown', onDown);
-      window.removeEventListener('keyup', onUp);
-    };
+    });
+    return () => { if (cleanup) cleanup(); };
   }, [modelState]);
 
   const sendMessage = () => {
@@ -531,7 +535,7 @@ function PlaygroundStep() {
             boxShadow: '0 1px 0 rgba(0,0,0,0.08)',
           }}
         >
-          ⌥ Option
+          fn
         </kbd>
         {' '}and speak — your words will appear below.
       </p>
@@ -688,7 +692,7 @@ function PlaygroundStep() {
                       ))}
                     </div>
                     <span className="text-[11px] font-semibold" style={{ color: '#e01e5a' }}>
-                      Listening… release ⌥ to finish
+                      Listening… release fn to finish
                     </span>
                   </div>
                 </motion.div>
@@ -712,7 +716,7 @@ function PlaygroundStep() {
                 // Re-focus after a tick so hotkey events always reach the window
                 setTimeout(() => inputRef.current?.focus(), 0);
               }}
-              placeholder="Hold ⌥ Option and speak, or type here…"
+              placeholder="Hold fn and speak, or type here…"
               className="w-full bg-transparent resize-none outline-none leading-relaxed px-3 pt-2.5 pb-1"
               style={{ fontSize: 13, color: '#1d1c1d', minHeight: 36, maxHeight: 72 }}
               rows={1}

@@ -13,8 +13,8 @@ import { MicrophoneSelectDialog } from './MicrophoneSelectDialog';
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const DEFAULT_HOTKEY: HotkeyConfig = {
-  names: ['LEFT ALT'],
-  label: 'Left Option (⌥)',
+  names: ['FN'],
+  label: 'fn',
 };
 
 const KEYSPY_TO_BROWSER_CODE: Record<string, string> = {
@@ -182,7 +182,7 @@ function HotkeyDialog({
           <div className="flex items-center gap-1">
             <button
               onClick={handleReset}
-              title="Reset to Left Option (⌥)"
+              title="Reset to fn"
               className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
             >
               <RotateCcw className="w-3 h-3" />

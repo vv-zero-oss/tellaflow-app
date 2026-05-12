@@ -2,7 +2,7 @@ const { getDb } = require('./db');
 const { getDictionaryPacksManifest, getPackById } = require('./dictionary-packs');
 
 const DEFAULTS = {
-  hotkey: { names: ['LEFT ALT'], label: 'Left Option (⌥)' },
+  hotkey: { names: ['FN'], label: 'fn' },
   model: 'small',
   programmingMode: false,
   grammarEnabled: false,
