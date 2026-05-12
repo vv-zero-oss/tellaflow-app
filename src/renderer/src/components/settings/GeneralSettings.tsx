@@ -291,7 +291,7 @@ interface GeneralSettingsProps {
   refreshConfig: () => Promise<void>;
 }
 
-const DEFAULT_ACTIVATION_DELAY = 100;
+const DEFAULT_ACTIVATION_DELAY = 0;
 const MIN_DELAY = 0;
 const MAX_DELAY = 2000;
 const DELAY_STEP = 100;
@@ -358,7 +358,7 @@ export function GeneralSettings({ config, onSetTheme, refreshConfig }: GeneralSe
             {activationDelay !== DEFAULT_ACTIVATION_DELAY && (
                 <button
                   onClick={() => { ipc.setHotkeyActivationDelay(DEFAULT_ACTIVATION_DELAY); refreshConfig(); }}
-                  title="Reset to default (100ms)"
+                  title="Reset to default (0ms)"
                   className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors ml-1"
                 >
                   <RotateCcw className="w-3 h-3" />
