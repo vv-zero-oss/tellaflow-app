@@ -217,6 +217,9 @@ app.whenReady().then(async () => {
   const recordingsDir = path.join(app.getPath('userData'), 'recordings');
   if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
 
+  // Start the hotkey listener early so it's available during onboarding playground
+  startHotkeyListener();
+
   if (!config.isOnboardingComplete()) {
     const onboardingWin = createOnboardingWindow();
     // Safety net: if the onboarding window is closed by any means that bypasses
@@ -356,6 +359,11 @@ async function startApp() {
 
 function broadcastStatus(text) {
   sendToMainWindow('status-change', text);
+  // Also send to onboarding window so the playground can react to hotkey events
+  const onboardingWin = getOnboardingWindow();
+  if (onboardingWin && !onboardingWin.isDestroyed()) {
+    onboardingWin.webContents.send('status-change', text);
+  }
 }
 
 function clearRecordingTimeout() {
