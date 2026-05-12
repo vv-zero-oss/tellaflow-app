@@ -291,7 +291,7 @@ interface GeneralSettingsProps {
   refreshConfig: () => Promise<void>;
 }
 
-const DEFAULT_ACTIVATION_DELAY = 300;
+const DEFAULT_ACTIVATION_DELAY = 100;
 const MIN_DELAY = 0;
 const MAX_DELAY = 2000;
 const DELAY_STEP = 100;
@@ -349,12 +349,21 @@ export function GeneralSettings({ config, onSetTheme, refreshConfig }: GeneralSe
         <WellItem>
           <div className="flex items-center justify-between">
             <div className="min-w-0">
-              <span className="text-sm">Activation delay</span>
+              <span className="text-sm">Shortcut Activation delay</span>
               <p className="text-xs text-muted-foreground/60 mt-0.5">
-                Hold the hotkey for this long before recording starts
+                Hold the Shortcut keys for this long before recording starts
               </p>
             </div>
             <div className="flex items-center gap-1.5">
+            {activationDelay !== DEFAULT_ACTIVATION_DELAY && (
+                <button
+                  onClick={() => { ipc.setHotkeyActivationDelay(DEFAULT_ACTIVATION_DELAY); refreshConfig(); }}
+                  title="Reset to default (100ms)"
+                  className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors ml-1"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                </button>
+              )}
               <button
                 onClick={() => {
                   const next = Math.max(MIN_DELAY, activationDelay - DELAY_STEP);
@@ -380,15 +389,7 @@ export function GeneralSettings({ config, onSetTheme, refreshConfig }: GeneralSe
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
-              {activationDelay !== DEFAULT_ACTIVATION_DELAY && (
-                <button
-                  onClick={() => { ipc.setHotkeyActivationDelay(DEFAULT_ACTIVATION_DELAY); refreshConfig(); }}
-                  title="Reset to default (300ms)"
-                  className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors ml-1"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                </button>
-              )}
+            
             </div>
           </div>
         </WellItem>
