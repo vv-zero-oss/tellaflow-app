@@ -111,7 +111,11 @@ function setTranscriptionEngine(engine) { setSetting('transcriptionEngine', engi
 function getMicrophoneDeviceId() { return getSetting('microphoneDeviceId') || 'auto'; }
 function setMicrophoneDeviceId(deviceId) { setSetting('microphoneDeviceId', deviceId); }
 
-function getHotkeyActivationDelay() { return getSetting('hotkeyActivationDelay') ?? 0; }
+function getHotkeyActivationDelay() {
+  const val = getSetting('hotkeyActivationDelay');
+  const ms = typeof val === 'number' && isFinite(val) ? val : 0;
+  return Math.max(0, Math.min(ms, 5000));
+}
 function setHotkeyActivationDelay(ms) { setSetting('hotkeyActivationDelay', ms); }
 
 function getDictionary() {

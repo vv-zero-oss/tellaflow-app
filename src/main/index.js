@@ -10,7 +10,7 @@ process.on('uncaughtException', (err) => {
   throw err;
 });
 
-const { app, ipcMain, BrowserWindow, Notification, clipboard, dialog, shell } = require('electron');
+const { app, ipcMain, BrowserWindow, Notification, clipboard, dialog, shell, powerMonitor } = require('electron');
 const path = require('path');
 const config = require('./config');
 const { createTray, getTray } = require('./tray');
@@ -248,6 +248,15 @@ app.on('activate', () => {
   if (!suppressActivationShow) showMainWindow();
 });
 
+// Restart hotkey listener after system sleep — keyspy's native process may hang
+// or lose its event tap after suspend. Also re-check accessibility in case the
+// user toggled it while the lid was closed.
+powerMonitor.on('resume', () => {
+  console.log('System resumed from sleep — restarting hotkey listener.');
+  hotkey.stop();
+  startHotkeyListener();
+});
+
 app.on('before-quit', () => {
   isQuitting = true;
   app.isQuitting = true;
@@ -394,6 +403,9 @@ function forceStopRecording() {
 }
 
 function startClickRecording() {
+  // Don't start click recording if hotkey recording is already active
+  if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) return;
+
   pendingStop = false;
   clearRecordingTimeout();
   sounds.playStart();
@@ -405,9 +417,15 @@ function startClickRecording() {
 }
 
 function startHotkeyListener() {
+  // Don't restart if already running — prevents orphaning an active recording
+  if (hotkey.isRunning()) return;
+
   try {
     hotkey.start({
       onStart: () => {
+        // Don't start hotkey recording if click recording is already active
+        if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) return;
+
         // Capture the frontmost app SYNCHRONOUSLY and BEFORE createAudioCaptureWindow().
         // An async query races with window creation — on macOS, creating a new
         // BrowserWindow can briefly activate Electron, corrupting a concurrent

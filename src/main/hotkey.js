@@ -9,9 +9,11 @@ let activationTimer = null;
 let running = false;
 let keyDownTime = 0;
 let restartCount = 0;
+let lastCrashTime = 0;
+let startFailed = false;
 
 const MIN_HOLD_MS = 300;
-const MAX_RESTARTS = 5;
+const MAX_RESTARTS = 10;
 
 // For single-key hotkeys (like fn, option), we match the trigger key directly.
 // For combos (e.g. Ctrl+A), the last name in the array is the trigger,
@@ -53,9 +55,11 @@ function start({ onStart, onStop }) {
   let GlobalKeyboardListener;
   try {
     ({ GlobalKeyboardListener } = require('keyspy'));
+    startFailed = false;
   } catch (err) {
     console.error('keyspy not available:', err.message);
     console.log('Hotkey detection disabled.');
+    startFailed = true;
     return;
   }
 
@@ -70,9 +74,15 @@ function start({ onStart, onStop }) {
         isRecording = false;
         isWaitingForActivation = false;
         if (activationTimer) { clearTimeout(activationTimer); activationTimer = null; }
+
+        // Decay restart count if last crash was more than 30s ago (stable period)
+        const now = Date.now();
+        if (now - lastCrashTime > 30000) restartCount = 0;
+        lastCrashTime = now;
+
         restartCount++;
         if (restartCount > MAX_RESTARTS) {
-          console.error(`keyspy crashed ${restartCount} times, giving up. Use tray menu to retry.`);
+          console.error(`keyspy crashed ${restartCount} times in rapid succession, giving up. Use tray menu to retry.`);
           return;
         }
         const delay = Math.min(500 * restartCount, 5000);
@@ -171,4 +181,8 @@ function resetRecordingState() {
   keyDownTime = 0;
 }
 
-module.exports = { start, stop, isRunning, getIsRecording, resetRecordingState };
+function didStartFail() {
+  return startFailed;
+}
+
+module.exports = { start, stop, isRunning, getIsRecording, resetRecordingState, didStartFail };
