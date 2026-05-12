@@ -57,7 +57,9 @@ function setSetting(key, value) {
 
 function getHotkey() {
   const raw = getSetting('hotkey');
-  return migrateHotkey(raw) || DEFAULTS.hotkey;
+  const hk = migrateHotkey(raw);
+  if (!hk || !Array.isArray(hk.names) || hk.names.length === 0) return DEFAULTS.hotkey;
+  return hk;
 }
 function setHotkey(hotkey) { setSetting('hotkey', hotkey); }
 

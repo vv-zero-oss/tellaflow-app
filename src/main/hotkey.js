@@ -145,6 +145,8 @@ function start({ onStart, onStop }) {
 }
 
 function stop() {
+  if (activationTimer) { clearTimeout(activationTimer); activationTimer = null; }
+  isWaitingForActivation = false;
   if (listener) {
     try { listener.kill(); } catch (e) { console.warn('keyspy kill error:', e.message); }
     listener = null;
