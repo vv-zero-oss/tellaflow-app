@@ -103,4 +103,11 @@ function getTray() {
   return tray;
 }
 
-module.exports = { createTray, getTray };
+function destroyTray() {
+  if (tray && !tray.isDestroyed()) {
+    try { tray.destroy(); } catch {}
+  }
+  tray = null;
+}
+
+module.exports = { createTray, getTray, destroyTray };
