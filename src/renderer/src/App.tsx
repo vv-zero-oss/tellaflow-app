@@ -75,7 +75,7 @@ export default function App() {
               <DashboardPage />
             </motion.div>
           )}
-          {page === 'models' && (
+          {page === 'models' && !appConfig.loading && (
             <motion.div
               key="models"
               variants={pageVariants}
@@ -121,7 +121,7 @@ export default function App() {
               <DictionaryPage />
             </motion.div>
           )}
-          {page === 'settings' && (
+          {page === 'settings' && !appConfig.loading && (
             <motion.div
               key="settings"
               variants={pageVariants}

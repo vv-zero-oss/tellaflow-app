@@ -66,9 +66,9 @@ describe('config defaults', () => {
     expect(config.getTranslationLanguage()).toBe('ja');
   });
 
-  it('getTranscriptionEngine returns "whisper" by default', () => {
+  it('getTranscriptionEngine returns "parakeet" by default', () => {
     const { config } = freshConfig();
-    expect(config.getTranscriptionEngine()).toBe('whisper');
+    expect(config.getTranscriptionEngine()).toBe('parakeet');
   });
 
   it('getGrammarModel returns "qwen2.5-0.5b" by default', () => {

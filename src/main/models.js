@@ -269,6 +269,12 @@ let parakeetDownload = null;
 let parakeetCancelled = false;
 
 function getParakeetDir() {
+  // Check bundled models first (shipped with app)
+  const bundled = path.join(getBundledModelsDir(), PARAKEET_DIR_NAME);
+  if (fs.existsSync(bundled) && PARAKEET_FILES.every(f => fs.existsSync(path.join(bundled, f)))) {
+    return bundled;
+  }
+  // Fall back to user-downloaded models
   return path.join(getUserModelsDir(), PARAKEET_DIR_NAME);
 }
 
