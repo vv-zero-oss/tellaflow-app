@@ -23,8 +23,14 @@ let state = {
 };
 
 let sendStatus = () => {};
+// Optional pre-quit hook: index.js passes performCleanup() here so we can
+// release native resources (keyspy, llama-cpp, parakeet) and tear down
+// windows BEFORE the native macOS terminate fires. Without this the app
+// can get stuck on Squirrel.Mac's relaunch.
+let beforeQuitForUpdateHook = null;
 let periodicTimer = null;
 let initialized = false;
+let installInProgress = false;
 
 const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
 
@@ -37,7 +43,7 @@ function getStatus() {
   return state;
 }
 
-function initAutoUpdater({ broadcast } = {}) {
+function initAutoUpdater({ broadcast, beforeQuitForUpdate } = {}) {
   if (initialized) return;
   if (!app.isPackaged) {
     console.log('[updater] Skipping autoUpdater in dev (app is not packaged).');
@@ -45,6 +51,17 @@ function initAutoUpdater({ broadcast } = {}) {
   }
   initialized = true;
   if (typeof broadcast === 'function') sendStatus = broadcast;
+  if (typeof beforeQuitForUpdate === 'function') beforeQuitForUpdateHook = beforeQuitForUpdate;
+
+  // Belt-and-suspenders: when electron-updater triggers the native macOS
+  // terminate, Electron emits 'before-quit-for-update' BEFORE closing any
+  // windows. Our regular 'before-quit' handler doesn't fire until after
+  // all windows have closed — but main-window's close handler calls
+  // preventDefault() unless app.isQuitting is already true, so without
+  // this hook the windows refuse to close and Squirrel.Mac waits forever.
+  app.on('before-quit-for-update', () => {
+    app.isQuitting = true;
+  });
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -179,6 +196,39 @@ function checkForUpdates({ silent = true } = {}) {
 
 function quitAndInstall() {
   if (!app.isPackaged) return;
+  if (installInProgress) return;
+  installInProgress = true;
+
+  // CRITICAL on macOS: set our custom quitting flag BEFORE invoking
+  // autoUpdater.quitAndInstall(). Squirrel.Mac terminates the app via
+  // [NSApp terminate:], which makes Electron close every window first.
+  // main-window.js's 'close' handler calls e.preventDefault() unless
+  // app.isQuitting is true — so without this line the window refuses
+  // to close, Electron returns NSTerminateCancel, the app stays alive,
+  // ShipIt waits forever, and the user keeps seeing the tray icon.
+  app.isQuitting = true;
+
+  // Run the cleanup hook (passed in by index.js — calls performCleanup).
+  // We do this synchronously here so native addons (keyspy's MacKeyServer,
+  // llama-cpp grammar worker, parakeet) release the event loop and stop
+  // holding file handles before Squirrel swaps the .app bundle on disk.
+  if (typeof beforeQuitForUpdateHook === 'function') {
+    try { beforeQuitForUpdateHook(); } catch (err) {
+      console.error('[updater] beforeQuitForUpdate hook threw:', err && err.message ? err.message : err);
+    }
+  }
+
+  // Last-resort safety net: if Squirrel.Mac fails to fully terminate the
+  // process (rare, but reported on Apple Silicon with certain native
+  // addons), force-exit after 5s so the app definitely dies and ShipIt
+  // can swap the bundle. relaunch() ensures the new version still boots.
+  const forceExitTimer = setTimeout(() => {
+    console.warn('[updater] Squirrel quit timed out — force-exiting so update can install.');
+    try { app.relaunch(); } catch {}
+    process.exit(0);
+  }, 5000);
+  if (forceExitTimer.unref) forceExitTimer.unref();
+
   try {
     setImmediate(() => {
       // isSilent=false so macOS shows the standard progress; isForceRunAfter=true

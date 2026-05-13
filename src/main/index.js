@@ -13,7 +13,7 @@ process.on('uncaughtException', (err) => {
 const { app, ipcMain, BrowserWindow, Notification, clipboard, dialog, shell, powerMonitor } = require('electron');
 const path = require('path');
 const config = require('./config');
-const { createTray, getTray } = require('./tray');
+const { createTray, getTray, destroyTray } = require('./tray');
 const { createOnboardingWindow, closeOnboarding, getOnboardingWindow } = require('./onboarding');
 const hotkey = require('./hotkey');
 const whisper = require('./whisper');
@@ -142,7 +142,13 @@ function performCleanup() {
   try { grammar.dispose(); } catch (e) { console.error('grammar.dispose error:', e); }
   try { destroyToast(); } catch (e) { console.error('destroyToast error:', e); }
   try { destroyAudioCaptureWindow(); } catch (e) { console.error('destroyAudioCaptureWindow error:', e); }
+  try { closeOnboarding(); } catch (e) { console.error('closeOnboarding error:', e); }
   try { destroyMainWindow(); } catch (e) { console.error('destroyMainWindow error:', e); }
+  // Destroy the tray so its menubar icon disappears immediately when we
+  // initiate quit (in particular for the auto-update relaunch path —
+  // users were reporting the tray icon lingering because the process
+  // never died). Safe to call even if the tray is already gone.
+  try { destroyTray(); } catch (e) { console.error('destroyTray error:', e); }
   try { closeDb(); } catch (e) { console.error('closeDb error:', e); }
 }
 
@@ -292,6 +298,15 @@ async function startApp() {
       // Rebuild the app menu so the item flips between "Check for Updates…"
       // and "Restart to Install Update (vX.Y.Z)" as state changes.
       refreshAppMenu();
+    },
+    // Run our normal teardown the moment the user accepts the restart prompt,
+    // BEFORE Squirrel.Mac sends [NSApp terminate:]. This frees native addons
+    // and tears down windows synchronously so nothing keeps the event loop
+    // alive while ShipIt is waiting for the process to exit.
+    beforeQuitForUpdate: () => {
+      isQuitting = true;
+      app.isQuitting = true;
+      performCleanup();
     },
   });
 
