@@ -13,7 +13,7 @@ jobs:
   release:
     name: Build, sign, notarize, publish
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -50,13 +50,13 @@ jobs:
       - name: Build renderer
         run: npm run build:renderer
 
-      - name: Build, sign, and notarize .app
+      - name: Build and sign .app
+        # Notarization happens on the DMG only in the next step; Apple's notary
+        # service recursively scans the .app inside, so we avoid paying the
+        # round-trip twice (which was timing out at 60 min on the 1 GB bundle).
         env:
           CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npx electron-builder --mac --publish never
 
       - name: Notarize and staple DMG
