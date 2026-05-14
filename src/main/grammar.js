@@ -290,9 +290,16 @@ function ensureWorker() {
         const p = pending.get(msg.id);
         if (p) { pending.delete(msg.id); p.resolve(msg.text); }
       } else if (msg.type === 'error') {
-        const p = pending.get(msg.id);
-        if (p) { pending.delete(msg.id); p.reject(new Error(msg.error)); }
-        if (!worker) { initPromise = null; reject(new Error(msg.error)); }
+        // Errors with an id belong to a specific correction request; errors
+        // without an id come from the init phase and must reject the init
+        // promise so ensureWorker() callers see the failure.
+        if (msg.id != null) {
+          const p = pending.get(msg.id);
+          if (p) { pending.delete(msg.id); p.reject(new Error(msg.error)); }
+        } else if (!workerReady) {
+          initPromise = null;
+          reject(new Error(msg.error));
+        }
       }
     });
 
@@ -311,25 +318,63 @@ function ensureWorker() {
   return initPromise;
 }
 
-async function correctGrammar(text, tone = 'casual') {
-  if (!text || text.trim().length === 0) return text;
-  // If the worker is still initialising (background warmup in progress), skip
-  // correction for this transcription rather than blocking the pipeline. The
-  // worker will be ready for every subsequent call once it has fully loaded.
-  if (initPromise && !workerReady) return text;
-  await ensureWorker();
-  const id = ++requestId;
+// Cap how long we'll wait for the worker before falling back to the raw
+// transcript. Small models load in 1-3s; the 4B model can take ~15s on a
+// cold start. 30s leaves headroom for the cold path without ever leaving
+// the user staring at "Formatting..." indefinitely.
+const WORKER_READY_TIMEOUT_MS = 30000;
+// Per-correction inference cap. Sub-1B models normally return in < 2s.
+// 20s is a generous ceiling that still keeps a misbehaving model from
+// blocking the dictation pipeline forever.
+const INFERENCE_TIMEOUT_MS = 20000;
+
+function withTimeout(promise, ms, label) {
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    worker.send({ type: 'correct', id, text, tone });
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
   });
 }
 
+async function correctGrammar(text, tone = 'casual') {
+  if (!text || text.trim().length === 0) return text;
+
+  // Wait for the worker to be ready. The transcription pipeline already
+  // shows "Formatting..." to the user during this call, so a short wait
+  // is acceptable; falling back silently on the very first dictation
+  // (the old behaviour) made users think grammar was broken.
+  try {
+    await withTimeout(ensureWorker(), WORKER_READY_TIMEOUT_MS, 'Grammar worker init');
+  } catch (err) {
+    console.warn('Grammar worker not ready:', err.message);
+    return text;
+  }
+
+  const id = ++requestId;
+  const inference = new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject });
+    worker.send({ type: 'correct', id, text, tone });
+  });
+
+  try {
+    return await withTimeout(inference, INFERENCE_TIMEOUT_MS, 'Grammar correction');
+  } catch (err) {
+    pending.delete(id);
+    console.warn('Grammar correction failed:', err.message);
+    return text;
+  }
+}
+
 async function dispose() {
+  // Reject any in-flight corrections before clearing the map so callers
+  // unblock instead of hanging on a promise that will never resolve.
+  for (const [, p] of pending) p.reject(new Error('Grammar worker disposed'));
+  pending.clear();
   if (worker) { worker.kill(); worker = null; }
   initPromise = null;
   workerReady = false;
-  pending.clear();
 }
 
 // Restart the worker with the newly-selected model

@@ -192,6 +192,7 @@ app.whenReady().then(async () => {
       updater.quitAndInstall();
     },
     getUpdaterStatus: () => updater.getStatus(),
+    isRecording: isAnyRecordingActive,
     onStartRecording: () => {
       // Capture frontmost app synchronously before the menu click steals focus
       clickPasteTargetApp = null;
@@ -204,6 +205,9 @@ app.whenReady().then(async () => {
         if (name && !isOwnApp(name)) clickPasteTargetApp = name;
       } catch {}
       startClickRecording();
+    },
+    onStopRecording: () => {
+      stopAnyActiveRecording();
     },
   });
 
@@ -431,6 +435,37 @@ function startClickRecording() {
   recordingTimeout = setTimeout(forceStopRecording, CLICK_MODE_MAX_RECORDING_MS);
 }
 
+// True whenever any recording flow (hotkey, click, hands-free) is active.
+// Used by the tray menu to flip "Start Recording" → "Stop Recording".
+function isAnyRecordingActive() {
+  if (hotkey.isRunning() && hotkey.getIsRecording && hotkey.getIsRecording()) return true;
+  return !!(audioCaptureWindow && !audioCaptureWindow.isDestroyed());
+}
+
+// Stop whichever recording flow is currently active, then transcribe.
+// Mirrors the click-finish path (graceful release of the mic) and also
+// terminates a hands-free hotkey session.
+function stopAnyActiveRecording() {
+  // Reset hotkey state so a later key release doesn't double-fire onStop.
+  // Safe even when no hotkey recording is active.
+  try { hotkey.resetRecordingState(); } catch {}
+
+  clearRecordingTimeout();
+  sounds.playStop();
+  sounds.unmuteMusic();
+
+  if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+    if (audioCaptureWindow.webContents.isLoading()) {
+      pendingStop = true;
+    } else {
+      audioCaptureWindow.webContents.send('stop-recording');
+    }
+  } else {
+    hideToast();
+    broadcastStatus('Ready');
+  }
+}
+
 function startHotkeyListener() {
   // Don't restart if already running — prevents orphaning an active recording
   if (hotkey.isRunning()) return;
@@ -464,6 +499,12 @@ function startHotkeyListener() {
         broadcastStatus('Recording...');
         showToast('recording');
         createAudioCaptureWindow();
+      },
+      onHandsFree: () => {
+        // Recording continues from the first press, but the bar now also
+        // shows X/✓ buttons so the user can finish without touching fn again.
+        showToast('click-recording');
+        broadcastStatus('Recording (hands-free)...');
       },
       onStop: ({ cancelled, reason }) => {
         clearRecordingTimeout();
@@ -1218,6 +1259,10 @@ function registerIPC() {
     sounds.unmuteMusic();
     pendingStop = false;
     clickPasteTargetApp = null;
+    // Clear hotkey state too — a hands-free session may be active behind
+    // this toast button, and we don't want a later key release to fire
+    // a duplicate onStop.
+    try { hotkey.resetRecordingState(); } catch {}
     destroyAudioCaptureWindow();
     hideToast();
     broadcastStatus('Ready');
@@ -1227,6 +1272,7 @@ function registerIPC() {
     clearRecordingTimeout();
     sounds.playStop();
     sounds.unmuteMusic();
+    try { hotkey.resetRecordingState(); } catch {}
     if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
       if (audioCaptureWindow.webContents.isLoading()) {
         pendingStop = true;

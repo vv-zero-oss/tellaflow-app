@@ -76,6 +76,10 @@ async function startCapture(deviceId) {
     console.error('Microphone capture failed:', err);
     startingUp = false;
     isCapturing = false;
+    // Send an empty buffer so the main process tears down this hidden window
+    // and broadcasts 'Ready'. Without this the window leaks and every later
+    // "Start Recording" silently bails out via the audioCaptureWindow guard.
+    try { window.tellaflow.sendAudio(new Float32Array(0)); } catch {}
   }
 }
 

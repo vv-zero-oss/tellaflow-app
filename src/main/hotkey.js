@@ -3,6 +3,7 @@ const config = require('./config');
 let listener = null;
 let onRecordStart = null;
 let onRecordStop = null;
+let onEnterHandsFree = null;
 let isRecording = false;
 let isWaitingForActivation = false;
 let activationTimer = null;
@@ -12,7 +13,18 @@ let restartCount = 0;
 let lastCrashTime = 0;
 let startFailed = false;
 
+// Recording mode and double-press detection.
+//   mode = 'held'      → press-and-hold; releasing the trigger ends recording.
+//   mode = 'handsfree' → entered via double-press; only fn-press or Esc ends it.
+//   pendingDoublePress is set briefly after a quick release of the trigger so
+//   that a second press within DOUBLE_PRESS_WINDOW_MS escalates the session
+//   into hands-free mode instead of cancelling the (too-short) recording.
+let mode = null;
+let pendingDoublePress = false;
+let doublePressTimer = null;
+
 const MIN_HOLD_MS = 300;
+const DOUBLE_PRESS_WINDOW_MS = 400;
 const MAX_RESTARTS = 10;
 
 // For single-key hotkeys (like fn, option), we match the trigger key directly.
@@ -39,7 +51,23 @@ function matchesTrigger(e) {
   return e.name === triggerName;
 }
 
-function start({ onStart, onStop }) {
+function clearDoublePressTimer() {
+  if (doublePressTimer) {
+    clearTimeout(doublePressTimer);
+    doublePressTimer = null;
+  }
+  pendingDoublePress = false;
+}
+
+function finishHandsFree() {
+  if (!isRecording) return;
+  isRecording = false;
+  mode = null;
+  clearDoublePressTimer();
+  if (onRecordStop) onRecordStop({ cancelled: false });
+}
+
+function start({ onStart, onStop, onHandsFree }) {
   // Stop any existing listener before starting a new one
   if (listener) {
     try { listener.kill(); } catch {}
@@ -50,6 +78,7 @@ function start({ onStart, onStop }) {
 
   onRecordStart = onStart;
   onRecordStop = onStop;
+  onEnterHandsFree = onHandsFree;
   restartCount = 0;
 
   let GlobalKeyboardListener;
@@ -72,7 +101,9 @@ function start({ onStart, onStop }) {
         listener = null;
         running = false;
         isRecording = false;
+        mode = null;
         isWaitingForActivation = false;
+        clearDoublePressTimer();
         if (activationTimer) { clearTimeout(activationTimer); activationTimer = null; }
 
         // Decay restart count if last crash was more than 30s ago (stable period)
@@ -87,15 +118,39 @@ function start({ onStart, onStop }) {
         }
         const delay = Math.min(500 * restartCount, 5000);
         console.warn(`keyspy native process exited (code ${code}), restart ${restartCount}/${MAX_RESTARTS} in ${delay}ms...`);
-        setTimeout(() => start({ onStart, onStop }), delay);
+        setTimeout(() => start({ onStart, onStop, onHandsFree }), delay);
       },
     },
   });
 
   listener.addListener((e, down) => {
+    // Escape during hands-free ends the recording (whether or not it matches the hotkey).
+    if (mode === 'handsfree' && e.state === 'DOWN' && e.name === 'ESCAPE') {
+      finishHandsFree();
+      return;
+    }
+
     if (e.state === 'DOWN') {
-      if (isRecording || isWaitingForActivation) return;
       if (!matchesHotkey(e, down)) return;
+
+      // Hotkey pressed while already in hands-free → stop and transcribe.
+      if (mode === 'handsfree') {
+        finishHandsFree();
+        return;
+      }
+
+      // Second press inside the double-press window → escalate to hands-free.
+      // The first press already started the recording; we just flip the mode
+      // and cancel the pending "too short" auto-stop timer.
+      if (pendingDoublePress && isRecording) {
+        clearDoublePressTimer();
+        mode = 'handsfree';
+        if (onEnterHandsFree) onEnterHandsFree();
+        return;
+      }
+
+      // Ignore presses while we're already recording or queued to start.
+      if (isRecording || isWaitingForActivation) return;
 
       keyDownTime = Date.now();
       const delay = config.getHotkeyActivationDelay();
@@ -107,15 +162,20 @@ function start({ onStart, onStop }) {
           activationTimer = null;
           isWaitingForActivation = false;
           isRecording = true;
+          mode = 'held';
           if (onRecordStart) onRecordStart();
         }, delay);
       } else {
         // No delay — start immediately (original behaviour)
         isRecording = true;
+        mode = 'held';
         if (onRecordStart) onRecordStart();
       }
     } else if (e.state === 'UP') {
       if (!matchesTrigger(e)) return;
+
+      // Hands-free ignores trigger release. Only fn-press / Esc ends it.
+      if (mode === 'handsfree') return;
 
       // Released during activation wait — cancel silently (no recording started)
       if (isWaitingForActivation) {
@@ -126,15 +186,30 @@ function start({ onStart, onStop }) {
 
       if (!isRecording) return;
 
-      isRecording = false;
       const holdDuration = Date.now() - keyDownTime;
 
       if (holdDuration < MIN_HOLD_MS) {
-        console.log(`Recording too short (${holdDuration}ms), discarding.`);
-        if (onRecordStop) onRecordStop({ cancelled: true, reason: 'too_short' });
+        // Quick release. Don't cancel yet — the user might be double-pressing
+        // to enter hands-free mode. Hold the mic open for a short window;
+        // if no second press comes, cancel as before.
+        if (doublePressTimer) clearTimeout(doublePressTimer);
+        pendingDoublePress = true;
+        doublePressTimer = setTimeout(() => {
+          doublePressTimer = null;
+          pendingDoublePress = false;
+          if (isRecording && mode === 'held') {
+            isRecording = false;
+            mode = null;
+            console.log(`Recording too short (${holdDuration}ms), discarding.`);
+            if (onRecordStop) onRecordStop({ cancelled: true, reason: 'too_short' });
+          }
+        }, DOUBLE_PRESS_WINDOW_MS);
         return;
       }
 
+      isRecording = false;
+      mode = null;
+      clearDoublePressTimer();
       if (onRecordStop) onRecordStop({ cancelled: false });
     }
   }).then(() => {
@@ -156,7 +231,9 @@ function start({ onStart, onStop }) {
 
 function stop() {
   if (activationTimer) { clearTimeout(activationTimer); activationTimer = null; }
+  clearDoublePressTimer();
   isWaitingForActivation = false;
+  mode = null;
   if (listener) {
     try { listener.kill(); } catch (e) { console.warn('keyspy kill error:', e.message); }
     listener = null;
@@ -174,10 +251,16 @@ function getIsRecording() {
   return isRecording;
 }
 
+function getMode() {
+  return mode;
+}
+
 function resetRecordingState() {
   if (activationTimer) { clearTimeout(activationTimer); activationTimer = null; }
+  clearDoublePressTimer();
   isWaitingForActivation = false;
   isRecording = false;
+  mode = null;
   keyDownTime = 0;
 }
 
@@ -185,4 +268,4 @@ function didStartFail() {
   return startFailed;
 }
 
-module.exports = { start, stop, isRunning, getIsRecording, resetRecordingState, didStartFail };
+module.exports = { start, stop, isRunning, getIsRecording, getMode, resetRecordingState, didStartFail };
