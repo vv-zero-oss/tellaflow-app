@@ -39,6 +39,11 @@ extraResources:
     to: models/
     filter:
       - "ggml-*.bin"
+  - from: resources/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/
+    to: models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/
+    filter:
+      - "*.onnx"
+      - "tokens.txt"
   - from: resources/trayIconTemplate.png
     to: trayIconTemplate.png
   - from: resources/trayIconTemplate@2x.png
@@ -50,6 +55,14 @@ files:
   - src/renderer/panel.html
   - dist/renderer/**/*
   - node_modules/**/*
+  # Exclude cross-platform whisper binaries (arm64-only build)
+  - "!node_modules/@kutalia/whisper-node-addon/dist/win32-*"
+  - "!node_modules/@kutalia/whisper-node-addon/dist/linux-*"
+  - "!node_modules/@kutalia/whisper-node-addon/dist/darwin-x64"
+  - "!node_modules/@kutalia/whisper-node-addon/dist/mac-x64"
+  # Exclude node-llama-cpp build-time artifacts (keep runtime binaries)
+  - "!node_modules/node-llama-cpp/llama/llama.cpp"
+  - "!node_modules/node-llama-cpp/llama/xpack"
 asarUnpack:
   - node_modules/@kutalia/whisper-node-addon/**/*
   - node_modules/node-llama-cpp/**/*

@@ -316,57 +316,72 @@ async function startApp() {
 
   if (app.dock) app.dock.show();
 
-  let modelKey = config.getModel();
+  const engine = config.getTranscriptionEngine();
 
-  if (!models.isModelAvailable(modelKey)) {
-    const configuredKey = modelKey;
-
-    if (models.isModelAvailable('small')) {
-      // Silently fall back to small and persist the change
-      config.setModel('small');
-      modelKey = 'small';
-      new Notification({
-        title: 'Tellaflow — Model Changed',
-        body: `"${configuredKey}" model not found. Switched to the Small model automatically.`,
-      }).show();
-      broadcastStatus('Switched to Small model');
-      sendToMainWindow('models-changed', models.getModelsStatus());
-    } else {
-      // No model available at all — prompt the user to download one
-      broadcastStatus('No model downloaded');
-      new Notification({
-        title: 'Tellaflow — No Model Found',
-        body: 'No transcription model is available. Please download one from Settings → Models.',
-      }).show();
-    }
-  }
-
-  if (models.isModelAvailable(modelKey)) {
+  if (engine === 'parakeet' && parakeet.isAvailable()) {
+    // Load Parakeet engine
     broadcastStatus('Loading model...');
     try {
-      await whisper.loadModel(modelKey);
-      await whisper.warmup();
+      parakeet.loadModel();
       broadcastStatus('Ready');
-
-      // Run first-install smoke test in the background — never blocks startup.
-      const testAudioPath = app.isPackaged
-        ? path.join(process.resourcesPath, 'test.mp3')
-        : path.join(__dirname, '..', '..', 'resources', 'test.mp3');
-
-      runStartupSmokeTest({
-        userDataPath: app.getPath('userData'),
-        audioPath: testAudioPath,
-        transcribeFn: (pcm) => whisper.transcribe(pcm),
-      }).then(() => {
-        console.log('[smoke-test] Test complete.');
-      }).catch((err) => {
-        // Absolute last-resort guard — should never reach here since
-        // runStartupSmokeTest already swallows all internal errors.
-        console.error('[smoke-test] Unexpected error:', err.message);
-      });
     } catch (err) {
-      console.error('Model load failed:', err);
+      console.error('Parakeet load failed:', err);
       broadcastStatus('Model load failed');
+    }
+  } else {
+    // Whisper engine path
+    let modelKey = config.getModel();
+
+    if (!models.isModelAvailable(modelKey)) {
+      const configuredKey = modelKey;
+
+      if (models.isModelAvailable('small')) {
+        // Silently fall back to small and persist the change
+        config.setModel('small');
+        modelKey = 'small';
+        new Notification({
+          title: 'Tellaflow — Model Changed',
+          body: `"${configuredKey}" model not found. Switched to the Small model automatically.`,
+        }).show();
+        broadcastStatus('Switched to Small model');
+        sendToMainWindow('models-changed', models.getModelsStatus());
+      } else {
+        // No model available at all — prompt the user to download one
+        broadcastStatus('No model downloaded');
+        new Notification({
+          title: 'Tellaflow — No Model Found',
+          body: 'No transcription model is available. Please download one from Settings → Models.',
+        }).show();
+      }
+    }
+
+    if (models.isModelAvailable(modelKey)) {
+      broadcastStatus('Loading model...');
+      try {
+        await whisper.loadModel(modelKey);
+        await whisper.warmup();
+        broadcastStatus('Ready');
+
+        // Run first-install smoke test in the background — never blocks startup.
+        const testAudioPath = app.isPackaged
+          ? path.join(process.resourcesPath, 'test.mp3')
+          : path.join(__dirname, '..', '..', 'resources', 'test.mp3');
+
+        runStartupSmokeTest({
+          userDataPath: app.getPath('userData'),
+          audioPath: testAudioPath,
+          transcribeFn: (pcm) => whisper.transcribe(pcm),
+        }).then(() => {
+          console.log('[smoke-test] Test complete.');
+        }).catch((err) => {
+          // Absolute last-resort guard — should never reach here since
+          // runStartupSmokeTest already swallows all internal errors.
+          console.error('[smoke-test] Unexpected error:', err.message);
+        });
+      } catch (err) {
+        console.error('Model load failed:', err);
+        broadcastStatus('Model load failed');
+      }
     }
   }
 
