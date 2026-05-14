@@ -4,6 +4,8 @@ const path = require('path');
 let tray = null;
 let onTrayClickFn = null;
 let onStartRecordingFn = null;
+let onStopRecordingFn = null;
+let isRecordingFn = null;
 let onCheckForUpdatesFn = null;
 let onInstallUpdateFn = null;
 let getUpdaterStatusFn = null;
@@ -23,12 +25,16 @@ function createTray({
   onRetryHotkeyFn,
   onTrayClick,
   onStartRecording,
+  onStopRecording,
+  isRecording,
   onCheckForUpdates,
   onInstallUpdate,
   getUpdaterStatus,
 }) {
   onTrayClickFn = onTrayClick;
   onStartRecordingFn = onStartRecording;
+  onStopRecordingFn = onStopRecording;
+  isRecordingFn = isRecording;
   onCheckForUpdatesFn = onCheckForUpdates;
   onInstallUpdateFn = onInstallUpdate;
   getUpdaterStatusFn = getUpdaterStatus;
@@ -61,16 +67,22 @@ function buildTrayMenu() {
   const status = getUpdaterStatusFn ? getUpdaterStatusFn() : null;
   const updateDownloaded = status && status.phase === 'downloaded';
   const updateChecking = status && status.phase === 'checking';
+  const recording = isRecordingFn ? !!isRecordingFn() : false;
 
   const template = [
     {
       label: 'Open Tellaflow',
       click: () => { if (onTrayClickFn) onTrayClickFn(); },
     },
-    {
-      label: 'Start Recording',
-      click: () => { if (onStartRecordingFn) onStartRecordingFn(); },
-    },
+    recording
+      ? {
+          label: 'Stop Recording',
+          click: () => { if (onStopRecordingFn) onStopRecordingFn(); },
+        }
+      : {
+          label: 'Start Recording',
+          click: () => { if (onStartRecordingFn) onStartRecordingFn(); },
+        },
     { type: 'separator' },
   ];
 
