@@ -35,14 +35,14 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Cache Whisper model
+      - name: Cache Parakeet model
         uses: actions/cache@v4
         with:
-          path: resources/models
-          key: whisper-ggml-small-v1
+          path: resources/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8
+          key: parakeet-tdt-0.6b-v2-int8-v1
 
-      - name: Download Whisper model (if not cached)
-        run: npm run download-model
+      - name: Download Parakeet model (if not cached)
+        run: npm run download-parakeet
 
       - name: Install dependencies
         run: npm ci
