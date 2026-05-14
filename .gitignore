@@ -8,4 +8,3 @@ out/
 *.pem
 resources/models/*.bin
 resources/models/*.gguf
-resources/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/
