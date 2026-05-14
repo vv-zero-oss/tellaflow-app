@@ -23,15 +23,18 @@ mac:
     NSMicrophoneUsageDescription: "Tellaflow needs microphone access to transcribe your speech."
     NSAccessibilityUsageDescription: "Tellaflow needs accessibility access to detect your hotkey and paste transcribed text."
 dmg:
+  title: Tellaflow Installer
+  background: build/background.png
+  iconSize: 100
   window:
-    width: 540
-    height: 320
+    width: 600
+    height: 420
   contents:
-    - x: 160
-      y: 140
+    - x: 165
+      y: 200
       type: file
-    - x: 380
-      y: 140
+    - x: 435
+      y: 200
       type: link
       path: /Applications
 extraResources:
