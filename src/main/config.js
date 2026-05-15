@@ -14,7 +14,7 @@ const DEFAULTS = {
   showInDock: true,
   translationEnabled: false,
   translationLanguage: 'ja',
-  transcriptionEngine: 'parakeet',
+  transcriptionEngine: 'whisper',
   microphoneDeviceId: 'auto',
   hotkeyActivationDelay: 0,
 };
@@ -105,7 +105,7 @@ function setTranslationEnabled(enabled) { setSetting('translationEnabled', enabl
 function getTranslationLanguage() { return getSetting('translationLanguage') || 'ja'; }
 function setTranslationLanguage(lang) { setSetting('translationLanguage', lang); }
 
-function getTranscriptionEngine() { return getSetting('transcriptionEngine') || 'parakeet'; }
+function getTranscriptionEngine() { return getSetting('transcriptionEngine') || 'whisper'; }
 function setTranscriptionEngine(engine) { setSetting('transcriptionEngine', engine); }
 
 function getMicrophoneDeviceId() { return getSetting('microphoneDeviceId') || 'auto'; }

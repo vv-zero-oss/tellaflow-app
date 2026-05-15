@@ -230,7 +230,7 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
   const parakeet = useParakeet();
 
   const whisperAvailable = Object.entries(models).filter(([, info]) => info.available);
-  const engine = config.transcriptionEngine || 'parakeet';
+  const engine = config.transcriptionEngine || 'whisper';
 
   // Unified dropdown value: 'parakeet' when that engine is active, else the whisper model key
   const dropdownValue = engine === 'parakeet' ? PARAKEET_KEY : (config.model || 'small');

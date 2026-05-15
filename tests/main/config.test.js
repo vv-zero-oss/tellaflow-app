@@ -66,9 +66,9 @@ describe('config defaults', () => {
     expect(config.getTranslationLanguage()).toBe('ja');
   });
 
-  it('getTranscriptionEngine returns "parakeet" by default', () => {
+  it('getTranscriptionEngine returns "whisper" by default', () => {
     const { config } = freshConfig();
-    expect(config.getTranscriptionEngine()).toBe('parakeet');
+    expect(config.getTranscriptionEngine()).toBe('whisper');
   });
 
   it('getGrammarModel returns "qwen2.5-0.5b" by default', () => {
@@ -179,6 +179,8 @@ describe('config get/set round-trips', () => {
     const { config } = freshConfig();
     config.setTranscriptionEngine('parakeet');
     expect(config.getTranscriptionEngine()).toBe('parakeet');
+    config.setTranscriptionEngine('whisper');
+    expect(config.getTranscriptionEngine()).toBe('whisper');
   });
 
   it('setOnboardingComplete / isOnboardingComplete', () => {
