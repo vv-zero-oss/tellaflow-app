@@ -1,14 +1,14 @@
 {
   "name": "tellaflow",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "macOS menubar dictation app powered by Whisper",
   "main": "src/main/index.js",
   "scripts": {
     "dev:renderer": "vite --config vite.config.ts",
-    "predev": "npm run download-model",
+    "predev": "npm run download-parakeet",
     "dev": "concurrently \"npm run dev:renderer\" \"sleep 2 && electron .\"",
     "build:renderer": "vite build --config vite.config.ts",
-    "prebuild": "npm run download-model",
+    "prebuild": "npm run download-parakeet",
     "build": "npm run build:renderer && electron-builder --mac --publish never",
     "start": "electron .",
     "dev:sign": "codesign --force --deep --sign - --options runtime --entitlements build/entitlements.mac.plist node_modules/electron/dist/Electron.app && codesign --force --sign - node_modules/keyspy/runtime/MacKeyServer",
