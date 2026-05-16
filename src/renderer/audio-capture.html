@@ -13,11 +13,28 @@ let startingUp = false;
 
 const TARGET_SAMPLE_RATE = 16000;
 
+// Streaming chunked transcription: after CHUNK_THRESHOLD_SEC of recording,
+// start flushing audio to the main process every CHUNK_INTERVAL_SEC so
+// transcription runs in parallel with recording. Prevents OOM on very long
+// dictation sessions and reduces wait time when the user stops.
+const CHUNK_THRESHOLD_SEC = 120; // 2 minutes before first flush
+const CHUNK_INTERVAL_SEC = 30;   // subsequent flushes every 30 s
+const SAMPLES_PER_BUFFER = 4096; // ScriptProcessor buffer size
+const CHUNK_THRESHOLD_BUFFERS = Math.ceil((CHUNK_THRESHOLD_SEC * TARGET_SAMPLE_RATE) / SAMPLES_PER_BUFFER);
+const CHUNK_INTERVAL_BUFFERS = Math.ceil((CHUNK_INTERVAL_SEC * TARGET_SAMPLE_RATE) / SAMPLES_PER_BUFFER);
+
+let chunkingActive = false;
+let sentChunkCount = 0;         // how many pcmChunks entries have been sent
+let buffersSinceLastFlush = 0;  // buffers accumulated since last chunk flush
+
 async function startCapture(deviceId) {
   if (isCapturing || startingUp) return;
   startingUp = true;
   stopRequested = false;
   pcmChunks = [];
+  chunkingActive = false;
+  sentChunkCount = 0;
+  buffersSinceLastFlush = 0;
 
   const audioConstraints = { sampleRate: { ideal: TARGET_SAMPLE_RATE }, channelCount: 1, echoCancellation: true };
   if (deviceId && deviceId !== 'auto') {
@@ -61,6 +78,20 @@ async function startCapture(deviceId) {
       for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
       const rms = Math.sqrt(sum / input.length);
       window.tellaflow.sendAudioLevel(rms);
+
+      // Streaming chunked transcription: once we cross the 2-min mark,
+      // flush accumulated audio and then flush every 30 s thereafter.
+      if (!chunkingActive) {
+        if (pcmChunks.length >= CHUNK_THRESHOLD_BUFFERS) {
+          chunkingActive = true;
+          flushChunk();
+        }
+      } else {
+        buffersSinceLastFlush++;
+        if (buffersSinceLastFlush >= CHUNK_INTERVAL_BUFFERS) {
+          flushChunk();
+        }
+      }
     };
 
     source.connect(scriptNode);
@@ -83,6 +114,22 @@ async function startCapture(deviceId) {
   }
 }
 
+function flushChunk() {
+  const unsent = pcmChunks.slice(sentChunkCount);
+  if (unsent.length === 0) return;
+
+  const totalLength = unsent.reduce((sum, c) => sum + c.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  for (const chunk of unsent) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  sentChunkCount = pcmChunks.length;
+  buffersSinceLastFlush = 0;
+  window.tellaflow.sendAudioChunk(merged);
+}
+
 function stopCapture() {
   if (startingUp) {
     console.log('Stop requested while mic is starting up — will stop after init.');
@@ -102,30 +149,47 @@ function stopCapture() {
     mediaStream = null;
   }
 
-  const totalLength = pcmChunks.reduce((sum, c) => sum + c.length, 0);
+  const wasChunking = chunkingActive;
+
+  // If chunking was active, only send the remaining unsent tail.
+  // Prior chunks were already dispatched for transcription via flushChunk().
+  const sliceStart = wasChunking ? sentChunkCount : 0;
+  const remaining = pcmChunks.slice(sliceStart);
+
+  const totalLength = remaining.reduce((sum, c) => sum + c.length, 0);
   const merged = new Float32Array(totalLength);
   let offset = 0;
-  for (const chunk of pcmChunks) {
+  for (const chunk of remaining) {
     merged.set(chunk, offset);
     offset += chunk.length;
   }
+
+  // Reset streaming state for next recording
   pcmChunks = [];
+  chunkingActive = false;
+  sentChunkCount = 0;
+  buffersSinceLastFlush = 0;
 
   if (audioCtx) {
     audioCtx.close();
     audioCtx = null;
   }
 
-  let rms = 0;
-  for (let i = 0; i < merged.length; i++) {
-    rms += merged[i] * merged[i];
-  }
-  rms = Math.sqrt(rms / (merged.length || 1));
+  // For short (non-chunked) recordings, skip if the audio is just silence.
+  // For chunked recordings, always send — the main process already has prior
+  // chunks and needs this final event to assemble the result.
+  if (!wasChunking) {
+    let rms = 0;
+    for (let i = 0; i < merged.length; i++) {
+      rms += merged[i] * merged[i];
+    }
+    rms = Math.sqrt(rms / (merged.length || 1));
 
-  if (rms < 0.005) {
-    console.log('No speech detected (RMS too low). Sending empty audio for cleanup.');
-    window.tellaflow.sendAudio(new Float32Array(0));
-    return;
+    if (rms < 0.005) {
+      console.log('No speech detected (RMS too low). Sending empty audio for cleanup.');
+      window.tellaflow.sendAudio(new Float32Array(0));
+      return;
+    }
   }
 
   // Send the Float32Array as-is — Electron IPC uses structured clone, which

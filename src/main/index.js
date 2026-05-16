@@ -22,7 +22,7 @@ const { pasteText } = require('./paste');
 const permissions = require('./permissions');
 const models = require('./models');
 const { trimSilence, normalizeVolume } = require('./audio-preprocess');
-const { encodePcmToWav } = require('./audio-utils');
+const { encodePcmToWav, decodeWavToPcm } = require('./audio-utils');
 const { formatTranscription } = require('./formatter');
 const grammar = require('./grammar');
 const { applyDictionary } = require('./dictionary');
@@ -70,6 +70,12 @@ function throttleProgress(fn, intervalMs = 100) {
 let audioCaptureWindow = null;
 let isQuitting = false;
 let pendingStop = false;
+
+// Streaming chunked transcription session. When the renderer records for >2 min
+// it sends intermediate audio chunks via 'audio-chunk' IPC. Each chunk is
+// transcribed in parallel with ongoing recording. When 'audio-captured' fires
+// (recording stopped), the final tail is transcribed and all results are merged.
+let streamingSession = null; // { chunkPromises: Promise<string>[], fullPcm: Float32Array[] }
 let recordingTimeout = null;
 // Grace period after hotkey release — keeps the mic open a little longer so the
 // user's last word isn't clipped when they lift the key slightly before finishing.
@@ -430,6 +436,7 @@ function forceStopRecording() {
     try { audioCaptureWindow.webContents.send('stop-recording'); } catch {}
   }
   setTimeout(() => {
+    streamingSession = null; // safety: discard if renderer never responded
     destroyAudioCaptureWindow();
     hideToast();
     broadcastStatus('Ready');
@@ -529,6 +536,7 @@ function startHotkeyListener() {
         if (cancelled) {
           pendingStop = false;
           clickPasteTargetApp = null;
+          streamingSession = null; // discard any in-flight chunk transcriptions
           destroyAudioCaptureWindow();
           hideToast();
           broadcastStatus('Ready');
@@ -1160,6 +1168,48 @@ function registerIPC() {
     return history.getEntries();
   });
 
+  ipcMain.handle('retry-transcription', async (_, entryId) => {
+    // Prevent concurrent native addon access during active recording
+    if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+      throw new Error('Cannot retry while recording is in progress');
+    }
+
+    const entry = history.getEntryById(entryId);
+    if (!entry || !entry.audioPath) throw new Error('No audio to retry');
+
+    let pcm;
+    try {
+      pcm = decodeWavToPcm(entry.audioPath);
+    } catch (decodeErr) {
+      throw new Error('Audio file is corrupted or missing');
+    }
+
+    let rawText;
+    if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
+      rawText = await parakeet.transcribe(pcm);
+    } else {
+      rawText = await whisper.transcribe(pcm);
+      rawText = stripWhisperArtifacts(rawText);
+    }
+
+    if (!rawText || rawText.trim().length === 0) {
+      throw new Error('No speech detected in audio');
+    }
+
+    rawText = applyDictionary(rawText);
+
+    if (config.getGrammarEnabled()) {
+      rawText = await grammar.correctGrammar(rawText, config.getGrammarTone());
+    }
+
+    let text = formatTranscription(rawText);
+    text = snippets.applySnippets(text);
+
+    history.updateEntryText(entryId, text);
+    sendToMainWindow('history-update', history.getEntries());
+    return text;
+  });
+
   ipcMain.handle('get-audio-data', async (_, filePath) => {
     const fsp = require('fs').promises;
     if (!filePath || typeof filePath !== 'string') return null;
@@ -1274,6 +1324,7 @@ function registerIPC() {
     sounds.unmuteMusic();
     pendingStop = false;
     clickPasteTargetApp = null;
+    streamingSession = null; // discard any in-flight chunk transcriptions
     // Clear hotkey state too — a hands-free session may be active behind
     // this toast button, and we don't want a later key release to fire
     // a duplicate onStop.
@@ -1366,9 +1417,56 @@ function registerIPC() {
     }
   });
 
+  // Shared transcription helper: preprocess + transcribe a raw PCM chunk.
+  // Used by both the streaming chunk handler and the final assembly path.
+  async function transcribeRaw(pcm) {
+    let processed = trimSilence(pcm);
+    processed = normalizeVolume(processed);
+    let text;
+    if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
+      text = await parakeet.transcribe(processed);
+    } else {
+      text = await whisper.transcribe(processed);
+      text = stripWhisperArtifacts(text);
+    }
+    return (text || '').trim();
+  }
+
+  // Streaming chunked transcription: the renderer sends intermediate audio
+  // chunks when recording exceeds 2 minutes. Each chunk is transcribed
+  // immediately so work happens in parallel with ongoing recording.
+  ipcMain.on('audio-chunk', async (_, pcmArray) => {
+    const pcm = pcmArray instanceof Float32Array
+      ? pcmArray
+      : (pcmArray && pcmArray.length ? new Float32Array(pcmArray) : null);
+    if (!pcm || pcm.length === 0) return;
+
+    if (!streamingSession) {
+      streamingSession = { chunkPromises: [], fullPcm: [] };
+      console.log('Streaming transcription started — first chunk received while recording continues');
+    }
+
+    // Keep raw PCM for WAV saving later
+    streamingSession.fullPcm.push(pcm);
+
+    // Start transcription immediately — runs in parallel with continued recording
+    const chunkIndex = streamingSession.chunkPromises.length;
+    const promise = transcribeRaw(pcm).catch((err) => {
+      console.warn(`Streaming chunk ${chunkIndex} transcription failed:`, err.message);
+      return '';
+    });
+    streamingSession.chunkPromises.push(promise);
+    console.log(`Streaming chunk ${chunkIndex} queued for transcription (${(pcm.length / 16000).toFixed(1)}s of audio)`);
+  });
+
   // Audio captured from renderer -> preprocess -> transcribe -> format -> paste
   ipcMain.on('audio-captured', async (_, pcmArray) => {
     destroyAudioCaptureWindow();
+
+    // Grab and reset the streaming session before doing anything else.
+    const session = streamingSession;
+    streamingSession = null;
+    const isStreaming = session && session.chunkPromises.length > 0;
 
     // Renderer sends a Float32Array (preserved across IPC by structured clone).
     // Older callers may still send a plain Array; normalise once here so the
@@ -1377,7 +1475,9 @@ function registerIPC() {
       ? pcmArray
       : (pcmArray && pcmArray.length ? new Float32Array(pcmArray) : null);
 
-    if (!pcm || pcm.length === 0) {
+    // For non-streaming: bail on empty audio as before.
+    // For streaming: prior chunks exist, so proceed even if the final tail is empty.
+    if (!isStreaming && (!pcm || pcm.length === 0)) {
       console.log('Empty audio received — skipping transcription.');
       clickPasteTargetApp = null;
       hideToast();
@@ -1396,6 +1496,23 @@ function registerIPC() {
     showToast('transcribing');
     broadcastStatus('Transcribing...');
 
+    // Build the full PCM for WAV saving. For streaming sessions, combine the
+    // chunks that were sent during recording with the final tail.
+    let fullPcm;
+    if (isStreaming) {
+      const allChunks = [...session.fullPcm];
+      if (pcm && pcm.length > 0) allChunks.push(pcm);
+      const totalLength = allChunks.reduce((s, c) => s + c.length, 0);
+      fullPcm = new Float32Array(totalLength);
+      let off = 0;
+      for (const chunk of allChunks) {
+        fullPcm.set(chunk, off);
+        off += chunk.length;
+      }
+    } else {
+      fullPcm = pcm;
+    }
+
     // Save the raw audio to disk before transcription so it is always preserved.
     // Async write keeps the event loop responsive — transcription only needs
     // `savedAudioPath` for the unlink-on-failure paths, not the bytes on disk.
@@ -1405,7 +1522,7 @@ function registerIPC() {
     let savedAudioPath = null;
     let writePromise = Promise.resolve();
     try {
-      const wavBuf = encodePcmToWav(pcm, 16000);
+      const wavBuf = encodePcmToWav(fullPcm, 16000);
       writePromise = fs.promises.writeFile(audioPath, wavBuf)
         .then(() => { savedAudioPath = audioPath; })
         .catch((writeErr) => {
@@ -1416,16 +1533,27 @@ function registerIPC() {
     }
 
     try {
-      let processed = trimSilence(pcm);
-      processed = normalizeVolume(processed);
-
       let rawText;
-      if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
-        rawText = await parakeet.transcribe(processed);
+
+      if (isStreaming) {
+        // Transcribe the final tail (audio recorded since the last chunk flush)
+        if (pcm && pcm.length > 0) {
+          const finalPromise = transcribeRaw(pcm).catch((err) => {
+            console.warn('Streaming final chunk transcription failed:', err.message);
+            return '';
+          });
+          session.chunkPromises.push(finalPromise);
+        }
+
+        // Wait for all chunk transcriptions to complete and merge in order
+        const results = await Promise.all(session.chunkPromises);
+        rawText = results.filter(t => t.length > 0).join(' ');
+        console.log(`Streaming transcription complete — ${results.length} chunks merged (${(fullPcm.length / 16000).toFixed(0)}s total)`);
       } else {
-        rawText = await whisper.transcribe(processed);
-        rawText = stripWhisperArtifacts(rawText);
+        // Short recording — transcribe in one shot (original path)
+        rawText = await transcribeRaw(pcm);
       }
+
       // Make sure the async WAV write completed before any downstream branch
       // either persists `savedAudioPath` in history or attempts to unlink it.
       await writePromise;
@@ -1507,11 +1635,11 @@ function registerIPC() {
       clickPasteTargetApp = null;
       hideToast();
 
-      // Await any in-flight WAV write so the unlink targets the real file
-      // rather than racing against the writer.
+      // Keep the audio file — save as a failed entry so the user can retry.
       try { await writePromise; } catch (_) {}
       if (savedAudioPath) {
-        fs.promises.unlink(savedAudioPath).catch(() => {});
+        history.addEntry('[Transcription failed]', savedAudioPath);
+        sendToMainWindow('history-update', history.getEntries());
       }
 
       const isModelMissing = err.message && err.message.includes('not found');
@@ -1519,7 +1647,7 @@ function registerIPC() {
         title: isModelMissing ? 'Tellaflow — Model Not Found' : 'Transcription Failed',
         body: isModelMissing
           ? `${err.message} Go to Settings → Models to download one.`
-          : (err.message || 'Unknown error'),
+          : 'Audio saved — you can retry from your transcripts.',
       }).show();
 
       if (isModelMissing) broadcastStatus('No model downloaded');

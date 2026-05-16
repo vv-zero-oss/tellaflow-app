@@ -22,7 +22,7 @@ const pageVariants = {
 
 export default function App() {
   const [page, setPage] = useState('transcripts');
-  const { entries, totalWords, clearHistory, deleteEntry, copy, paste } = useHistory();
+  const { entries, totalWords, clearHistory, deleteEntry, retry, copy, paste } = useHistory();
   const { status, isError, isLoading } = useStatus();
   const appConfig = useConfig();
   const { mic, accessibility, needsRestart, restartApp } = usePermissions();
@@ -54,6 +54,7 @@ export default function App() {
                 totalWords={totalWords}
                 onCopy={copy}
                 onDelete={deleteEntry}
+                onRetry={retry}
                 hotkey={appConfig.config.hotkey}
                 missingMic={!mic}
                 missingAccessibility={!accessibility}

@@ -43,4 +43,31 @@ function encodePcmToWav(pcmFloat32, sampleRate = 16000) {
   return buffer;
 }
 
-module.exports = { encodePcmToWav };
+/**
+ * Decodes a 16-bit mono WAV file back to Float32Array PCM.
+ * Inverse of encodePcmToWav — used for retry-transcription.
+ */
+function decodeWavToPcm(filePath) {
+  const fs = require('fs');
+  const buf = fs.readFileSync(filePath);
+
+  if (buf.length < 44 || buf.toString('ascii', 0, 4) !== 'RIFF') {
+    throw new Error('Invalid WAV file');
+  }
+
+  // Standard WAV header is 44 bytes; data starts after
+  const dataOffset = 44;
+  const numSamples = Math.floor((buf.length - dataOffset) / 2);
+  if (numSamples <= 0) {
+    throw new Error('WAV file contains no audio data');
+  }
+
+  const pcm = new Float32Array(numSamples);
+  for (let i = 0; i < numSamples; i++) {
+    const sample = buf.readInt16LE(dataOffset + i * 2);
+    pcm[i] = sample / (sample < 0 ? 0x8000 : 0x7fff);
+  }
+  return pcm;
+}
+
+module.exports = { encodePcmToWav, decodeWavToPcm };

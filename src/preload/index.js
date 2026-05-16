@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('tellaflow', {
   onStartRecording: (callback) => ipcRenderer.on('start-recording', (_, data) => callback(data)),
   onStopRecording: (callback) => ipcRenderer.on('stop-recording', callback),
   sendAudio: (pcmBuffer) => ipcRenderer.send('audio-captured', pcmBuffer),
+  sendAudioChunk: (pcmBuffer) => ipcRenderer.send('audio-chunk', pcmBuffer),
   sendCaptureReady: () => ipcRenderer.send('capture-ready'),
 
   // Toast IPC
@@ -112,6 +113,7 @@ contextBridge.exposeInMainWorld('tellaflow', {
   getHistory: () => ipcRenderer.invoke('get-history'),
   clearHistory: () => ipcRenderer.send('clear-history'),
   deleteHistoryEntry: (id) => ipcRenderer.invoke('delete-history-entry', id),
+  retryTranscription: (id) => ipcRenderer.invoke('retry-transcription', id),
   getAudioData: (filePath) => ipcRenderer.invoke('get-audio-data', filePath),
   copyToClipboard: (text) => ipcRenderer.send('copy-to-clipboard', text),
   pasteText: (text) => ipcRenderer.send('paste-text', text),
