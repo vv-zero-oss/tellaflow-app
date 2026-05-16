@@ -20,6 +20,10 @@ export function useHistory() {
     setEntries(updated);
   }, []);
 
+  const retry = useCallback(async (id: number) => {
+    await ipc.retryTranscription(id);
+  }, []);
+
   const copy = useCallback((text: string) => ipc.copyToClipboard(text), []);
   const paste = useCallback((text: string) => ipc.pasteText(text), []);
 
@@ -28,5 +32,5 @@ export function useHistory() {
     [entries],
   );
 
-  return { entries, totalWords, clearHistory, deleteEntry, copy, paste };
+  return { entries, totalWords, clearHistory, deleteEntry, retry, copy, paste };
 }

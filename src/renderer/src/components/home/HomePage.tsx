@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Search, X, PlayIcon, PauseIcon } from 'lucide-react';
+import { Mic, Search, X, PlayIcon, PauseIcon, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TrashIcon } from '@/components/icons/TrashIcon';
@@ -23,6 +23,7 @@ interface HomePageProps {
   totalWords: number;
   onCopy: (text: string) => void;
   onDelete: (id: number) => void;
+  onRetry: (id: number) => void;
   hotkey?: HotkeyConfig;
   missingMic?: boolean;
   missingAccessibility?: boolean;
@@ -202,13 +203,15 @@ interface AudioEntryItemProps {
   searchQuery: string;
   onCopy: (text: string) => void;
   onDelete: (id: number) => void;
+  onRetry: (id: number) => void;
 }
 
-function AudioEntryItem({ entry, blobUrlsRef, searchQuery, onCopy, onDelete }: AudioEntryItemProps) {
+function AudioEntryItem({ entry, blobUrlsRef, searchQuery, onCopy, onDelete, onRetry }: AudioEntryItemProps) {
   const player = useAudioPlayer();
   const isActive = player.isItemActive(entry.id);
   const isFailed = entry.text === '[Transcription failed]';
   const [loadingAudio, setLoadingAudio] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   const handlePlayToggle = useCallback(async () => {
     if (isActive) {
@@ -270,6 +273,25 @@ function AudioEntryItem({ entry, blobUrlsRef, searchQuery, onCopy, onDelete }: A
                 <PlayIcon className="w-3.5 h-3.5" />
               ) : (
                 <PauseIcon className="w-3.5 h-3.5" />
+              )}
+            </Button>
+          )}
+          {isFailed && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950"
+              onClick={async () => {
+                setRetrying(true);
+                try { await onRetry(entry.id); } catch {} finally { setRetrying(false); }
+              }}
+              disabled={retrying}
+              title="Retry transcription"
+            >
+              {retrying ? (
+                <span className="border-muted border-t-foreground size-3 animate-spin rounded-full border-2 inline-block" />
+              ) : (
+                <RotateCcw className="w-3.5 h-3.5" />
               )}
             </Button>
           )}
@@ -530,7 +552,7 @@ function HotkeyEmptyState({ hotkey }: { hotkey?: HotkeyConfig }) {
   );
 }
 
-export function HomePage({ entries, totalWords, onCopy, onDelete, hotkey, missingMic = false, missingAccessibility = false, onGoToSettings, onGoToDashboard }: HomePageProps) {
+export function HomePage({ entries, totalWords, onCopy, onDelete, onRetry, hotkey, missingMic = false, missingAccessibility = false, onGoToSettings, onGoToDashboard }: HomePageProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [visibleDays, setVisibleDays] = useState(INITIAL_VISIBLE_DAYS);
@@ -730,6 +752,7 @@ export function HomePage({ entries, totalWords, onCopy, onDelete, hotkey, missin
                         searchQuery={searchQuery.trim()}
                         onCopy={onCopy}
                         onDelete={onDelete}
+                        onRetry={onRetry}
                       />
                     ))}
                   </WellCard>

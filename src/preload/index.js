@@ -112,6 +112,7 @@ contextBridge.exposeInMainWorld('tellaflow', {
   getHistory: () => ipcRenderer.invoke('get-history'),
   clearHistory: () => ipcRenderer.send('clear-history'),
   deleteHistoryEntry: (id) => ipcRenderer.invoke('delete-history-entry', id),
+  retryTranscription: (id) => ipcRenderer.invoke('retry-transcription', id),
   getAudioData: (filePath) => ipcRenderer.invoke('get-audio-data', filePath),
   copyToClipboard: (text) => ipcRenderer.send('copy-to-clipboard', text),
   pasteText: (text) => ipcRenderer.send('paste-text', text),

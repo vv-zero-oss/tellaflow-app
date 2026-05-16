@@ -49,4 +49,14 @@ function clearHistory() {
   db.prepare('DELETE FROM history').run();
 }
 
-module.exports = { addEntry, getEntries, deleteEntry, clearHistory };
+function getEntryById(id) {
+  return getDb()
+    .prepare('SELECT id, text, timestamp, audio_path as audioPath FROM history WHERE id = ?')
+    .get(id);
+}
+
+function updateEntryText(id, text) {
+  getDb().prepare('UPDATE history SET text = ? WHERE id = ?').run(text, id);
+}
+
+module.exports = { addEntry, getEntries, getEntryById, updateEntryText, deleteEntry, clearHistory };

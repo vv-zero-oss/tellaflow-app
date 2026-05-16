@@ -106,11 +106,23 @@ async function _doTranscribe(pcmFloat32Array) {
 }
 
 // Public wrapper — queues calls so the native addon is never invoked concurrently.
+let whisperCallCount = 0;
+
 function transcribe(pcmFloat32Array) {
   const next = transcribeChain.then(() => _doTranscribe(pcmFloat32Array));
   // Swallow rejections on the chain tail so a failed call doesn't poison
   // subsequent queued calls; callers receive the real error via `next`.
   transcribeChain = next.catch(() => {});
+
+  // Nudge GC periodically to free intermediate PCM buffers and resolved
+  // promise references. Safe: chained normally, no concurrency risk.
+  whisperCallCount++;
+  if (whisperCallCount % 10 === 0 && global.gc) {
+    transcribeChain = transcribeChain.then(() => {
+      try { global.gc(); } catch {}
+    });
+  }
+
   return next;
 }
 

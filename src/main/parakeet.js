@@ -81,14 +81,15 @@ function isAvailable() {
 }
 
 async function transcribe(pcmFloat32Array) {
-  if (!recognizer) {
-    loadModel();
-  }
-
   // Recycle recognizer periodically to release ONNX BFCArena memory pools.
   // This prevents the OOM crash on low-RAM machines after prolonged use.
-  if (transcriptionCount >= RECYCLE_INTERVAL) {
-    console.log(`Parakeet: recycling recognizer after ${transcriptionCount} transcriptions to free memory`);
+  // Done synchronously BEFORE the transcription — safe because this only
+  // fires in the gap between dictation sessions (user must release hotkey,
+  // think, and speak again).
+  if (!recognizer || transcriptionCount >= RECYCLE_INTERVAL) {
+    if (transcriptionCount >= RECYCLE_INTERVAL) {
+      console.log(`Parakeet: recycling recognizer after ${transcriptionCount} transcriptions to free memory`);
+    }
     loadModel();
   }
 
@@ -102,21 +103,17 @@ async function transcribe(pcmFloat32Array) {
     return (result.text || '').trim();
   } catch (err) {
     // If ONNX hits an allocation failure, recycle and retry once.
-    // This catches the BFCArena::Extend crash path before it becomes fatal.
     if (err.message && (err.message.includes('alloc') || err.message.includes('memory') || err.message.includes('OOM'))) {
       console.warn('Parakeet: allocation failure, recycling recognizer and retrying:', err.message);
       try { stream?.free?.(); } catch {}
+      stream = null; // prevent double-free in finally
       loadModel();
       stream = recognizer.createStream();
-      try {
-        stream.acceptWaveform({ samples: pcmFloat32Array, sampleRate: 16000 });
-        recognizer.decode(stream);
-        const result = recognizer.getResult(stream);
-        transcriptionCount++;
-        return (result.text || '').trim();
-      } finally {
-        try { stream.free(); } catch {}
-      }
+      stream.acceptWaveform({ samples: pcmFloat32Array, sampleRate: 16000 });
+      recognizer.decode(stream);
+      const result = recognizer.getResult(stream);
+      transcriptionCount++;
+      return (result.text || '').trim();
     }
     throw err;
   } finally {

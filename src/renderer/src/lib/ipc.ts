@@ -219,6 +219,7 @@ interface TellaflowAPI {
   getHistory: () => Promise<HistoryEntry[]>;
   clearHistory: () => void;
   deleteHistoryEntry: (id: number) => Promise<HistoryEntry[]>;
+  retryTranscription: (id: number) => Promise<string>;
   getAudioData: (filePath: string) => Promise<ArrayBuffer | null>;
   copyToClipboard: (text: string) => void;
   pasteText: (text: string) => void;

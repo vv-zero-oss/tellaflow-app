@@ -22,7 +22,7 @@ const { pasteText } = require('./paste');
 const permissions = require('./permissions');
 const models = require('./models');
 const { trimSilence, normalizeVolume } = require('./audio-preprocess');
-const { encodePcmToWav } = require('./audio-utils');
+const { encodePcmToWav, decodeWavToPcm } = require('./audio-utils');
 const { formatTranscription } = require('./formatter');
 const grammar = require('./grammar');
 const { applyDictionary } = require('./dictionary');
@@ -1160,6 +1160,48 @@ function registerIPC() {
     return history.getEntries();
   });
 
+  ipcMain.handle('retry-transcription', async (_, entryId) => {
+    // Prevent concurrent native addon access during active recording
+    if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
+      throw new Error('Cannot retry while recording is in progress');
+    }
+
+    const entry = history.getEntryById(entryId);
+    if (!entry || !entry.audioPath) throw new Error('No audio to retry');
+
+    let pcm;
+    try {
+      pcm = decodeWavToPcm(entry.audioPath);
+    } catch (decodeErr) {
+      throw new Error('Audio file is corrupted or missing');
+    }
+
+    let rawText;
+    if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
+      rawText = await parakeet.transcribe(pcm);
+    } else {
+      rawText = await whisper.transcribe(pcm);
+      rawText = stripWhisperArtifacts(rawText);
+    }
+
+    if (!rawText || rawText.trim().length === 0) {
+      throw new Error('No speech detected in audio');
+    }
+
+    rawText = applyDictionary(rawText);
+
+    if (config.getGrammarEnabled()) {
+      rawText = await grammar.correctGrammar(rawText, config.getGrammarTone());
+    }
+
+    let text = formatTranscription(rawText);
+    text = snippets.applySnippets(text);
+
+    history.updateEntryText(entryId, text);
+    sendToMainWindow('history-update', history.getEntries());
+    return text;
+  });
+
   ipcMain.handle('get-audio-data', async (_, filePath) => {
     const fsp = require('fs').promises;
     if (!filePath || typeof filePath !== 'string') return null;
@@ -1507,11 +1549,11 @@ function registerIPC() {
       clickPasteTargetApp = null;
       hideToast();
 
-      // Await any in-flight WAV write so the unlink targets the real file
-      // rather than racing against the writer.
+      // Keep the audio file — save as a failed entry so the user can retry.
       try { await writePromise; } catch (_) {}
       if (savedAudioPath) {
-        fs.promises.unlink(savedAudioPath).catch(() => {});
+        history.addEntry('[Transcription failed]', savedAudioPath);
+        sendToMainWindow('history-update', history.getEntries());
       }
 
       const isModelMissing = err.message && err.message.includes('not found');
@@ -1519,7 +1561,7 @@ function registerIPC() {
         title: isModelMissing ? 'Tellaflow — Model Not Found' : 'Transcription Failed',
         body: isModelMissing
           ? `${err.message} Go to Settings → Models to download one.`
-          : (err.message || 'Unknown error'),
+          : 'Audio saved — you can retry from your transcripts.',
       }).show();
 
       if (isModelMissing) broadcastStatus('No model downloaded');
