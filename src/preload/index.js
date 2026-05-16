@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('tellaflow', {
   onStartRecording: (callback) => ipcRenderer.on('start-recording', (_, data) => callback(data)),
   onStopRecording: (callback) => ipcRenderer.on('stop-recording', callback),
   sendAudio: (pcmBuffer) => ipcRenderer.send('audio-captured', pcmBuffer),
+  sendAudioChunk: (pcmBuffer) => ipcRenderer.send('audio-chunk', pcmBuffer),
   sendCaptureReady: () => ipcRenderer.send('capture-ready'),
 
   // Toast IPC
