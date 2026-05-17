@@ -8,6 +8,7 @@ import { SnippetsPage } from '@/components/snippets/SnippetsPage';
 import { DictionaryPage } from '@/components/dictionary/DictionaryPage';
 import { SettingsPage } from '@/components/settings/SettingsPage';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
+import { IntelligencePage } from '@/components/intelligence/IntelligencePage';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useHistory } from '@/hooks/use-history';
 import { useStatus } from '@/hooks/use-status';
@@ -120,6 +121,22 @@ export default function App() {
               className="flex flex-col flex-1 overflow-hidden"
             >
               <DictionaryPage />
+            </motion.div>
+          )}
+          {page === 'intelligence' && !appConfig.loading && (
+            <motion.div
+              key="intelligence"
+              variants={pageVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+              className="flex flex-col flex-1 overflow-hidden"
+            >
+              <IntelligencePage
+                config={appConfig.config}
+                refreshConfig={appConfig.refresh}
+              />
             </motion.div>
           )}
           {page === 'settings' && !appConfig.loading && (

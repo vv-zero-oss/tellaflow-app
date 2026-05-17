@@ -102,6 +102,22 @@ contextBridge.exposeInMainWorld('tellaflow', {
   setTranscriptionEngine: (engine) => ipcRenderer.send('set-transcription-engine', engine),
   onConfigChanged: (cb) => { const h = (_, c) => cb(c); ipcRenderer.on('config-changed', h); return () => ipcRenderer.removeListener('config-changed', h); },
 
+  // Voice commands, app context, meeting mode
+  setVoiceCommandsEnabled: (enabled) => ipcRenderer.send('set-voice-commands-enabled', enabled),
+  setAppContextEnabled: (enabled) => ipcRenderer.send('set-app-context-enabled', enabled),
+  setMeetingMode: (enabled) => ipcRenderer.send('set-meeting-mode', enabled),
+
+  // Speaker profile / calibration
+  getSpeakerProfile: () => ipcRenderer.invoke('get-speaker-profile'),
+  getCalibrationText: () => ipcRenderer.invoke('get-calibration-text'),
+  runCalibration: (transcribedText) => ipcRenderer.invoke('run-calibration', transcribedText),
+  addVocabulary: (words) => ipcRenderer.invoke('add-vocabulary', words),
+  removeVocabulary: (word) => ipcRenderer.invoke('remove-vocabulary', word),
+  clearSpeakerProfile: () => ipcRenderer.invoke('clear-speaker-profile'),
+
+  // Export
+  exportHistory: (format) => ipcRenderer.invoke('export-history', format),
+
   // Permission grant actions
   grantMic: () => ipcRenderer.invoke('grant-mic'),
   grantAccessibility: () => ipcRenderer.send('grant-accessibility'),

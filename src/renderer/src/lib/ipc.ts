@@ -27,6 +27,10 @@ export interface AppConfig {
   parakeetAvailable?: boolean;
   microphoneDeviceId?: string;
   hotkeyActivationDelay?: number;
+  voiceCommandsEnabled?: boolean;
+  appContextEnabled?: boolean;
+  meetingMode?: boolean;
+  speakerCalibrated?: boolean;
 }
 
 export interface ParakeetModelInfo {
@@ -94,6 +98,28 @@ export interface SnippetEntry {
   id: number;
   trigger: string;
   content: string;
+}
+
+export interface CalibrationSession {
+  timestamp: number;
+  expectedWords: number;
+  matchedWords: number;
+  missedWords: string[];
+  accuracy: number;
+}
+
+export interface SpeakerProfile {
+  vocabulary: string[];
+  sessions: CalibrationSession[];
+  calibratedAt: number | null;
+  score: number;
+}
+
+export interface CalibrationResult {
+  session: CalibrationSession;
+  totalVocabulary: number;
+  score: number;
+  tip: string;
 }
 
 export type Models = Record<string, ModelInfo>;
@@ -209,6 +235,18 @@ interface TellaflowAPI {
   setTranscriptionEngine: (engine: TranscriptionEngine) => void;
   setMicrophoneDeviceId: (deviceId: string) => void;
   onConfigChanged: (cb: (c: Partial<AppConfig>) => void) => () => void;
+
+  setVoiceCommandsEnabled: (enabled: boolean) => void;
+  setAppContextEnabled: (enabled: boolean) => void;
+  setMeetingMode: (enabled: boolean) => void;
+  exportHistory: (format: 'markdown' | 'text') => Promise<string | null>;
+
+  getSpeakerProfile: () => Promise<SpeakerProfile>;
+  getCalibrationText: () => Promise<string>;
+  runCalibration: (transcribedText: string) => Promise<CalibrationResult>;
+  addVocabulary: (words: string | string[]) => Promise<SpeakerProfile>;
+  removeVocabulary: (word: string) => Promise<SpeakerProfile>;
+  clearSpeakerProfile: () => Promise<SpeakerProfile>;
 
   grantMic: () => Promise<boolean>;
   grantAccessibility: () => void;

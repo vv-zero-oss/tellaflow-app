@@ -226,10 +226,7 @@ export function SettingsPage({
             config={config}
             refreshConfig={refreshConfig}
           />
-         
 
-         
-         
           <Well className="mb-7">
             <WellHeader>
               <WellTitle>Data</WellTitle>
@@ -421,6 +418,7 @@ export function SettingsPage({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 }

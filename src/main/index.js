@@ -18,7 +18,10 @@ const { createOnboardingWindow, closeOnboarding, getOnboardingWindow } = require
 const hotkey = require('./hotkey');
 const whisper = require('./whisper');
 const parakeet = require('./parakeet');
-const { pasteText } = require('./paste');
+const { pasteText, undoLastPaste } = require('./paste');
+const { processVoiceCommands, executeAction } = require('./voice-commands');
+const { getEffectiveTone } = require('./app-context');
+const speakerProfile = require('./speaker-profile');
 const permissions = require('./permissions');
 const models = require('./models');
 const { trimSilence, normalizeVolume } = require('./audio-preprocess');
@@ -297,6 +300,7 @@ app.on('window-all-closed', () => {
 
 async function startApp() {
   createMainWindow();
+  speakerProfile.init(app.getPath('userData'));
 
   // Wire updater listeners BEFORE the slow model load below so the tray's
   // "Check for Updates…" works even during startup. initAutoUpdater is a no-op
@@ -617,8 +621,10 @@ function createAudioCaptureWindow() {
     },
   });
 
+  // Meeting mode captures system/desktop audio instead of microphone
+  const capturePage = config.getMeetingMode() ? 'meeting-capture.html' : 'audio-capture.html';
   audioCaptureWindow.loadFile(
-    path.join(__dirname, '..', 'renderer', 'audio-capture.html')
+    path.join(__dirname, '..', 'renderer', capturePage)
   );
 }
 
@@ -799,6 +805,10 @@ function registerIPC() {
       parakeetAvailable: models.isParakeetAvailable(),
       microphoneDeviceId: config.getMicrophoneDeviceId(),
       hotkeyActivationDelay: config.getHotkeyActivationDelay(),
+      voiceCommandsEnabled: config.getVoiceCommandsEnabled(),
+      appContextEnabled: config.getAppContextEnabled(),
+      meetingMode: config.getMeetingMode(),
+      speakerCalibrated: speakerProfile.isCalibrated(),
     };
   });
 
@@ -832,6 +842,78 @@ function registerIPC() {
   ipcMain.on('set-microphone-device-id', (_, deviceId) => {
     config.setMicrophoneDeviceId(deviceId);
     sendToMainWindow('config-changed', { microphoneDeviceId: deviceId });
+  });
+
+  // Voice commands, app-aware context, auto language detect
+  ipcMain.on('set-voice-commands-enabled', (_, enabled) => {
+    config.setVoiceCommandsEnabled(enabled);
+    sendToMainWindow('config-changed', { voiceCommandsEnabled: enabled });
+  });
+  ipcMain.on('set-app-context-enabled', (_, enabled) => {
+    config.setAppContextEnabled(enabled);
+    sendToMainWindow('config-changed', { appContextEnabled: enabled });
+  });
+  // Export history
+  ipcMain.handle('export-history', async (_, format) => {
+    const entries = history.getEntries();
+    if (!entries.length) return null;
+
+    let content;
+    let defaultName;
+    let filters;
+
+    if (format === 'markdown') {
+      content = entries.map(e => {
+        const date = new Date(Number(e.timestamp)).toLocaleString();
+        return `## ${date}\n\n${e.text}\n`;
+      }).join('\n---\n\n');
+      content = `# Tellaflow Transcripts\n\n${content}`;
+      defaultName = `tellaflow-transcripts-${new Date().toISOString().slice(0, 10)}.md`;
+      filters = [{ name: 'Markdown', extensions: ['md'] }];
+    } else {
+      content = entries.map(e => {
+        const date = new Date(Number(e.timestamp)).toLocaleString();
+        return `[${date}]\n${e.text}`;
+      }).join('\n\n---\n\n');
+      defaultName = `tellaflow-transcripts-${new Date().toISOString().slice(0, 10)}.txt`;
+      filters = [{ name: 'Text', extensions: ['txt'] }];
+    }
+
+    const { filePath } = await dialog.showSaveDialog({
+      defaultPath: defaultName,
+      filters,
+    });
+    if (!filePath) return null;
+
+    const fsp = require('fs').promises;
+    await fsp.writeFile(filePath, content, 'utf-8');
+    return filePath;
+  });
+
+  // Speaker profile / calibration
+  ipcMain.handle('get-speaker-profile', () => speakerProfile.getProfile());
+  ipcMain.handle('get-calibration-text', () => speakerProfile.getCalibrationText());
+  ipcMain.handle('run-calibration', async (_, transcribedText) => {
+    const expected = speakerProfile.getCalibrationText();
+    return speakerProfile.processCalibration(expected, transcribedText);
+  });
+  ipcMain.handle('add-vocabulary', (_, words) => {
+    speakerProfile.addVocabulary(words);
+    return speakerProfile.getProfile();
+  });
+  ipcMain.handle('remove-vocabulary', (_, word) => {
+    speakerProfile.removeVocabulary(word);
+    return speakerProfile.getProfile();
+  });
+  ipcMain.handle('clear-speaker-profile', () => {
+    speakerProfile.clearProfile();
+    return speakerProfile.getProfile();
+  });
+
+  // Meeting mode: toggle between mic and system audio capture
+  ipcMain.on('set-meeting-mode', (_, enabled) => {
+    config.setMeetingMode(enabled);
+    sendToMainWindow('config-changed', { meetingMode: enabled });
   });
 
   ipcMain.handle('get-parakeet-status', () => models.getParakeetStatus());
@@ -1574,12 +1656,34 @@ function registerIPC() {
         }
         return;
       }
+      // Voice commands: check if the entire transcription is an action command
+      // (e.g. "undo that", "select all") BEFORE any post-processing.
+      if (config.getVoiceCommandsEnabled()) {
+        const cmdResult = processVoiceCommands(rawText);
+        if (cmdResult.type === 'action') {
+          hideToast();
+          broadcastStatus('Ready');
+          if (savedAudioPath) { fs.promises.unlink(savedAudioPath).catch(() => {}); }
+          const recordedTarget = clickPasteTargetApp;
+          clickPasteTargetApp = null;
+          const currentFrontmost = await getFrontmostApp();
+          const actionTarget = (!isOwnApp(currentFrontmost) && currentFrontmost !== recordedTarget)
+            ? currentFrontmost
+            : recordedTarget;
+          executeAction(cmdResult.action, actionTarget);
+          return;
+        }
+      }
+
       rawText = applyDictionary(rawText);
 
       if (config.getGrammarEnabled() && grammar.isModelAvailable()) {
         broadcastStatus('Formatting...');
+        // App-aware context: pick tone based on target app if enabled
+        const recordedTarget = clickPasteTargetApp;
+        const tone = getEffectiveTone(recordedTarget, config.getGrammarTone(), config.getAppContextEnabled());
         try {
-          rawText = await grammar.correctGrammar(rawText, config.getGrammarTone());
+          rawText = await grammar.correctGrammar(rawText, tone);
         } catch (err) {
           console.warn('Grammar formatting failed, using raw text:', err.message);
         }
@@ -1587,6 +1691,14 @@ function registerIPC() {
 
       let text = formatTranscription(rawText);
       text = snippets.applySnippets(text);
+
+      // Voice commands: apply inline text replacements (e.g. "new line" → \n)
+      if (config.getVoiceCommandsEnabled()) {
+        const cmdResult = processVoiceCommands(text);
+        if (cmdResult.type === 'text') {
+          text = cmdResult.text;
+        }
+      }
 
       hideToast();
 

@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Search, X, PlayIcon, PauseIcon, RotateCcw } from 'lucide-react';
+import { Mic, Search, X, PlayIcon, PauseIcon, RotateCcw, Download } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TrashIcon } from '@/components/icons/TrashIcon';
@@ -7,6 +7,7 @@ import { CopyIcon } from '@/components/icons/CopyIcon';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import type { HistoryEntry, HotkeyConfig } from '@/lib/ipc';
 import { ipc } from '@/lib/ipc';
 import {
@@ -657,6 +658,26 @@ export function HomePage({ entries, totalWords, onCopy, onDelete, onRetry, hotke
                 <span className="w-px h-3 bg-border/60" />
                 <span>⏱️ {formatTimeSaved(stats.timeSaved)}</span>
               </button>
+            )}
+            {entries.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="flex items-center justify-center w-7 h-7 rounded-full bg-accent/50 hover:bg-accent/80 border border-border/40 transition-colors text-muted-foreground hover:text-foreground"
+                    title="Export transcriptions"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => ipc.exportHistory('markdown')}>
+                    Export as Markdown
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => ipc.exportHistory('text')}>
+                    Export as Plain Text
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             {entries.length > 0 && (
               <button

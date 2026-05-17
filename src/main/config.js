@@ -17,6 +17,9 @@ const DEFAULTS = {
   transcriptionEngine: 'parakeet',
   microphoneDeviceId: 'auto',
   hotkeyActivationDelay: 0,
+  voiceCommandsEnabled: false,
+  appContextEnabled: false,
+  meetingMode: false,
 };
 
 // Map from uiohook scan codes to keyspy key names (for migrating old configs)
@@ -117,6 +120,16 @@ function getHotkeyActivationDelay() {
   return Math.max(0, Math.min(ms, 5000));
 }
 function setHotkeyActivationDelay(ms) { setSetting('hotkeyActivationDelay', ms); }
+
+function getVoiceCommandsEnabled() { return getSetting('voiceCommandsEnabled') !== false; }
+function setVoiceCommandsEnabled(enabled) { setSetting('voiceCommandsEnabled', enabled); }
+
+function getAppContextEnabled() { return getSetting('appContextEnabled') !== false; }
+function setAppContextEnabled(enabled) { setSetting('appContextEnabled', enabled); }
+
+function getMeetingMode() { return getSetting('meetingMode') === true; }
+function setMeetingMode(enabled) { setSetting('meetingMode', enabled); }
+
 
 function getDictionary() {
   const rows = getDb()
@@ -256,6 +269,12 @@ module.exports = {
   setMicrophoneDeviceId,
   getHotkeyActivationDelay,
   setHotkeyActivationDelay,
+  getVoiceCommandsEnabled,
+  setVoiceCommandsEnabled,
+  getAppContextEnabled,
+  setAppContextEnabled,
+  getMeetingMode,
+  setMeetingMode,
   getDictionary,
   setDictionary,
   addDictionaryEntry,

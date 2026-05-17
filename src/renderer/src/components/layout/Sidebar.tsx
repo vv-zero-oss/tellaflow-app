@@ -99,9 +99,21 @@ interface SidebarProps {
   isLoading: boolean;
 }
 
+function IntelligenceIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" fill="none" {...props}>
+      <path d="M9 2C5.686 2 3 4.686 3 8c0 1.894.878 3.582 2.25 4.681V14.5a1.5 1.5 0 001.5 1.5h4.5a1.5 1.5 0 001.5-1.5v-1.819C14.122 11.582 15 9.894 15 8c0-3.314-2.686-6-6-6z" fill="currentColor" fillOpacity="0.3" />
+      <path d="M9 2C5.686 2 3 4.686 3 8c0 1.894.878 3.582 2.25 4.681V14.5a1.5 1.5 0 001.5 1.5h4.5a1.5 1.5 0 001.5-1.5v-1.819C14.122 11.582 15 9.894 15 8c0-3.314-2.686-6-6-6z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M7 14.5h4M7.5 16.5h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M9 5v3m0 0l-1.5 1.5M9 8l1.5 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon },
   { id: 'transcripts', label: 'Transcripts', icon: HomeIcon },
+  { id: 'intelligence', label: 'Intelligence', icon: IntelligenceIcon },
   { id: 'snippets', label: 'Snippets', icon: SnippetsIcon },
   { id: 'dictionary', label: 'Dictionary', icon: DictionaryIcon },
   { id: 'models', label: 'Models', icon: ModelsIcon },

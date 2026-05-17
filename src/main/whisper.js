@@ -87,8 +87,18 @@ async function _doTranscribe(pcmFloat32Array) {
     max_len: 0,
   };
 
+  // Build initial_prompt from programming mode + speaker vocabulary hints
+  const promptParts = [];
   if (config.getProgrammingMode()) {
-    opts.initial_prompt = 'Technical dictation with programming terminology.';
+    promptParts.push('Technical dictation with programming terminology.');
+  }
+  try {
+    const { getInitialPromptHint } = require('./speaker-profile');
+    const hint = getInitialPromptHint();
+    if (hint) promptParts.push(hint);
+  } catch {}
+  if (promptParts.length > 0) {
+    opts.initial_prompt = promptParts.join(' ');
   }
 
   const result = await whisperTranscribe(opts);

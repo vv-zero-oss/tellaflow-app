@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head><title>Meeting Capture</title></head>
+<body>
+<script>
+let audioCtx = null;
+let mediaStream = null;
+let scriptNode = null;
+let pcmChunks = [];
+let isCapturing = false;
+let stopRequested = false;
+let startingUp = false;
+
+const TARGET_SAMPLE_RATE = 16000;
+
+const CHUNK_THRESHOLD_SEC = 120;
+const CHUNK_INTERVAL_SEC = 30;
+const SAMPLES_PER_BUFFER = 4096;
+const CHUNK_THRESHOLD_BUFFERS = Math.ceil((CHUNK_THRESHOLD_SEC * TARGET_SAMPLE_RATE) / SAMPLES_PER_BUFFER);
+const CHUNK_INTERVAL_BUFFERS = Math.ceil((CHUNK_INTERVAL_SEC * TARGET_SAMPLE_RATE) / SAMPLES_PER_BUFFER);
+
+let chunkingActive = false;
+let sentChunkCount = 0;
+let buffersSinceLastFlush = 0;
+
+async function startCapture() {
+  if (isCapturing || startingUp) return;
+  startingUp = true;
+  stopRequested = false;
+  pcmChunks = [];
+  chunkingActive = false;
+  sentChunkCount = 0;
+  buffersSinceLastFlush = 0;
+
+  try {
+    // Capture desktop audio — Electron requires a video constraint too
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+        }
+      },
+      video: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          minWidth: 1,
+          maxWidth: 1,
+          minHeight: 1,
+          maxHeight: 1,
+        }
+      }
+    });
+    // We only need audio — drop video immediately
+    mediaStream.getVideoTracks().forEach(t => t.stop());
+
+    if (stopRequested) {
+      mediaStream.getAudioTracks().forEach(t => t.stop());
+      mediaStream = null;
+      startingUp = false;
+      window.tellaflow.sendAudio(new Float32Array(0));
+      return;
+    }
+
+    audioCtx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+    const source = audioCtx.createMediaStreamSource(mediaStream);
+
+    scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
+    scriptNode.onaudioprocess = (e) => {
+      if (!isCapturing) return;
+      const input = e.inputBuffer.getChannelData(0);
+      pcmChunks.push(new Float32Array(input));
+
+      let sum = 0;
+      for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+      const rms = Math.sqrt(sum / input.length);
+      window.tellaflow.sendAudioLevel(rms);
+
+      if (!chunkingActive) {
+        if (pcmChunks.length >= CHUNK_THRESHOLD_BUFFERS) {
+          chunkingActive = true;
+          flushChunk();
+        }
+      } else {
+        buffersSinceLastFlush++;
+        if (buffersSinceLastFlush >= CHUNK_INTERVAL_BUFFERS) {
+          flushChunk();
+        }
+      }
+    };
+
+    source.connect(scriptNode);
+    scriptNode.connect(audioCtx.destination);
+
+    isCapturing = true;
+    startingUp = false;
+
+    if (stopRequested) {
+      stopCapture();
+    }
+  } catch (err) {
+    console.error('System audio capture failed:', err);
+    startingUp = false;
+    isCapturing = false;
+    try { window.tellaflow.sendAudio(new Float32Array(0)); } catch {}
+  }
+}
+
+function flushChunk() {
+  const unsent = pcmChunks.slice(sentChunkCount);
+  if (unsent.length === 0) return;
+  const totalLength = unsent.reduce((sum, c) => sum + c.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  for (const chunk of unsent) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  sentChunkCount = pcmChunks.length;
+  buffersSinceLastFlush = 0;
+  window.tellaflow.sendAudioChunk(merged);
+}
+
+function stopCapture() {
+  if (startingUp) {
+    stopRequested = true;
+    return;
+  }
+  if (!isCapturing) return;
+  isCapturing = false;
+
+  if (scriptNode) { scriptNode.disconnect(); scriptNode = null; }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+
+  const wasChunking = chunkingActive;
+  const sliceStart = wasChunking ? sentChunkCount : 0;
+  const remaining = pcmChunks.slice(sliceStart);
+
+  const totalLength = remaining.reduce((sum, c) => sum + c.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  for (const chunk of remaining) { merged.set(chunk, offset); offset += chunk.length; }
+
+  pcmChunks = [];
+  chunkingActive = false;
+  sentChunkCount = 0;
+  buffersSinceLastFlush = 0;
+
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+
+  if (!wasChunking) {
+    let rms = 0;
+    for (let i = 0; i < merged.length; i++) rms += merged[i] * merged[i];
+    rms = Math.sqrt(rms / (merged.length || 1));
+    if (rms < 0.005) {
+      window.tellaflow.sendAudio(new Float32Array(0));
+      return;
+    }
+  }
+
+  window.tellaflow.sendAudio(merged);
+}
+
+window.tellaflow.onStartRecording(() => startCapture());
+window.tellaflow.onStopRecording(() => stopCapture());
+window.tellaflow.sendCaptureReady();
+</script>
+</body>
+</html>
