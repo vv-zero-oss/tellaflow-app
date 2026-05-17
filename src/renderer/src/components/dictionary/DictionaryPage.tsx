@@ -67,15 +67,29 @@ export function DictionaryPage() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <div className="px-7 pt-12 pb-4 [-webkit-app-region:drag]">
-        <h2 className="text-xl font-bold tracking-tight">Dictionary</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Add word replacements for commonly misheard words due to accent or pronunciation.
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-bold tracking-tight">Dictionary</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Add word replacements for commonly misheard words due to accent or pronunciation.
+            </p>
+          </div>
+          <div className="[-webkit-app-region:no-drag] shrink-0 mt-0.5">
+            <DictionaryPacksCarousel
+              packs={packs}
+              loading={packsLoading}
+              error={packsError}
+              packBusy={packBusy}
+              onPreview={setPreviewPack}
+              onInstall={runInstall}
+              onUninstall={runUninstall}
+            />
+          </div>
+        </div>
       </div>
 
         <div className="min-w-0 max-w-full px-7 pb-6 overflow-scroll">
-      
-        
+
           <Well className="mb-7">
             <WellHeader>
               <WellTitle>Add Entry</WellTitle>
@@ -105,15 +119,6 @@ export function DictionaryPage() {
               </WellItem>
             </WellCard>
           </Well>
-          <DictionaryPacksCarousel
-            packs={packs}
-            loading={packsLoading}
-            error={packsError}
-            packBusy={packBusy}
-            onPreview={setPreviewPack}
-            onInstall={runInstall}
-            onUninstall={runUninstall}
-          />
           <Well>
             <WellHeader>
               <WellTitle>Entries ({entries.length})</WellTitle>
