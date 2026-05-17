@@ -1,6 +1,6 @@
 {
   "name": "tellaflow",
-  "version": "0.7.5",
+  "version": "0.8.0",
   "description": "macOS menubar dictation app powered by Whisper",
   "main": "src/main/index.js",
   "scripts": {
