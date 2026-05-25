@@ -149,27 +149,6 @@ export function SystemSettings({ config, refreshConfig }: SystemSettingsProps) {
             checked={config.audioSpectralDenoise ?? false}
             onCheckedChange={handleAudioSpectralDenoise}
           />
-          {micMode?.supported && (
-            <WellItem>
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <span className="text-sm">Apple Voice Isolation</span>
-                  <p className="text-xs text-muted-foreground/60 mt-0.5">
-                    {micMode.active === 'voice-isolation'
-                      ? 'Active — ML-powered voice isolation is enhancing your mic'
-                      : 'Uses Apple\'s on-device ML to isolate your voice from all background noise'}
-                  </p>
-                </div>
-                {micMode.active === 'voice-isolation' ? (
-                  <span className="text-xs font-medium text-success shrink-0">On</span>
-                ) : (
-                  <Button variant="outline" size="sm" onClick={handleOpenMicModePicker}>
-                    Enable
-                  </Button>
-                )}
-              </div>
-            </WellItem>
-          )}
         </WellCard>
       </Well>
     </>
