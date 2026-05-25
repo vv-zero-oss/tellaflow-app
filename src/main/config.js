@@ -17,6 +17,8 @@ const DEFAULTS = {
   transcriptionEngine: 'parakeet',
   microphoneDeviceId: 'auto',
   hotkeyActivationDelay: 0,
+  audioNoiseReduction: true,
+  audioSpectralDenoise: false,
 };
 
 // Map from uiohook scan codes to keyspy key names (for migrating old configs)
@@ -117,6 +119,12 @@ function getHotkeyActivationDelay() {
   return Math.max(0, Math.min(ms, 5000));
 }
 function setHotkeyActivationDelay(ms) { setSetting('hotkeyActivationDelay', ms); }
+
+function getAudioNoiseReduction() { return getSetting('audioNoiseReduction') !== false; }
+function setAudioNoiseReduction(enabled) { setSetting('audioNoiseReduction', enabled); }
+
+function getAudioSpectralDenoise() { return getSetting('audioSpectralDenoise') === true; }
+function setAudioSpectralDenoise(enabled) { setSetting('audioSpectralDenoise', enabled); }
 
 function getDictionary() {
   const rows = getDb()
@@ -256,6 +264,10 @@ module.exports = {
   setMicrophoneDeviceId,
   getHotkeyActivationDelay,
   setHotkeyActivationDelay,
+  getAudioNoiseReduction,
+  setAudioNoiseReduction,
+  getAudioSpectralDenoise,
+  setAudioSpectralDenoise,
   getDictionary,
   setDictionary,
   addDictionaryEntry,

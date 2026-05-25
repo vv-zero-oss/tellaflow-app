@@ -2,7 +2,7 @@
  * Lightweight audio preprocessing for 16kHz Float32 PCM.
  * Pure JS, zero dependencies.
  *
- * Pipeline: trimSilence -> normalizeVolume -> (Whisper)
+ * Pipeline: estimateNoiseFloor -> softNoiseGate -> trimSilence -> normalizeVolume -> (Whisper)
  */
 
 const SAMPLE_RATE = 16000;
@@ -20,12 +20,41 @@ const MAX_INTERNAL_SILENCE_FRAMES = Math.ceil(
 );
 
 /**
+ * Estimate the noise floor from the first 200ms of audio.
+ * Returns an adaptive RMS threshold (at least 0.005) based on the median
+ * frame energy in the initial segment. Falls back to SILENCE_THRESHOLD
+ * when the audio is too short for a reliable estimate.
+ */
+function estimateNoiseFloor(pcm) {
+  if (!pcm || pcm.length < FRAME_SIZE) return SILENCE_THRESHOLD;
+
+  const sampleWindow = Math.min(pcm.length, Math.floor(0.2 * SAMPLE_RATE)); // 200ms
+  const numFrames = Math.floor(sampleWindow / FRAME_SIZE);
+  if (numFrames === 0) return SILENCE_THRESHOLD;
+
+  const energies = [];
+  for (let f = 0; f < numFrames; f++) {
+    const start = f * FRAME_SIZE;
+    let sumSq = 0;
+    for (let i = start; i < start + FRAME_SIZE; i++) {
+      sumSq += pcm[i] * pcm[i];
+    }
+    energies.push(Math.sqrt(sumSq / FRAME_SIZE));
+  }
+
+  energies.sort((a, b) => a - b);
+  const median = energies[Math.floor(energies.length / 2)];
+  return Math.max(median * 2.5, 0.005);
+}
+
+/**
  * Trim leading/trailing silence and compress long internal silence gaps.
- * Uses simple RMS energy-based voice activity detection.
+ * Uses adaptive RMS energy + zero-crossing rate for voice activity detection.
  */
 function trimSilence(pcm) {
   if (!pcm || pcm.length < FRAME_SIZE) return pcm;
 
+  const adaptiveThreshold = estimateNoiseFloor(pcm);
   const numFrames = Math.floor(pcm.length / FRAME_SIZE);
   const frameEnergy = new Float32Array(numFrames);
   const isVoice = new Uint8Array(numFrames);
@@ -33,11 +62,17 @@ function trimSilence(pcm) {
   for (let f = 0; f < numFrames; f++) {
     const start = f * FRAME_SIZE;
     let sumSq = 0;
+    let zeroCrossings = 0;
     for (let i = start; i < start + FRAME_SIZE; i++) {
       sumSq += pcm[i] * pcm[i];
+      if (i > start && ((pcm[i] >= 0) !== (pcm[i - 1] >= 0))) {
+        zeroCrossings++;
+      }
     }
     frameEnergy[f] = Math.sqrt(sumSq / FRAME_SIZE);
-    isVoice[f] = frameEnergy[f] >= SILENCE_THRESHOLD ? 1 : 0;
+    const hasEnergy = frameEnergy[f] >= adaptiveThreshold;
+    const hasVoicelikeZCR = zeroCrossings >= 5 && zeroCrossings <= 80;
+    isVoice[f] = (hasEnergy && hasVoicelikeZCR) ? 1 : 0;
   }
 
   // Find first and last voiced frames
@@ -78,6 +113,51 @@ function trimSilence(pcm) {
 }
 
 /**
+ * Soft noise gate that attenuates frames below the noise floor.
+ * Frames with RMS above gateThreshold (1.5x noiseFloor) pass through
+ * unchanged. Frames at or below the noiseFloor are reduced to gateRatio
+ * (10%). Frames in between are linearly interpolated.
+ */
+function softNoiseGate(pcm, noiseFloor) {
+  if (!pcm || pcm.length < FRAME_SIZE || noiseFloor <= 0) return pcm;
+
+  const out = new Float32Array(pcm.length);
+  const numFrames = Math.floor(pcm.length / FRAME_SIZE);
+  const gateThreshold = noiseFloor * 1.5;
+  const gateRatio = 0.1;
+
+  for (let f = 0; f < numFrames; f++) {
+    const start = f * FRAME_SIZE;
+    let sumSq = 0;
+    for (let i = start; i < start + FRAME_SIZE; i++) {
+      sumSq += pcm[i] * pcm[i];
+    }
+    const rms = Math.sqrt(sumSq / FRAME_SIZE);
+
+    let gain;
+    if (rms >= gateThreshold) {
+      gain = 1.0;
+    } else if (rms <= noiseFloor) {
+      gain = gateRatio;
+    } else {
+      gain = gateRatio + (1.0 - gateRatio) * (rms - noiseFloor) / (gateThreshold - noiseFloor);
+    }
+
+    for (let i = start; i < start + FRAME_SIZE; i++) {
+      out[i] = pcm[i] * gain;
+    }
+  }
+
+  // Copy remaining samples unchanged
+  const tailStart = numFrames * FRAME_SIZE;
+  for (let i = tailStart; i < pcm.length; i++) {
+    out[i] = pcm[i];
+  }
+
+  return out;
+}
+
+/**
  * Peak-normalize audio to a target amplitude.
  * Helps with quiet or inconsistent microphone input.
  */
@@ -102,4 +182,4 @@ function normalizeVolume(pcm, targetPeak = 0.9) {
   return out;
 }
 
-module.exports = { trimSilence, normalizeVolume };
+module.exports = { trimSilence, normalizeVolume, estimateNoiseFloor, softNoiseGate };

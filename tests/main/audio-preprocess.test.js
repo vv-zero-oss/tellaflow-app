@@ -14,7 +14,12 @@ function silentPcm(frames) {
 
 function loudPcm(frames, amplitude = 0.5) {
   const pcm = new Float32Array(frames * FRAME_SIZE);
-  pcm.fill(amplitude);
+  // Generate a sine wave so the signal has realistic zero-crossing rate
+  // (a constant fill has ZCR=0 and would fail the improved VAD).
+  const freq = 200; // Hz — typical speech fundamental
+  for (let i = 0; i < pcm.length; i++) {
+    pcm[i] = amplitude * Math.sin(2 * Math.PI * freq * i / SAMPLE_RATE);
+  }
   return pcm;
 }
 
@@ -56,9 +61,11 @@ describe('trimSilence', () => {
   });
 
   it('trims trailing silence frames', () => {
+    // 8 frames of leading silence covers the 200ms noise estimation window
+    const leading = silentPcm(8);
     const speech = loudPcm(3);
     const trailing = silentPcm(5);
-    const input = concat(speech, trailing);
+    const input = concat(leading, speech, trailing);
 
     const result = trimSilence(input);
     expect(result.length).toBeLessThan(input.length);
@@ -83,10 +90,12 @@ describe('trimSilence', () => {
   });
 
   it('compresses long internal silence gaps', () => {
+    // 8 frames of leading silence covers the 200ms noise estimation window
+    const leading = silentPcm(8);
     const speech1 = loudPcm(3);
     const longGap = silentPcm(15); // 15 frames — over threshold
     const speech2 = loudPcm(3);
-    const input = concat(speech1, longGap, speech2);
+    const input = concat(leading, speech1, longGap, speech2);
 
     const result = trimSilence(input);
     expect(result.length).toBeLessThan(input.length);

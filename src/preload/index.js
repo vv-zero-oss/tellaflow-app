@@ -95,6 +95,14 @@ contextBridge.exposeInMainWorld('tellaflow', {
   onParakeetDownloadError: (cb) => { const h = (_, e) => cb(e); ipcRenderer.on('parakeet-download-error', h); return () => ipcRenderer.removeListener('parakeet-download-error', h); },
   onParakeetStatusChanged: (cb) => { const h = (_, s) => cb(s); ipcRenderer.on('parakeet-status-changed', h); return () => ipcRenderer.removeListener('parakeet-status-changed', h); },
 
+  // Audio quality settings
+  setAudioNoiseReduction: (enabled) => ipcRenderer.send('set-audio-noise-reduction', enabled),
+  setAudioSpectralDenoise: (enabled) => ipcRenderer.send('set-audio-spectral-denoise', enabled),
+
+  // Apple Voice Isolation mic mode
+  getMicModeStatus: () => ipcRenderer.invoke('get-mic-mode-status'),
+  openMicModePicker: () => ipcRenderer.invoke('open-mic-mode-picker'),
+
   // Microphone device selection
   setMicrophoneDeviceId: (deviceId) => ipcRenderer.send('set-microphone-device-id', deviceId),
 

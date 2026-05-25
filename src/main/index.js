@@ -21,7 +21,7 @@ const parakeet = require('./parakeet');
 const { pasteText } = require('./paste');
 const permissions = require('./permissions');
 const models = require('./models');
-const { trimSilence, normalizeVolume } = require('./audio-preprocess');
+const { trimSilence, normalizeVolume, estimateNoiseFloor, softNoiseGate } = require('./audio-preprocess');
 const { encodePcmToWav, decodeWavToPcm } = require('./audio-utils');
 const { formatTranscription } = require('./formatter');
 const grammar = require('./grammar');
@@ -601,7 +601,7 @@ function startHotkeyListener() {
 
 function createAudioCaptureWindow() {
   if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
-    audioCaptureWindow.webContents.send('start-recording', { deviceId: config.getMicrophoneDeviceId() });
+    audioCaptureWindow.webContents.send('start-recording', { deviceId: config.getMicrophoneDeviceId(), audioNoiseReduction: config.getAudioNoiseReduction() });
     return;
   }
 
@@ -799,6 +799,8 @@ function registerIPC() {
       parakeetAvailable: models.isParakeetAvailable(),
       microphoneDeviceId: config.getMicrophoneDeviceId(),
       hotkeyActivationDelay: config.getHotkeyActivationDelay(),
+      audioNoiseReduction: config.getAudioNoiseReduction(),
+      audioSpectralDenoise: config.getAudioSpectralDenoise(),
     };
   });
 
@@ -833,6 +835,20 @@ function registerIPC() {
     config.setMicrophoneDeviceId(deviceId);
     sendToMainWindow('config-changed', { microphoneDeviceId: deviceId });
   });
+
+  ipcMain.on('set-audio-noise-reduction', (_, enabled) => {
+    config.setAudioNoiseReduction(enabled);
+    sendToMainWindow('config-changed', { audioNoiseReduction: enabled });
+  });
+  ipcMain.on('set-audio-spectral-denoise', (_, enabled) => {
+    config.setAudioSpectralDenoise(enabled);
+    sendToMainWindow('config-changed', { audioSpectralDenoise: enabled });
+  });
+
+  // Apple Voice Isolation mic mode
+  const micMode = require('./mic-mode');
+  ipcMain.handle('get-mic-mode-status', () => micMode.getStatus());
+  ipcMain.handle('open-mic-mode-picker', () => micMode.openPicker());
 
   ipcMain.handle('get-parakeet-status', () => models.getParakeetStatus());
 
@@ -1406,21 +1422,34 @@ function registerIPC() {
     if (pendingStop) {
       console.log('Audio window ready but stop was pending — start+stop immediately.');
       pendingStop = false;
-      audioCaptureWindow.webContents.send('start-recording', { deviceId: config.getMicrophoneDeviceId() });
+      audioCaptureWindow.webContents.send('start-recording', { deviceId: config.getMicrophoneDeviceId(), audioNoiseReduction: config.getAudioNoiseReduction() });
       setTimeout(() => {
         if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
           audioCaptureWindow.webContents.send('stop-recording');
         }
       }, 150);
     } else {
-      audioCaptureWindow.webContents.send('start-recording', { deviceId: config.getMicrophoneDeviceId() });
+      audioCaptureWindow.webContents.send('start-recording', { deviceId: config.getMicrophoneDeviceId(), audioNoiseReduction: config.getAudioNoiseReduction() });
     }
   });
 
   // Shared transcription helper: preprocess + transcribe a raw PCM chunk.
   // Used by both the streaming chunk handler and the final assembly path.
   async function transcribeRaw(pcm) {
-    let processed = trimSilence(pcm);
+    let processed = pcm;
+    if (config.getAudioSpectralDenoise()) {
+      try {
+        const { spectralDenoise } = require('./spectral-denoise');
+        processed = spectralDenoise(processed);
+      } catch (err) {
+        console.warn('Spectral denoise failed, skipping:', err.message);
+      }
+    }
+    if (config.getAudioNoiseReduction()) {
+      const noiseFloor = estimateNoiseFloor(processed);
+      processed = softNoiseGate(processed, noiseFloor);
+    }
+    processed = trimSilence(processed);
     processed = normalizeVolume(processed);
     let text;
     if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
@@ -1707,7 +1736,12 @@ async function processWavFile(filePath) {
 
     console.log(`WAV loaded: ${sampleRate}Hz -> 16kHz, ${mono16k.length} samples`);
 
-    let pcm = trimSilence(mono16k);
+    let pcm = mono16k;
+    if (config.getAudioNoiseReduction()) {
+      const noiseFloor = estimateNoiseFloor(pcm);
+      pcm = softNoiseGate(pcm, noiseFloor);
+    }
+    pcm = trimSilence(pcm);
     pcm = normalizeVolume(pcm);
     let rawText;
     if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {

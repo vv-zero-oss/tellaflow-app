@@ -27,7 +27,7 @@ let chunkingActive = false;
 let sentChunkCount = 0;         // how many pcmChunks entries have been sent
 let buffersSinceLastFlush = 0;  // buffers accumulated since last chunk flush
 
-async function startCapture(deviceId) {
+async function startCapture(deviceId, audioNoiseReduction) {
   if (isCapturing || startingUp) return;
   startingUp = true;
   stopRequested = false;
@@ -36,7 +36,7 @@ async function startCapture(deviceId) {
   sentChunkCount = 0;
   buffersSinceLastFlush = 0;
 
-  const audioConstraints = { sampleRate: { ideal: TARGET_SAMPLE_RATE }, channelCount: 1, echoCancellation: true };
+  const audioConstraints = { sampleRate: { ideal: TARGET_SAMPLE_RATE }, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   if (deviceId && deviceId !== 'auto') {
     audioConstraints.deviceId = { exact: deviceId };
   }
@@ -49,7 +49,7 @@ async function startCapture(deviceId) {
       if (deviceId && deviceId !== 'auto') {
         console.warn('Selected mic unavailable, falling back to default:', deviceErr.message);
         mediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: { sampleRate: { ideal: TARGET_SAMPLE_RATE }, channelCount: 1, echoCancellation: true }
+          audio: { sampleRate: { ideal: TARGET_SAMPLE_RATE }, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
         });
       } else {
         throw deviceErr;
@@ -94,7 +94,32 @@ async function startCapture(deviceId) {
       }
     };
 
-    source.connect(scriptNode);
+    // Build audio graph: optionally insert filters for noise reduction
+    if (audioNoiseReduction) {
+      const highpass = audioCtx.createBiquadFilter();
+      highpass.type = 'highpass';
+      highpass.frequency.value = 80;
+      highpass.Q.value = 0.7;
+
+      const lowpass = audioCtx.createBiquadFilter();
+      lowpass.type = 'lowpass';
+      lowpass.frequency.value = 7500;
+      lowpass.Q.value = 0.7;
+
+      const compressor = audioCtx.createDynamicsCompressor();
+      compressor.threshold.value = -24;
+      compressor.knee.value = 12;
+      compressor.ratio.value = 4;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.25;
+
+      source.connect(highpass);
+      highpass.connect(lowpass);
+      lowpass.connect(compressor);
+      compressor.connect(scriptNode);
+    } else {
+      source.connect(scriptNode);
+    }
     scriptNode.connect(audioCtx.destination);
 
     isCapturing = true;
@@ -198,7 +223,7 @@ function stopCapture() {
   window.tellaflow.sendAudio(merged);
 }
 
-window.tellaflow.onStartRecording((data) => startCapture(data?.deviceId));
+window.tellaflow.onStartRecording((data) => startCapture(data?.deviceId, data?.audioNoiseReduction !== false));
 window.tellaflow.onStopRecording(() => stopCapture());
 
 window.tellaflow.sendCaptureReady();

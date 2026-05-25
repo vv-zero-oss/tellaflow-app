@@ -55,7 +55,9 @@ files:
   - src/main/**/*
   - src/preload/**/*
   - src/renderer/audio-capture.html
+  - src/renderer/meeting-capture.html
   - src/renderer/panel.html
+  - native/mic-mode/mic-mode
   - dist/renderer/**/*
   - node_modules/**/*
   # Exclude cross-platform whisper binaries (arm64-only build)
@@ -67,6 +69,7 @@ files:
   - "!node_modules/node-llama-cpp/llama/llama.cpp"
   - "!node_modules/node-llama-cpp/llama/xpack"
 asarUnpack:
+  - native/mic-mode/mic-mode
   - node_modules/@kutalia/whisper-node-addon/**/*
   - node_modules/node-llama-cpp/**/*
   - node_modules/@node-llama-cpp/**/*

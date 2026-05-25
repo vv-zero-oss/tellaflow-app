@@ -225,7 +225,7 @@ const BAR_COLORS = [
   '#60a5fa', // blue
 ];
 
-const BAR_MAX_PX = 80;
+const BAR_MAX_PX = 56;
 
 function WeeklyBarChart({ data, labels }: { data: number[]; labels: string[] }) {
   const max = Math.max(...data, 1);
@@ -451,12 +451,14 @@ export function DashboardPage() {
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
           </p>
         </div>
-        {config.model && (
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
-            <span>🤖</span>
-            <span className="truncate max-w-[90px]">{config.model}</span>
-          </div>
-        )}
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full">
+          <img
+            src={`${import.meta.env.BASE_URL}${config.transcriptionEngine === 'parakeet' ? 'logo-nvidia.png' : 'logo-openai.png'}`}
+            alt={config.transcriptionEngine === 'parakeet' ? 'Parakeet' : 'Whisper'}
+            title={config.transcriptionEngine === 'parakeet' ? 'Currently using: Parakeet Model' : 'Currently using: Whisper Model'}
+            className="w-8 h-8 rounded-full object-cover"
+          />
+        </div>
       </motion.div>
 
       <div className="flex flex-col gap-3 px-4 pb-4">
@@ -490,7 +492,7 @@ export function DashboardPage() {
           custom={4} variants={card} initial="hidden" animate="show"
           className="bg-card rounded-lg p-4 select-none shadow-xxl"
         >
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-1.5">
             <div>
               <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest">Weekly Words</div>
               <div className="text-[22px] font-black text-foreground leading-tight">

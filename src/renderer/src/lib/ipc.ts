@@ -27,6 +27,8 @@ export interface AppConfig {
   parakeetAvailable?: boolean;
   microphoneDeviceId?: string;
   hotkeyActivationDelay?: number;
+  audioNoiseReduction?: boolean;
+  audioSpectralDenoise?: boolean;
 }
 
 export interface ParakeetModelInfo {
@@ -174,6 +176,10 @@ interface TellaflowAPI {
   getTranslationEnabled: () => Promise<boolean>;
   setTranslationEnabled: (enabled: boolean) => void;
   getTranslationLanguage: () => Promise<string>;
+  setAudioNoiseReduction: (enabled: boolean) => void;
+  setAudioSpectralDenoise: (enabled: boolean) => void;
+  getMicModeStatus: () => Promise<{ supported: boolean; active?: string; preferred?: string; error?: string }>;
+  openMicModePicker: () => Promise<{ supported: boolean; output?: string; error?: string }>;
   setTranslationLanguage: (lang: string) => void;
 
   getDictionary: () => Promise<DictionaryEntry[]>;
