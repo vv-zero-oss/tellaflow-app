@@ -19,6 +19,8 @@ const DEFAULTS = {
   translationEnabled: false,
   translationLanguage: 'ja',
   transcriptionEngine: 'parakeet',
+  // Which Parakeet model the parakeet engine uses: 'v2' (bundled) or 'unified'.
+  parakeetVariant: 'v2',
   microphoneDeviceId: 'auto',
   hotkeyActivationDelay: 0,
   autoLearnEnabled: true,
@@ -148,6 +150,13 @@ function setTranslationEnabled(enabled) { setSetting('translationEnabled', enabl
 
 function getTranslationLanguage() { return getSetting('translationLanguage') || 'ja'; }
 function setTranslationLanguage(lang) { setSetting('translationLanguage', lang); }
+
+const PARAKEET_VARIANT_IDS = ['v2', 'unified'];
+function getParakeetVariant() {
+  const v = getSetting('parakeetVariant');
+  return PARAKEET_VARIANT_IDS.includes(v) ? v : DEFAULTS.parakeetVariant;
+}
+function setParakeetVariant(v) { if (PARAKEET_VARIANT_IDS.includes(v)) setSetting('parakeetVariant', v); }
 
 function getTranscriptionEngine() { return getSetting('transcriptionEngine') || 'parakeet'; }
 function setTranscriptionEngine(engine) { setSetting('transcriptionEngine', engine); }
@@ -365,6 +374,8 @@ module.exports = {
   setHotkey,
   getCommandHotkey,
   setCommandHotkey,
+  getParakeetVariant,
+  setParakeetVariant,
   getIslandPlacement,
   setIslandPlacement,
   getIslandMaterial,

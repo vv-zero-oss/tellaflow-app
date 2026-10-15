@@ -8,6 +8,9 @@ const MODEL_REGISTRY = {
   base:   { file: 'ggml-base.bin',      size: '145 MB',  bytes: 148_000_000,   quality: 'Fair' },
   small:  { file: 'ggml-small.bin',     size: '460 MB',  bytes: 488_000_000,   quality: 'Good' },
   medium: { file: 'ggml-medium.bin',    size: '1.5 GB',  bytes: 1_533_000_000, quality: 'Great' },
+  // large-v3-turbo, 5-bit quantised: near large-v3 accuracy at a fraction of
+  // the size and several times the speed. Transcribes only (no translation).
+  turbo:  { file: 'ggml-large-v3-turbo-q5_0.bin', size: '574 MB', bytes: 574_041_195, quality: 'Best' },
   large:  { file: 'ggml-large-v3.bin',  size: '3 GB',    bytes: 3_095_000_000, quality: 'Best' },
 };
 
@@ -254,37 +257,68 @@ function isDownloading(modelKey) {
   return !!activeDownloads[modelKey];
 }
 
-// ── Parakeet TDT 0.6b v2 ────────────────────────────────────────────────────
-// The model ships as a single tarball containing 4 files:
-//   encoder.int8.onnx (~622 MB), decoder.int8.onnx, joiner.int8.onnx, tokens.txt
-// Extracted to userData/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/
+// ── Parakeet (NVIDIA NeMo transducers via sherpa-onnx) ──────────────────────
+// Each variant ships as a tarball holding the same 4 files:
+//   encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx, tokens.txt
+// extracted to userData/models/<dir>/. v2 is bundled with the app; the others
+// are downloaded on demand. The active one is config `parakeetVariant`.
 
-const PARAKEET_TARBALL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2';
-const PARAKEET_DIR_NAME = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8';
+const ASR_RELEASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models';
+const PARAKEET_VARIANTS = {
+  v2: {
+    label: 'Parakeet TDT 0.6b v2',
+    dir: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
+    url: `${ASR_RELEASE}/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2`,
+    tmpName: 'parakeet-tdt.tar.bz2',
+    totalBytes: 662_000_000,
+    size: '~632 MB',
+    quality: 'Excellent',
+  },
+  unified: {
+    label: 'Parakeet Unified 0.6b',
+    dir: 'sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming',
+    url: `${ASR_RELEASE}/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming.tar.bz2`,
+    tmpName: 'parakeet-unified.tar.bz2',
+    totalBytes: 501_350_460,
+    size: '~500 MB',
+    quality: 'Best',
+  },
+};
 const PARAKEET_MODEL_KEY = 'parakeet-tdt-0.6b-v2';
-const PARAKEET_TOTAL_BYTES = 662_000_000;
 const PARAKEET_FILES = ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'];
 
-let parakeetDownload = null;
-let parakeetCancelled = false;
+const parakeetDownloads = {}; // variant → { request, response, writeStream, downloaded, total }
+const parakeetCancelled = new Set();
 
-function getParakeetDir() {
+/** The variant the app should use (falls back to v2 for unknown values). */
+function getActiveParakeetVariant() {
+  const v = require('./config').getParakeetVariant();
+  return PARAKEET_VARIANTS[v] ? v : 'v2';
+}
+
+function variantInfo(variant) {
+  return PARAKEET_VARIANTS[variant] || PARAKEET_VARIANTS[getActiveParakeetVariant()];
+}
+
+function hasParakeetFiles(dir) {
+  return PARAKEET_FILES.every((f) => fs.existsSync(path.join(dir, f)));
+}
+
+function getParakeetDir(variant = getActiveParakeetVariant()) {
+  const info = variantInfo(variant);
   // Check bundled models first (shipped with app)
-  const bundled = path.join(getBundledModelsDir(), PARAKEET_DIR_NAME);
-  if (fs.existsSync(bundled) && PARAKEET_FILES.every(f => fs.existsSync(path.join(bundled, f)))) {
-    return bundled;
-  }
+  const bundled = path.join(getBundledModelsDir(), info.dir);
+  if (hasParakeetFiles(bundled)) return bundled;
   // Fall back to user-downloaded models
-  return path.join(getUserModelsDir(), PARAKEET_DIR_NAME);
+  return path.join(getUserModelsDir(), info.dir);
 }
 
-function isParakeetAvailable() {
-  const dir = getParakeetDir();
-  return PARAKEET_FILES.every(f => fs.existsSync(path.join(dir, f)));
+function isParakeetAvailable(variant = getActiveParakeetVariant()) {
+  return hasParakeetFiles(getParakeetDir(variant));
 }
 
-function getParakeetFilePaths() {
-  const dir = getParakeetDir();
+function getParakeetFilePaths(variant = getActiveParakeetVariant()) {
+  const dir = getParakeetDir(variant);
   return {
     encoder: path.join(dir, 'encoder.int8.onnx'),
     decoder: path.join(dir, 'decoder.int8.onnx'),
@@ -293,23 +327,27 @@ function getParakeetFilePaths() {
   };
 }
 
-function getParakeetPartialSize() {
-  const tmpPath = path.join(getUserModelsDir(), 'parakeet-tdt.tar.bz2.tmp');
-  try { return fs.statSync(tmpPath).size; } catch { return 0; }
+function parakeetTmpPath(variant) {
+  return path.join(getUserModelsDir(), variantInfo(variant).tmpName + '.tmp');
 }
 
-function getParakeetStatus() {
-  const available = isParakeetAvailable();
-  const dl = parakeetDownload;
+function getParakeetPartialSize(variant) {
+  try { return fs.statSync(parakeetTmpPath(variant)).size; } catch { return 0; }
+}
+
+function getParakeetStatus(variant = getActiveParakeetVariant()) {
+  const info = variantInfo(variant);
+  const available = isParakeetAvailable(variant);
+  const dl = parakeetDownloads[variant];
   let status = available ? 'downloaded' : 'not_downloaded';
   let downloaded = 0;
-  const total = (dl && dl.total) || PARAKEET_TOTAL_BYTES;
+  const total = (dl && dl.total) || info.totalBytes;
 
   if (dl) {
     status = 'downloading';
     downloaded = dl.downloaded;
   } else if (!available) {
-    const partial = getParakeetPartialSize();
+    const partial = getParakeetPartialSize(variant);
     if (partial > 0) {
       status = 'paused';
       downloaded = partial;
@@ -317,8 +355,10 @@ function getParakeetStatus() {
   }
 
   return {
-    size: '~632 MB',
-    quality: 'Excellent',
+    variant,
+    label: info.label,
+    size: info.size,
+    quality: info.quality,
     available,
     status,
     downloaded,
@@ -326,14 +366,17 @@ function getParakeetStatus() {
   };
 }
 
-function startParakeetDownload({ onProgress, onComplete, onError }) {
-  if (isParakeetAvailable()) { onComplete?.(); return; }
-  if (parakeetDownload) { onError?.(new Error('Already downloading Parakeet')); return; }
+function startParakeetDownload(variant, { onProgress, onComplete, onError } = {}) {
+  if (typeof variant === 'object') { ({ onProgress, onComplete, onError } = variant); variant = 'v2'; }
+  if (!PARAKEET_VARIANTS[variant]) { onError?.(new Error(`Unknown Parakeet model: ${variant}`)); return; }
+  const info = PARAKEET_VARIANTS[variant];
+  if (isParakeetAvailable(variant)) { onComplete?.(); return; }
+  if (parakeetDownloads[variant]) { onError?.(new Error(`Already downloading ${info.label}`)); return; }
 
-  parakeetCancelled = false;
+  parakeetCancelled.delete(variant);
 
-  const tmpPath = path.join(getUserModelsDir(), 'parakeet-tdt.tar.bz2.tmp');
-  const finalPath = path.join(getUserModelsDir(), 'parakeet-tdt.tar.bz2');
+  const tmpPath = parakeetTmpPath(variant);
+  const finalPath = path.join(getUserModelsDir(), info.tmpName);
 
   let startByte = 0;
   try { startByte = fs.statSync(tmpPath).size; } catch {}
@@ -341,7 +384,7 @@ function startParakeetDownload({ onProgress, onComplete, onError }) {
   const MAX_REDIRECTS = 10;
   function doRequest(requestUrl, resumeFrom, redirectCount = 0) {
     if (redirectCount > MAX_REDIRECTS) {
-      parakeetDownload = null;
+      delete parakeetDownloads[variant];
       onError?.(new Error(`Too many redirects (>${MAX_REDIRECTS})`));
       return;
     }
@@ -362,8 +405,8 @@ function startParakeetDownload({ onProgress, onComplete, onError }) {
       }
 
       if (res.statusCode !== 200 && res.statusCode !== 206) {
-        parakeetDownload = null;
-        onError?.(new Error(`Parakeet download failed: HTTP ${res.statusCode}`));
+        delete parakeetDownloads[variant];
+        onError?.(new Error(`${info.label} download failed: HTTP ${res.statusCode}`));
         return;
       }
 
@@ -372,12 +415,12 @@ function startParakeetDownload({ onProgress, onComplete, onError }) {
         const range = res.headers['content-range'];
         if (range) {
           const m = range.match(/\/(\d+)$/);
-          totalBytes = m ? parseInt(m[1], 10) : PARAKEET_TOTAL_BYTES;
+          totalBytes = m ? parseInt(m[1], 10) : info.totalBytes;
         } else {
           totalBytes = resumeFrom + parseInt(res.headers['content-length'] || '0', 10);
         }
       } else {
-        totalBytes = parseInt(res.headers['content-length'], 10) || PARAKEET_TOTAL_BYTES;
+        totalBytes = parseInt(res.headers['content-length'], 10) || info.totalBytes;
         resumeFrom = 0;
       }
 
@@ -385,19 +428,19 @@ function startParakeetDownload({ onProgress, onComplete, onError }) {
       const flags = res.statusCode === 206 ? 'a' : 'w';
       const writeStream = fs.createWriteStream(tmpPath, { flags });
 
-      parakeetDownload = { request: req, response: res, writeStream, downloaded: downloadedBytes, total: totalBytes };
+      parakeetDownloads[variant] = { request: req, response: res, writeStream, downloaded: downloadedBytes, total: totalBytes };
 
       res.on('data', (chunk) => {
         downloadedBytes += chunk.length;
-        if (parakeetDownload) parakeetDownload.downloaded = downloadedBytes;
-        onProgress?.({ modelKey: PARAKEET_MODEL_KEY, downloaded: downloadedBytes, total: totalBytes, percent: Math.round((downloadedBytes / totalBytes) * 100) });
+        if (parakeetDownloads[variant]) parakeetDownloads[variant].downloaded = downloadedBytes;
+        onProgress?.({ modelKey: PARAKEET_MODEL_KEY, variant, downloaded: downloadedBytes, total: totalBytes, percent: Math.round((downloadedBytes / totalBytes) * 100) });
       });
 
       res.pipe(writeStream);
 
       writeStream.on('finish', () => {
-        if (parakeetCancelled) return;
-        parakeetDownload = null;
+        if (parakeetCancelled.has(variant)) return;
+        delete parakeetDownloads[variant];
 
         try { fs.renameSync(tmpPath, finalPath); } catch (err) { onError?.(err); return; }
 
@@ -406,7 +449,7 @@ function startParakeetDownload({ onProgress, onComplete, onError }) {
         execFile('tar', ['xf', finalPath, '-C', getUserModelsDir()], (err) => {
           try { fs.unlinkSync(finalPath); } catch {}
           if (err) { onError?.(err); return; }
-          if (isParakeetAvailable()) {
+          if (isParakeetAvailable(variant)) {
             onComplete?.();
           } else {
             onError?.(new Error('Extraction done but model files are missing'));
@@ -414,38 +457,38 @@ function startParakeetDownload({ onProgress, onComplete, onError }) {
         });
       });
 
-      writeStream.on('error', (err) => { parakeetDownload = null; onError?.(err); });
-      res.on('error', (err) => { parakeetDownload = null; onError?.(err); });
+      writeStream.on('error', (err) => { delete parakeetDownloads[variant]; onError?.(err); });
+      res.on('error', (err) => { delete parakeetDownloads[variant]; onError?.(err); });
     });
 
-    req.on('error', (err) => { parakeetDownload = null; onError?.(err); });
+    req.on('error', (err) => { delete parakeetDownloads[variant]; onError?.(err); });
   }
 
-  doRequest(PARAKEET_TARBALL_URL, startByte);
+  doRequest(info.url, startByte);
 }
 
-function cancelParakeetDownload() {
-  parakeetCancelled = true;
-  const dl = parakeetDownload;
+function cancelParakeetDownload(variant = 'v2') {
+  parakeetCancelled.add(variant);
+  const dl = parakeetDownloads[variant];
   if (dl) {
     try { dl.response.unpipe(dl.writeStream); } catch {}
     try { dl.response.destroy(); } catch {}
     try { dl.request.destroy(); } catch {}
     try { dl.writeStream.end(); } catch {}
-    parakeetDownload = null;
+    delete parakeetDownloads[variant];
   }
-  const tmpPath = path.join(getUserModelsDir(), 'parakeet-tdt.tar.bz2.tmp');
-  try { fs.unlinkSync(tmpPath); } catch {}
+  try { fs.unlinkSync(parakeetTmpPath(variant)); } catch {}
 }
 
-function deleteParakeet() {
-  cancelParakeetDownload();
-  const dir = getParakeetDir();
+/** Removes a downloaded variant. Bundled models are never deleted. */
+function deleteParakeet(variant = 'v2') {
+  cancelParakeetDownload(variant);
+  const dir = path.join(getUserModelsDir(), variantInfo(variant).dir);
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
-function isParakeetDownloading() {
-  return !!parakeetDownload;
+function isParakeetDownloading(variant) {
+  return variant ? !!parakeetDownloads[variant] : Object.keys(parakeetDownloads).length > 0;
 }
 
 module.exports = {
@@ -463,6 +506,8 @@ module.exports = {
   getUserModelsDir,
   // Parakeet
   PARAKEET_MODEL_KEY,
+  PARAKEET_VARIANTS,
+  getActiveParakeetVariant,
   getParakeetDir,
   getParakeetFilePaths,
   isParakeetAvailable,

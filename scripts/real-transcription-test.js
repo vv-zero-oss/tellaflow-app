@@ -14,7 +14,8 @@
  * Usage:
  *   node scripts/real-transcription-test.js <short.wav> <long.wav> [<very-long.wav>]
  * Models: resources/models/ggml-base.en.bin (or set WHISPER_MODEL) and
- *         resources/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/
+ *         resources/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/ (or set
+ *         PARAKEET_DIR, e.g. to the Parakeet Unified folder)
  */
 
 const path = require('path');
@@ -31,7 +32,7 @@ const ROOT = path.resolve(__dirname, '..');
 const platform = process.platform === 'darwin' ? 'mac' : process.platform;
 const ADDON_DIR = path.join(ROOT, 'node_modules/@kutalia/whisper-node-addon/dist', `${platform}-${process.arch}`);
 const WHISPER_MODEL = process.env.WHISPER_MODEL || path.join(ROOT, 'resources/models/ggml-base.en.bin');
-const PARAKEET_DIR = path.join(ROOT, 'resources/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8');
+const PARAKEET_DIR = process.env.PARAKEET_DIR || path.join(ROOT, 'resources/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8');
 const THREADS = Math.max(2, Math.min(8, os.cpus().length));
 
 const SPECS = {

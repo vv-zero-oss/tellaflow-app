@@ -629,6 +629,8 @@ function initCoreServices() {
         return added;
       },
       broadcastFailedJobs,
+      // The engine + model files the next transcription will use.
+      engineSpec: () => buildEngineSpec(),
       // Voice island: drive the real flows and read what it shows.
       island: {
         state: () => getCurrentToastState(),
@@ -1344,6 +1346,7 @@ function registerIPC() {
       translationLanguage: config.getTranslationLanguage(),
       transcriptionEngine: config.getTranscriptionEngine(),
       parakeetAvailable: models.isParakeetAvailable(),
+      parakeetVariant: config.getParakeetVariant(),
       microphoneDeviceId: config.getMicrophoneDeviceId(),
       hotkeyActivationDelay: config.getHotkeyActivationDelay(),
       autoLearnEnabled: config.getAutoLearnEnabled(),
@@ -1412,41 +1415,60 @@ function registerIPC() {
     sendToMainWindow('config-changed', { microphoneDeviceId: deviceId });
   });
 
-  ipcMain.handle('get-parakeet-status', () => models.getParakeetStatus());
+  // Parakeet variants: 'v2' (bundled) and 'unified'. Every call names one.
+  const parakeetVariantArg = (v) => (models.PARAKEET_VARIANTS[v] ? v : 'v2');
 
-  ipcMain.on('start-parakeet-download', () => {
-    models.startParakeetDownload({
+  ipcMain.handle('get-parakeet-status', (_, variant) => models.getParakeetStatus(parakeetVariantArg(variant)));
+
+  ipcMain.on('start-parakeet-download', (_, variant) => {
+    const v = parakeetVariantArg(variant);
+    models.startParakeetDownload(v, {
       onProgress: throttleProgress((p) => sendToMainWindow('parakeet-download-progress', p)),
       onComplete: () => {
-        sendToMainWindow('parakeet-status-changed', models.getParakeetStatus());
-        // Auto-load model after download
-        if (getActiveEngine() === 'parakeet') reloadEngine();
+        sendToMainWindow('parakeet-status-changed', models.getParakeetStatus(v));
+        // Auto-load the model after download if it's the one in use
+        if (getActiveEngine() === 'parakeet' && config.getParakeetVariant() === v) reloadEngine();
       },
       onError: (err) => {
         console.error('Parakeet download error:', err.message);
-        sendToMainWindow('parakeet-download-error', { error: err.message });
-        sendToMainWindow('parakeet-status-changed', models.getParakeetStatus());
+        sendToMainWindow('parakeet-download-error', { variant: v, error: err.message });
+        sendToMainWindow('parakeet-status-changed', models.getParakeetStatus(v));
       },
     });
-    sendToMainWindow('parakeet-status-changed', models.getParakeetStatus());
+    sendToMainWindow('parakeet-status-changed', models.getParakeetStatus(v));
   });
 
-  ipcMain.on('cancel-parakeet-download', () => {
-    models.cancelParakeetDownload();
-    sendToMainWindow('parakeet-status-changed', models.getParakeetStatus());
+  ipcMain.on('cancel-parakeet-download', (_, variant) => {
+    const v = parakeetVariantArg(variant);
+    models.cancelParakeetDownload(v);
+    sendToMainWindow('parakeet-status-changed', models.getParakeetStatus(v));
   });
 
-  ipcMain.on('delete-parakeet', () => {
+  ipcMain.on('delete-parakeet', (_, variant) => {
+    const v = parakeetVariantArg(variant);
     transcriptionService.reset();
-    models.deleteParakeet();
-    // If Parakeet was active engine, fall back to Whisper
-    if (config.getTranscriptionEngine() === 'parakeet') {
-      config.setTranscriptionEngine('whisper');
+    models.deleteParakeet(v);
+    // Deleting the model in use: fall back to the other Parakeet, else Whisper.
+    if (config.getParakeetVariant() === v) {
+      const other = Object.keys(models.PARAKEET_VARIANTS).find((k) => k !== v && models.isParakeetAvailable(k));
+      if (other) config.setParakeetVariant(other);
+      else if (config.getTranscriptionEngine() === 'parakeet') config.setTranscriptionEngine('whisper');
     }
-    sendToMainWindow('parakeet-status-changed', models.getParakeetStatus());
+    reloadEngine();
+    sendToMainWindow('parakeet-status-changed', models.getParakeetStatus(v));
     sendToMainWindow('config-changed', {
       transcriptionEngine: config.getTranscriptionEngine(),
-      parakeetAvailable: false,
+      parakeetVariant: config.getParakeetVariant(),
+      parakeetAvailable: models.isParakeetAvailable(),
+    });
+  });
+
+  ipcMain.on('set-parakeet-variant', (_, variant) => {
+    config.setParakeetVariant(parakeetVariantArg(variant));
+    reloadEngine();
+    sendToMainWindow('config-changed', {
+      parakeetVariant: config.getParakeetVariant(),
+      parakeetAvailable: models.isParakeetAvailable(),
     });
   });
 
