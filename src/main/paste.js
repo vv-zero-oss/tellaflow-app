@@ -57,4 +57,16 @@ function pasteText(text, targetApp = null) {
   }, RESTORE_DELAY_MS);
 }
 
-module.exports = { pasteText };
+/** Undo the last paste: re-activate the app it went into and press Cmd+Z. */
+function undoPaste(targetApp = null) {
+  const safeTarget = targetApp ? targetApp.replace(/[\\"'\n\r]/g, '') : null;
+  const undoScript = 'tell application "System Events" to keystroke "z" using command down';
+  const script = safeTarget
+    ? `tell application "${safeTarget}" to activate\ndelay 0.15\n${undoScript}`
+    : undoScript;
+  execFile('osascript', ['-e', script], (err) => {
+    if (err) console.error('Failed to simulate undo:', err.message);
+  });
+}
+
+module.exports = { pasteText, undoPaste };

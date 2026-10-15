@@ -501,6 +501,7 @@ export function StreamingText({
         >
           <Icon>{DOWN}</Icon>
         </button>
+        {sources.length > 0 && (
         <button
           type="button"
           aria-expanded={sourcesOpen}
@@ -522,6 +523,7 @@ export function StreamingText({
           </span>
           <span className="text-[12px] text-[var(--island-fg-soft)]">{l.sources}</span>
         </button>
+        )}
       </div>
 
       <div
@@ -559,6 +561,7 @@ export function StreamingText({
       </div>
 
       {/* follow-ups */}
+      {followUps.length > 0 && (
       <div
         className="mt-2.5 transition-opacity duration-400"
         style={{ opacity: done ? 1 : 0, pointerEvents: done ? "auto" : "none" }}
@@ -591,6 +594,7 @@ export function StreamingText({
           ))}
         </ul>
       </div>
+      )}
     </div>
   );
 }
@@ -1131,6 +1135,35 @@ const LABELS: Record<IslandState, string> = {
   recording: "Recording",
 };
 
+/** A card's title, body and button labels. A `null` label hides that button. */
+export type IslandNotice = {
+  title: string;
+  body: string;
+  primary?: string;
+  secondary?: string | null;
+  tertiary?: string | null;
+};
+
+export type PlanStep = { label: string; status: "done" | "current" | "pending" };
+
+/**
+ * Live content for the island. Every field is optional: anything left out
+ * falls back to the design's sample copy, so the demo page needs none of it.
+ */
+export type IslandContent = {
+  /** done: what just happened, and whether Undo applies */
+  doneText?: string;
+  canUndo?: boolean;
+  /** error, setup, approval, meeting */
+  notice?: IslandNotice;
+  plan?: { title: string; steps: PlanStep[] };
+  /** answer (text): the reply, plus optional follow-up prompts */
+  answerText?: string;
+  followUps?: string[];
+  /** recording: epoch ms the recording started, so the timer survives re-renders */
+  recordingSince?: number;
+};
+
 const spring = { type: "spring", bounce: 0.22, duration: 0.55 } as const;
 
 export function VoiceIsland({
@@ -1139,6 +1172,7 @@ export function VoiceIsland({
   material = "translucent",
   placement = "bottom",
   correctedWord = "Kubernetes",
+  content = {},
   onAction,
 }: {
   /** "none" takes the island off screen; any other state brings it back. */
@@ -1148,9 +1182,12 @@ export function VoiceIsland({
   placement?: IslandPlacement;
   /** The word the person just corrected, offered to the dictionary. */
   correctedWord?: string;
+  /** Live text for the current state; see IslandContent. */
+  content?: IslandContent;
   /** Every chip and button in the island reports here by name. */
   onAction?: (action: string) => void;
 }) {
+  const notice = content.notice;
   // While it leaves for "none", the island keeps drawing the state it was in.
   const lastShown = useRef<Exclude<IslandState, "none">>("idle");
   if (requested !== "none") lastShown.current = requested;
@@ -1246,7 +1283,7 @@ export function VoiceIsland({
                     Transcribing…
                   </span>
                 )}
-                {state === "recording" && <Recording onStop={act("stop-recording")} />}
+                {state === "recording" && <Recording since={content.recordingSince} onStop={act("stop-recording")} />}
                 {state === "dictionary" && (
                   <div className="flex items-center gap-2">
                     <BookPlus className="size-3.5 shrink-0 text-[var(--island-fg-muted)]" aria-hidden="true" />
@@ -1266,22 +1303,26 @@ export function VoiceIsland({
                 {state === "done" && (
                   <div className="flex items-center gap-2">
                     <Check className="size-3.5 text-[var(--island-success)]" aria-hidden="true" />
-                    <span className="text-[length:var(--island-text-button)] whitespace-nowrap">Inserted 38 words</span>
-                    <IslandButton className="ml-1 h-6 flex-none" onClick={act("undo")}>
-                      Undo
-                    </IslandButton>
+                    <span className="text-[length:var(--island-text-button)] whitespace-nowrap">{content.doneText ?? "Inserted 38 words"}</span>
+                    {(content.canUndo ?? true) && (
+                      <IslandButton className="ml-1 h-6 flex-none" onClick={act("undo")}>
+                        Undo
+                      </IslandButton>
+                    )}
                   </div>
                 )}
                 {state === "error" && (
                   <Notice
                     icon={<MicOff className="size-4 text-[var(--island-danger)]" aria-hidden="true" />}
-                    title="Microphone disconnected"
-                    body="Your AirPods stopped sending audio. Reconnect them, then try again."
+                    title={notice?.title ?? "Microphone disconnected"}
+                    body={notice?.body ?? "Your AirPods stopped sending audio. Reconnect them, then try again."}
                   >
-                    <IslandButton tone="accent" onClick={act("retry")}>
-                      Try again
-                    </IslandButton>
-                    <IslandButton onClick={act("dismiss")}>Dismiss</IslandButton>
+                    {notice?.primary !== null && (
+                      <IslandButton tone="accent" onClick={act("retry")}>
+                        {notice?.primary ?? "Try again"}
+                      </IslandButton>
+                    )}
+                    <IslandButton onClick={act("dismiss")}>{notice?.secondary ?? "Dismiss"}</IslandButton>
                   </Notice>
                 )}
                 {state === "setup" && (
@@ -1289,43 +1330,51 @@ export function VoiceIsland({
                     icon={
                       <AlertTriangle className="size-4 text-[var(--island-warning)]" aria-hidden="true" />
                     }
-                    title="Allow microphone access"
-                    body="Voice typing needs the microphone to hear you. You can change this any time in System Settings."
+                    title={notice?.title ?? "Allow microphone access"}
+                    body={notice?.body ?? "Voice typing needs the microphone to hear you. You can change this any time in System Settings."}
                   >
                     <IslandButton tone="accent" onClick={act("open-settings")}>
-                      Open System Settings
+                      {notice?.primary ?? "Open System Settings"}
                     </IslandButton>
-                    <IslandButton onClick={act("later")}>Later</IslandButton>
+                    {notice?.secondary !== null && (
+                      <IslandButton onClick={act("later")}>{notice?.secondary ?? "Later"}</IslandButton>
+                    )}
                   </Notice>
                 )}
-                {state === "plan" && <Plan />}
+                {state === "plan" && <Plan plan={content.plan} />}
                 {state === "approval" && (
                   <Notice
                     icon={<span className="size-2 rounded-full bg-[var(--island-fg)]" aria-hidden="true" />}
-                    title="Send this to #design?"
-                    body="“Moved the review to Thursday at 2pm — the new mocks are in Figma under Island v3.”"
+                    title={notice?.title ?? "Send this to #design?"}
+                    body={notice?.body ?? "“Moved the review to Thursday at 2pm — the new mocks are in Figma under Island v3.”"}
                   >
                     <IslandButton tone="accent" onClick={act("approve")}>
-                      Send
+                      {notice?.primary ?? "Send"}
                     </IslandButton>
-                    <IslandButton onClick={act("edit")}>Edit first</IslandButton>
-                    <IslandButton onClick={act("cancel")}>Cancel</IslandButton>
+                    {notice?.secondary !== null && (
+                      <IslandButton onClick={act("edit")}>{notice?.secondary ?? "Edit first"}</IslandButton>
+                    )}
+                    {notice?.tertiary !== null && (
+                      <IslandButton onClick={act("cancel")}>{notice?.tertiary ?? "Cancel"}</IslandButton>
+                    )}
                   </Notice>
                 )}
-                {state === "answer" && <Answer kind={answerKind} onFollowUp={act("follow-up")} />}
+                {state === "answer" && (
+                  <Answer kind={answerKind} text={content.answerText} followUps={content.followUps} onFollowUp={act("follow-up")} />
+                )}
             {state === "questions" && <ApprovalCard onDismiss={act("dismiss")} />}
                 {state === "meeting" && (
                   <Notice
                     icon={
                       <CalendarClock className="size-4" aria-hidden="true" />
                     }
-                    title="Design sync is starting"
-                    body="Google Meet · 6 people · 30 min. Take notes as it happens?"
+                    title={notice?.title ?? "Design sync is starting"}
+                    body={notice?.body ?? "Google Meet · 6 people · 30 min. Take notes as it happens?"}
                   >
                     <IslandButton tone="accent" onClick={act("transcribe")}>
-                      Transcribe meeting
+                      {notice?.primary ?? "Transcribe meeting"}
                     </IslandButton>
-                    <IslandButton onClick={act("not-now")}>Not now</IslandButton>
+                    <IslandButton onClick={act("not-now")}>{notice?.secondary ?? "Not now"}</IslandButton>
                   </Notice>
                 )}
               </motion.div>
@@ -1404,13 +1453,16 @@ function Wave({ upright = false }: { upright?: boolean }) {
   );
 }
 
-function Recording({ onStop }: { onStop: () => void }) {
-  const [seconds, setSeconds] = useState(0);
+function Recording({ since, onStop }: { since?: number; onStop: () => void }) {
+  const elapsed = () => (since ? Math.max(0, Math.floor((Date.now() - since) / 1000)) : 0);
+  const [seconds, setSeconds] = useState(elapsed);
 
   useEffect(() => {
-    const timer = setInterval(() => setSeconds((s) => s + 1), 1000);
+    setSeconds(elapsed());
+    const timer = setInterval(() => setSeconds(since ? elapsed() : (s) => s + 1), 1000);
     return () => clearInterval(timer);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [since]);
 
   const time = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 
@@ -1435,35 +1487,36 @@ const STEPS = [
   { label: "Ask before sending", status: "pending" },
 ] as const;
 
-function Plan() {
-  const finished = STEPS.filter((s) => s.status === "done").length;
+function Plan({ plan }: { plan?: { title: string; steps: readonly PlanStep[] } }) {
+  const steps = plan?.steps ?? STEPS;
+  const finished = steps.filter((s) => s.status === "done").length;
 
   return (
     <div className="flex flex-col gap-3 px-2 pb-2">
       <div className="flex items-baseline justify-between gap-3">
-        <p className="text-[length:var(--island-text-title)]">Replying to Maya</p>
+        <p className="text-[length:var(--island-text-title)]">{plan?.title ?? "Replying to Maya"}</p>
         <p className="text-[length:var(--island-text-button)] text-[var(--island-fg-muted)] tabular-nums whitespace-nowrap">
-          Step {finished + 1} of {STEPS.length}
+          Step {Math.min(finished + 1, steps.length)} of {steps.length}
         </p>
       </div>
       <div
         role="progressbar"
         aria-label="Plan progress"
         aria-valuemin={0}
-        aria-valuemax={STEPS.length}
+        aria-valuemax={steps.length}
         aria-valuenow={finished}
         className="h-1 overflow-hidden rounded-full bg-[var(--island-track)]"
       >
         <motion.div
           className="h-full rounded-full bg-[var(--island-fg)]"
           initial={{ width: 0 }}
-          animate={{ width: `${((finished + 0.5) / STEPS.length) * 100}%` }}
+          animate={{ width: `${(Math.min(finished + 0.5, steps.length) / Math.max(steps.length, 1)) * 100}%` }}
         />
       </div>
       <ol className="flex flex-col gap-2">
-        {STEPS.map((step) => (
+        {steps.map((step, i) => (
           <li
-            key={step.label}
+            key={`${i}-${step.label}`}
             className={cn(
               "flex items-center gap-2 text-[length:var(--island-text-button)]",
               step.status === "pending" && "text-[var(--island-fg-muted)]",
@@ -1492,13 +1545,33 @@ function Plan() {
 const ANSWER_TEXT =
   "Your next free hour is Thursday from 2 to 3pm. Maya and Theo are both free then too.";
 
-function Answer({ kind, onFollowUp }: { kind: AnswerKind; onFollowUp: () => void }) {
+function Answer({
+  kind,
+  text,
+  followUps,
+  onFollowUp,
+}: {
+  kind: AnswerKind;
+  text?: string;
+  followUps?: string[];
+  onFollowUp: () => void;
+}) {
   return (
     <div className="flex flex-col gap-3 px-2 pb-2">
       <p className="text-[length:var(--island-text-button)] text-[var(--island-fg-muted)]">Answer</p>
       {kind === "text" && (
         <div className="w-[288px]">
-          <StreamingText loop={false} onFollowUp={onFollowUp} />
+          {text === undefined ? (
+            <StreamingText loop={false} onFollowUp={onFollowUp} />
+          ) : (
+            <StreamingText
+              loop={false}
+              content={text.split(/\s+/).filter(Boolean).map((word) => ({ text: word }))}
+              sources={[]}
+              followUps={followUps ?? []}
+              onFollowUp={onFollowUp}
+            />
+          )}
         </div>
       )}
       {kind === "image" && (
@@ -1527,7 +1600,7 @@ function Answer({ kind, onFollowUp }: { kind: AnswerKind; onFollowUp: () => void
           <figcaption className="text-[length:var(--island-text-button)]">The clip you asked for, from Tuesday’s capture.</figcaption>
         </figure>
       )}
-      {kind === "voice" && <VoicePlayback text={ANSWER_TEXT} />}
+      {kind === "voice" && <VoicePlayback text={text ?? ANSWER_TEXT} />}
     </div>
   );
 }

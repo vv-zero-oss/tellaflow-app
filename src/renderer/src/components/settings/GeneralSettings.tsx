@@ -216,10 +216,17 @@ function HotkeyDialog({
 
 // ─── Inline hotkey display ────────────────────────────────────────────────────
 
-function HotkeyEditor({ currentHotkey }: { currentHotkey: HotkeyConfig | undefined }) {
+function HotkeyEditor({
+  currentHotkey,
+  onSave,
+}: {
+  currentHotkey: HotkeyConfig | undefined;
+  onSave?: (hotkey: HotkeyConfig) => void;
+}) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const handleSave = (hotkey: HotkeyConfig) => {
+    if (onSave) { onSave(hotkey); return; }
     ipc.setHotkey(hotkey);
     ipc.retryHotkey();
   };
@@ -343,6 +350,23 @@ export function GeneralSettings({ config, onSetTheme, refreshConfig }: GeneralSe
               <p className="text-xs text-muted-foreground/60 mt-0.5">Hold to Transcribe, shortcut to start/stop transcription</p>
             </div>
             <HotkeyEditor currentHotkey={config.hotkey} />
+          </div>
+        </WellItem>
+
+        <WellItem>
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm">Command key</span>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">Hold and speak to ask the assistant instead of typing</p>
+            </div>
+            <HotkeyEditor
+              currentHotkey={config.commandHotkey ?? { names: ['RIGHT ALT'], label: 'Right ⌥' }}
+              onSave={async (hotkey) => {
+                await ipc.setFeatureSetting('commandHotkey', hotkey);
+                ipc.retryHotkey();
+                await refreshConfig();
+              }}
+            />
           </div>
         </WellItem>
 

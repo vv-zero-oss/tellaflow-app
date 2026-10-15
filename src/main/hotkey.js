@@ -22,6 +22,9 @@ let startFailed = false;
 let mode = null;
 let pendingDoublePress = false;
 let doublePressTimer = null;
+// Which key started the session: 'dictation' (types the text) or 'command'
+// (sends it to the assistant). Each key behaves the same way otherwise.
+let purpose = null;
 
 const MIN_HOLD_MS = 300;
 const DOUBLE_PRESS_WINDOW_MS = 400;
@@ -30,8 +33,11 @@ const MAX_RESTARTS = 10;
 // For single-key hotkeys (like fn, option), we match the trigger key directly.
 // For combos (e.g. Ctrl+A), the last name in the array is the trigger,
 // the rest are modifiers that must all be in the `down` map simultaneously.
-function matchesHotkey(e, down) {
-  const hk = config.getHotkey(); // { names: string[], label: string }
+function hotkeyFor(which) {
+  return which === 'command' ? config.getCommandHotkey() : config.getHotkey();
+}
+
+function matchesHotkey(e, down, hk = config.getHotkey()) { // hk: { names: string[], label: string }
   if (!hk || !Array.isArray(hk.names) || hk.names.length === 0) return false;
 
   // Last entry is the "main" key, preceding entries are required modifiers
@@ -44,8 +50,7 @@ function matchesHotkey(e, down) {
 }
 
 // For keyup: trigger must match (regardless of what's in `down` since key is being released)
-function matchesTrigger(e) {
-  const hk = config.getHotkey();
+function matchesTrigger(e, hk = config.getHotkey()) {
   if (!hk || !Array.isArray(hk.names) || hk.names.length === 0) return false;
   const triggerName = hk.names[hk.names.length - 1];
   return e.name === triggerName;
@@ -131,18 +136,22 @@ function start({ onStart, onStop, onHandsFree }) {
     }
 
     if (e.state === 'DOWN') {
-      if (!matchesHotkey(e, down)) return;
+      // The dictation key wins if both keys are set to the same thing.
+      const pressed = matchesHotkey(e, down, hotkeyFor('dictation'))
+        ? 'dictation'
+        : matchesHotkey(e, down, hotkeyFor('command')) ? 'command' : null;
+      if (!pressed) return;
 
       // Hotkey pressed while already in hands-free → stop and transcribe.
       if (mode === 'handsfree') {
-        finishHandsFree();
+        if (pressed === purpose) finishHandsFree();
         return;
       }
 
       // Second press inside the double-press window → escalate to hands-free.
       // The first press already started the recording; we just flip the mode
       // and cancel the pending "too short" auto-stop timer.
-      if (pendingDoublePress && isRecording) {
+      if (pendingDoublePress && isRecording && pressed === purpose) {
         clearDoublePressTimer();
         mode = 'handsfree';
         if (onEnterHandsFree) onEnterHandsFree();
@@ -153,6 +162,7 @@ function start({ onStart, onStop, onHandsFree }) {
       if (isRecording || isWaitingForActivation) return;
 
       keyDownTime = Date.now();
+      purpose = pressed;
       const delay = config.getHotkeyActivationDelay();
 
       if (delay > 0) {
@@ -163,16 +173,16 @@ function start({ onStart, onStop, onHandsFree }) {
           isWaitingForActivation = false;
           isRecording = true;
           mode = 'held';
-          if (onRecordStart) onRecordStart();
+          if (onRecordStart) onRecordStart({ purpose });
         }, delay);
       } else {
         // No delay — start immediately (original behaviour)
         isRecording = true;
         mode = 'held';
-        if (onRecordStart) onRecordStart();
+        if (onRecordStart) onRecordStart({ purpose });
       }
     } else if (e.state === 'UP') {
-      if (!matchesTrigger(e)) return;
+      if (!purpose || !matchesTrigger(e, hotkeyFor(purpose))) return;
 
       // Hands-free ignores trigger release. Only fn-press / Esc ends it.
       if (mode === 'handsfree') return;
@@ -229,6 +239,19 @@ function start({ onStart, onStop, onHandsFree }) {
   console.log('Hotkey listener started (keyspy). Configured hotkey:', JSON.stringify(config.getHotkey()));
 }
 
+/** Turn a held recording into hands-free (the island's pill was clicked). */
+function enterHandsFree() {
+  if (!isRecording || mode === 'handsfree') return false;
+  clearDoublePressTimer();
+  mode = 'handsfree';
+  if (onEnterHandsFree) onEnterHandsFree();
+  return true;
+}
+
+function getPurpose() {
+  return purpose;
+}
+
 function stop() {
   if (activationTimer) { clearTimeout(activationTimer); activationTimer = null; }
   clearDoublePressTimer();
@@ -268,4 +291,4 @@ function didStartFail() {
   return startFailed;
 }
 
-module.exports = { start, stop, isRunning, getIsRecording, getMode, resetRecordingState, didStartFail };
+module.exports = { start, stop, isRunning, getIsRecording, getMode, getPurpose, enterHandsFree, resetRecordingState, didStartFail };

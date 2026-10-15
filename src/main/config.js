@@ -3,6 +3,10 @@ const { getDictionaryPacksManifest, getPackById } = require('./dictionary-packs'
 
 const DEFAULTS = {
   hotkey: { names: ['FN'], label: 'fn' },
+  // Hold to speak a command to the assistant instead of dictating text.
+  commandHotkey: { names: ['RIGHT ALT'], label: 'Right ⌥' },
+  islandPlacement: 'bottom',
+  islandMaterial: 'translucent',
   model: 'small',
   programmingMode: false,
   grammarEnabled: false,
@@ -76,6 +80,30 @@ function getHotkey() {
   return hk;
 }
 function setHotkey(hotkey) { setSetting('hotkey', hotkey); }
+
+/** The command key, or null when the user turned it off. */
+function getCommandHotkey() {
+  const v = getSetting('commandHotkey');
+  if (v === null) return null;
+  if (!v || !Array.isArray(v.names) || v.names.length === 0) return DEFAULTS.commandHotkey;
+  return v;
+}
+function setCommandHotkey(hotkey) {
+  setSetting('commandHotkey', hotkey && Array.isArray(hotkey.names) && hotkey.names.length ? hotkey : null);
+}
+
+const ISLAND_PLACEMENTS = ['left', 'bottom', 'right'];
+const ISLAND_MATERIALS = ['translucent', 'opaque'];
+function getIslandPlacement() {
+  const v = getSetting('islandPlacement');
+  return ISLAND_PLACEMENTS.includes(v) ? v : DEFAULTS.islandPlacement;
+}
+function setIslandPlacement(v) { if (ISLAND_PLACEMENTS.includes(v)) setSetting('islandPlacement', v); }
+function getIslandMaterial() {
+  const v = getSetting('islandMaterial');
+  return ISLAND_MATERIALS.includes(v) ? v : DEFAULTS.islandMaterial;
+}
+function setIslandMaterial(v) { if (ISLAND_MATERIALS.includes(v)) setSetting('islandMaterial', v); }
 
 function getModel() { return getSetting('model'); }
 function setModel(model) { setSetting('model', model); }
@@ -234,6 +262,13 @@ function addDictionaryEntry(from, to) {
   return getDictionary();
 }
 
+/** The user said "No" to learning these: never offer them again. */
+function blockLearnedEntries(corrections = []) {
+  const list = getAutoLearnBlocklist();
+  const keys = corrections.map((c) => blockKey(c.from, c.to)).filter((k) => !list.includes(k));
+  if (keys.length) setSetting('autoLearnBlocklist', [...list, ...keys].slice(-500));
+}
+
 function removeDictionaryEntry(id) {
   // Deleting an auto-learned word means "stop learning this" — remember it.
   const row = getDb().prepare('SELECT from_word, to_word, pack_id FROM dictionary WHERE id = ?').get(id);
@@ -325,8 +360,15 @@ module.exports = {
   setAssistantSettings,
   getAutoLearnBlocklist,
   addLearnedEntries,
+  blockLearnedEntries,
   getHotkey,
   setHotkey,
+  getCommandHotkey,
+  setCommandHotkey,
+  getIslandPlacement,
+  setIslandPlacement,
+  getIslandMaterial,
+  setIslandMaterial,
   getModel,
   setModel,
   getProgrammingMode,

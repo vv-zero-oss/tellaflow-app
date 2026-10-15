@@ -1,5 +1,6 @@
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { AppConfig } from '@/lib/ipc';
 import { ipc } from '@/lib/ipc';
 
@@ -45,6 +46,11 @@ export function SystemSettings({ config, refreshConfig }: SystemSettingsProps) {
     await refreshConfig();
   };
 
+  const setIsland = async (key: 'islandPlacement' | 'islandMaterial', value: string) => {
+    await ipc.setFeatureSetting(key, value);
+    await refreshConfig();
+  };
+
   const handleShowInDock = async (enabled: boolean) => {
     ipc.setShowInDock(enabled);
     await refreshConfig();
@@ -73,11 +79,42 @@ export function SystemSettings({ config, refreshConfig }: SystemSettingsProps) {
             onCheckedChange={handleLaunchAtLogin}
           />
           <SettingRow
-            label="Show Floating bar at all times"
-            description="Always-visible bar — click to start dictating"
+            label="Show the island at all times"
+            description="A small dot stays on screen — click it to start dictating"
             checked={config.floatingBarEnabled ?? false}
             onCheckedChange={handleFloatingBar}
           />
+          <WellItem>
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <span className="text-sm">Island position</span>
+                <p className="text-xs text-muted-foreground/60 mt-0.5">The screen edge the island sits on</p>
+              </div>
+              <Select value={config.islandPlacement ?? 'bottom'} onValueChange={(v) => setIsland('islandPlacement', v)}>
+                <SelectTrigger className="w-[160px] h-8 text-sm shrink-0"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="bottom">Bottom</SelectItem>
+                  <SelectItem value="left">Left</SelectItem>
+                  <SelectItem value="right">Right</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </WellItem>
+          <WellItem>
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <span className="text-sm">Island material</span>
+                <p className="text-xs text-muted-foreground/60 mt-0.5">Translucent glass, or solid grey</p>
+              </div>
+              <Select value={config.islandMaterial ?? 'translucent'} onValueChange={(v) => setIsland('islandMaterial', v)}>
+                <SelectTrigger className="w-[160px] h-8 text-sm shrink-0"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="translucent">Translucent</SelectItem>
+                  <SelectItem value="opaque">Opaque</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </WellItem>
           <SettingRow
             label="Show app in dock"
             checked={config.showInDock ?? true}

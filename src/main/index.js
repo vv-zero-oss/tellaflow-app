@@ -20,7 +20,7 @@ const config = require('./config');
 const { createTray, getTray, destroyTray } = require('./tray');
 const { createOnboardingWindow, closeOnboarding, getOnboardingWindow } = require('./onboarding');
 const hotkey = require('./hotkey');
-const { pasteText } = require('./paste');
+const { pasteText, undoPaste } = require('./paste');
 const permissions = require('./permissions');
 const models = require('./models');
 const { trimSilence, normalizeVolume } = require('./audio-preprocess');
@@ -39,7 +39,8 @@ const { formatTranscription } = require('./formatter');
 const grammar = require('./grammar');
 const { applyDictionary } = require('./dictionary');
 const snippets = require('./snippets');
-const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState, setToastInteractive } = require('./toast');
+const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState, setToastInteractive, showIsland, restIsland, setRestOverride, isResting, refreshPlacement } = require('./toast');
+const { createIslandAssistant } = require('./island-assistant');
 const { showMainWindow, sendToMainWindow, destroyMainWindow, createMainWindow } = require('./main-window');
 const history = require('./history');
 const { closeDb } = require('./db');
@@ -104,6 +105,29 @@ let accessibilityInitialState = null; // null = not yet checked
 // App captured at recording-start (before Electron stole focus).
 // Used as a fallback if Electron is still frontmost when paste fires.
 let clickPasteTargetApp = null;
+// Which key started the recording: 'dictation' types the text, 'command'
+// sends it to the assistant.
+let recordingPurpose = 'dictation';
+
+// ── Voice island ─────────────────────────────────────────────────────────────
+// Who owns what the island shows right now, so its buttons reach the right
+// flow: 'dictation' | 'assistant' | 'meeting' | 'learn' | 'error' | null.
+let islandOwner = null;
+let lastPaste = null;         // { app } — for Undo on the "done" pill
+let islandErrorAction = null; // what "Try again" on a dictation error does
+let pendingMeeting = null;    // detector info while we ask "Transcribe meeting?"
+let pendingLearn = null;      // correction we're offering to the dictionary
+let islandAssistant = null;
+
+function island(owner, state, opts) {
+  islandOwner = owner;
+  showIsland(state, opts);
+}
+
+function islandRest() {
+  islandOwner = null;
+  restIsland();
+}
 
 // ── Core services (created in initCoreServices once the app is ready) ───────
 let transcriptionService = null;
@@ -290,10 +314,16 @@ function pruneOldRecordings() {
   }
 }
 
+// Voice / command-key requests run on the island; the Assistant page still
+// lists them.
 function startAssistantFromVoice(request) {
-  showMainWindow();
-  sendToMainWindow('navigate', 'assistant');
-  assistant.start(request, { source: 'voice' }).catch((err) => console.error('[assistant] start failed:', err));
+  islandOwner = 'assistant';
+  islandAssistant.expect(request);
+  assistant.start(request, { source: 'voice' })
+    .catch((err) => {
+      console.error('[assistant] start failed:', err);
+      island('error', 'error', { content: { notice: { title: 'Couldn’t start the assistant', body: String(err.message || err), primary: null, secondary: 'Dismiss' } } });
+    });
 }
 
 // ── Meeting notes ───────────────────────────────────────────────────────────
@@ -329,12 +359,114 @@ function startMeetingNotes(info = {}) {
     finishMeetingNotes();
   });
   meetingCaptureWindow.loadFile(path.join(__dirname, '..', 'renderer', 'audio-capture.html'), { query: { mode: 'meeting' } });
-  new Notification({
-    title: 'Tellaflow — Taking meeting notes',
-    body: `${info.app || 'Meeting'} detected. Notes are transcribed on this Mac. Stop from the tray or Transcripts.`,
-  }).show();
+  // The island rests on the recording pill (timer + Stop) until it ends.
+  pendingMeeting = null;
+  const recordingView = { state: 'recording', content: { recordingSince: Date.now() } };
+  setRestOverride(recordingView);
+  if (isResting() || islandOwner === 'meeting' || !islandOwner) island('meeting', 'recording', recordingView);
   sendToMainWindow('meeting-state', getMeetingState());
   try { refreshAppMenu(); } catch {}
+}
+
+/** Opens Terminal running the AI's own sign-in (it opens the browser). */
+function openProviderSignIn(providerId) {
+  const COMMANDS = { claude: 'claude', codex: 'codex login', gemini: 'gemini' };
+  const cmd = COMMANDS[providerId];
+  if (!cmd || process.platform !== 'darwin') { showMainWindow(); sendToMainWindow('navigate', 'settings'); return; }
+  macAutomation.runAppleScript('tell application "Terminal"\nactivate\ndo script (item 1 of argv)\nend tell', [cmd])
+    .catch((err) => console.error('[assistant] could not open Terminal for sign-in:', err.message));
+}
+
+/** No microphone access: say so on the island instead of recording silence. */
+function micBlocked() {
+  if (process.platform !== 'darwin' || permissions.getMicrophoneStatus() === 'granted') return false;
+  island('setup', 'setup', {});
+  return true;
+}
+
+/** Every island button lands here, routed by who owns the island. */
+function handleIslandAction(action) {
+  if (islandOwner === 'assistant') {
+    const r = islandAssistant.action(action);
+    if (r && r.retry) { startAssistantFromVoice(r.retry); return; }
+    if (r) return;
+  }
+  switch (action) {
+    case 'start-listening':
+      startClickRecording();
+      break;
+    case 'expand-listening':
+      hotkey.enterHandsFree();
+      break;
+    case 'cancel-dictation':
+      ipcMain.emit('click-cancel-recording');
+      break;
+    case 'finish-dictation':
+      ipcMain.emit('click-finish-recording');
+      break;
+    case 'undo':
+      if (lastPaste) undoPaste(lastPaste.app);
+      lastPaste = null;
+      islandRest();
+      break;
+    case 'dictionary-yes':
+    case 'dictionary-no': {
+      const learn = pendingLearn;
+      pendingLearn = null;
+      if (learn && action === 'dictionary-yes') {
+        const added = config.addLearnedEntries(learn.corrections);
+        if (added.length) sendToMainWindow('dictionary-changed', config.getDictionary());
+      } else if (learn) {
+        config.blockLearnedEntries(learn.corrections);
+      }
+      islandRest();
+      break;
+    }
+    case 'transcribe':
+      startMeetingNotes(pendingMeeting || { app: 'Manual' });
+      break;
+    case 'not-now':
+      pendingMeeting = null;
+      islandRest();
+      break;
+    case 'stop-recording':
+      stopMeetingNotes();
+      break;
+    case 'retry': {
+      const target = islandErrorAction;
+      islandErrorAction = null;
+      islandRest();
+      if (target) { showMainWindow(); sendToMainWindow('navigate', target); }
+      break;
+    }
+    case 'open-settings':
+      islandRest();
+      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
+      break;
+    case 'dismiss':
+    case 'later':
+    case 'cancel':
+      islandErrorAction = null;
+      islandRest();
+      break;
+    default:
+      break;
+  }
+}
+
+function askToTranscribeMeeting(info = {}) {
+  if (meetingNotes?.isActive()) return;
+  pendingMeeting = info;
+  island('meeting', 'meeting', {
+    content: {
+      notice: {
+        title: info.app ? `${info.app} meeting started` : 'A meeting started',
+        body: 'Take notes as it happens? Everything is transcribed on this Mac.',
+        primary: 'Transcribe meeting',
+        secondary: 'Not now',
+      },
+    },
+  });
 }
 
 /** Ask the capture page to flush its last chunk; it replies with final=true. */
@@ -351,7 +483,11 @@ function stopMeetingNotes() {
 function finishMeetingNotes() {
   if (meetingCaptureWindow && !meetingCaptureWindow.isDestroyed()) meetingCaptureWindow.destroy();
   meetingCaptureWindow = null;
-  if (!meetingNotes?.isActive()) return;
+  setRestOverride(null);
+  if (!meetingNotes?.isActive()) { if (islandOwner === 'meeting') islandRest(); return; }
+  if (islandOwner === 'meeting' || isResting()) {
+    island('meeting', 'done', { content: { doneText: 'Meeting notes saved', canUndo: false }, autoRestMs: 3000 });
+  }
   meetingNotes.stop().then(() => {
     sendToMainWindow('history-update', history.getEntries());
     sendToMainWindow('meeting-state', getMeetingState());
@@ -404,6 +540,13 @@ function initCoreServices() {
     readFocused: macAutomation.readFocusedField,
     isEnabled: () => process.platform === 'darwin' && config.getAutoLearnEnabled(),
     onLearn: (corrections, { app: appName }) => {
+      // Ask on the island when it's free; otherwise learn quietly as before.
+      if (isResting() && corrections.length) {
+        pendingLearn = { corrections, app: appName };
+        const word = corrections[0].to;
+        island('learn', 'dictionary', { correctedWord: word, autoRestMs: 12_000 });
+        return;
+      }
       const added = config.addLearnedEntries(corrections);
       if (!added.length) return;
       console.log(`[auto-learn] learned ${added.map((a) => `"${a.from}" → "${a.to}"`).join(', ')} from ${appName}`);
@@ -417,11 +560,25 @@ function initCoreServices() {
 
   assistant = createAssistantService({
     getSettings: () => config.getAssistantSettings(),
-    send: (channel, data) => sendToMainWindow(channel, data),
+    send: (channel, data) => {
+      sendToMainWindow(channel, data);
+      try { islandAssistant?.handle(channel, data); } catch (err) { console.error('[island] assistant event failed:', err); }
+    },
     saveToHistory: (text) => {
       history.addEntry(text, null, { kind: 'assistant' });
       sendToMainWindow('history-update', history.getEntries());
     },
+  });
+
+  islandAssistant = createIslandAssistant({
+    island: {
+      show: (state, opts) => island('assistant', state, opts),
+      rest: () => { if (islandOwner === 'assistant') islandRest(); },
+    },
+    assistant,
+    openAssistantPage: () => { showMainWindow(); sendToMainWindow('navigate', 'assistant'); },
+    openSettings: () => { showMainWindow(); sendToMainWindow('navigate', 'settings'); },
+    startSignIn: (providerId) => openProviderSignIn(providerId),
   });
 
   meetingDetector = createMeetingDetector({
@@ -432,8 +589,12 @@ function initCoreServices() {
       getBrowserTabUrls: macAutomation.getBrowserTabUrls,
     },
     checkBrowsers: () => config.getMeetingBrowserDetection(),
-    onStart: (info) => startMeetingNotes(info),
-    onEnd: () => stopMeetingNotes(),
+    // Ask first; recording starts only if the user says yes.
+    onStart: (info) => askToTranscribeMeeting(info),
+    onEnd: () => {
+      if (pendingMeeting) { pendingMeeting = null; if (islandOwner === 'meeting') islandRest(); }
+      stopMeetingNotes();
+    },
   });
 
   recoverJobsOnStartup();
@@ -468,6 +629,19 @@ function initCoreServices() {
         return added;
       },
       broadcastFailedJobs,
+      // Voice island: drive the real flows and read what it shows.
+      island: {
+        state: () => getCurrentToastState(),
+        action: (name) => handleIslandAction(name),
+        startClickRecording: () => startClickRecording(),
+        askMeeting: (info) => askToTranscribeMeeting(info),
+        command: (request) => startAssistantFromVoice(request),
+        offerWord: (corrections) => {
+          pendingLearn = { corrections, app: 'e2e' };
+          island('learn', 'dictionary', { correctedWord: corrections[0].to });
+        },
+        setRecordingPurpose: (p) => { recordingPurpose = p; },
+      },
     };
   }
 }
@@ -810,7 +984,7 @@ function forceStopRecording() {
     // Renderer never answered: keep whatever audio reached disk for retry.
     if (streamingSession) abandonStreamingSession({ keep: true });
     destroyAudioCaptureWindow();
-    hideToast();
+    islandRest();
     broadcastStatus('Ready');
   }, 500);
 }
@@ -818,13 +992,15 @@ function forceStopRecording() {
 function startClickRecording() {
   // Don't start click recording if hotkey recording is already active
   if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) return;
+  if (micBlocked()) return;
 
+  recordingPurpose = 'dictation';
   pendingStop = false;
   clearRecordingTimeout();
   sounds.playStart();
   sounds.muteMusic();
   broadcastStatus('Recording...');
-  showToast('click-recording');
+  island('dictation', 'dictating');
   createAudioCaptureWindow();
   beginRecording();
   recordingTimeout = setTimeout(forceStopRecording, CLICK_MODE_MAX_RECORDING_MS);
@@ -856,7 +1032,7 @@ function stopAnyActiveRecording() {
       audioCaptureWindow.webContents.send('stop-recording');
     }
   } else {
-    hideToast();
+    islandRest();
     broadcastStatus('Ready');
   }
 }
@@ -867,9 +1043,10 @@ function startHotkeyListener() {
 
   try {
     hotkey.start({
-      onStart: () => {
+      onStart: ({ purpose } = {}) => {
         // Don't start hotkey recording if click recording is already active
         if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) return;
+        if (micBlocked()) { hotkey.resetRecordingState(); return; }
 
         // Capture the frontmost app SYNCHRONOUSLY and BEFORE createAudioCaptureWindow().
         // An async query races with window creation — on macOS, creating a new
@@ -887,19 +1064,20 @@ function startHotkeyListener() {
           }
         } catch {}
 
+        recordingPurpose = purpose === 'command' ? 'command' : 'dictation';
         pendingStop = false;
         clearRecordingTimeout();
         sounds.playStart();
         sounds.muteMusic();
-        broadcastStatus('Recording...');
-        showToast('recording');
+        broadcastStatus(recordingPurpose === 'command' ? 'Listening for a command...' : 'Recording...');
+        island('dictation', 'listening');
         createAudioCaptureWindow();
         beginRecording();
       },
       onHandsFree: () => {
         // Recording continues from the first press, but the bar now also
         // shows X/✓ buttons so the user can finish without touching fn again.
-        showToast('click-recording');
+        island('dictation', 'dictating');
         broadcastStatus('Recording (hands-free)...');
       },
       onStop: ({ cancelled, reason }) => {
@@ -913,7 +1091,7 @@ function startHotkeyListener() {
           recordingContextPromise = null;
           abandonStreamingSession({ keep: false }); // user cancelled: discard audio
           destroyAudioCaptureWindow();
-          hideToast();
+          islandRest();
           broadcastStatus('Ready');
           return;
         }
@@ -930,7 +1108,7 @@ function startHotkeyListener() {
               audioCaptureWindow.webContents.send('stop-recording');
             }
           } else {
-            hideToast();
+            islandRest();
             broadcastStatus('Ready');
           }
         }, RELEASE_GRACE_MS);
@@ -1003,7 +1181,7 @@ function createAudioCaptureWindow() {
     try { hotkey.resetRecordingState(); } catch {}
     sounds.unmuteMusic();
     if (streamingSession) abandonStreamingSession({ keep: true });
-    hideToast();
+    islandRest();
     broadcastStatus('Ready');
   });
 
@@ -1173,6 +1351,9 @@ function registerIPC() {
       meetingNotesEnabled: config.getMeetingNotesEnabled(),
       meetingBrowserDetection: config.getMeetingBrowserDetection(),
       audioRetentionDays: config.getAudioRetentionDays(),
+      commandHotkey: config.getCommandHotkey(),
+      islandPlacement: config.getIslandPlacement(),
+      islandMaterial: config.getIslandMaterial(),
     };
   });
 
@@ -1185,6 +1366,9 @@ function registerIPC() {
       const n = Number(v);
       if (Number.isFinite(n) && n >= 0) { config.setAudioRetentionDays(n); pruneOldRecordings(); }
     },
+    islandPlacement: (v) => { config.setIslandPlacement(v); refreshPlacement(); },
+    islandMaterial: (v) => { config.setIslandMaterial(v); refreshPlacement(); },
+    commandHotkey: (v) => config.setCommandHotkey(v),
     meetingNotesEnabled: (v) => {
       config.setMeetingNotesEnabled(!!v);
       if (v && process.platform === 'darwin') meetingDetector.start();
@@ -1754,6 +1938,10 @@ function registerIPC() {
     setToastInteractive(!!interactive);
   });
 
+  ipcMain.on('island-action', (_, action) => {
+    try { handleIslandAction(String(action)); } catch (err) { console.error('[island] action failed:', action, err); }
+  });
+
   // ── Floating bar click-to-dictate ─────────────────────────────────────────
   ipcMain.on('click-start-recording', () => {
     // clickPasteTargetApp is set by record-frontmost-app (fired on hover, before
@@ -1774,7 +1962,7 @@ function registerIPC() {
     // a duplicate onStop.
     try { hotkey.resetRecordingState(); } catch {}
     destroyAudioCaptureWindow();
-    hideToast();
+    islandRest();
     broadcastStatus('Ready');
   });
 
@@ -1790,7 +1978,7 @@ function registerIPC() {
         audioCaptureWindow.webContents.send('stop-recording');
       }
     } else {
-      hideToast();
+      islandRest();
       broadcastStatus('Ready');
     }
   });
@@ -1916,8 +2104,10 @@ function registerIPC() {
 
   // Paste / history / assistant routing for a finished transcript.
   async function deliverTranscript(text, { job }) {
-    hideToast();
+    const purpose = recordingPurpose;
+    recordingPurpose = 'dictation';
     if (!text) {
+      islandRest();
       clickPasteTargetApp = null;
       if (job) pipeline.finishJob(job.id, { keepAudio: false });
       sendPlaygroundText('');
@@ -1927,8 +2117,17 @@ function registerIPC() {
     // In playground (onboarding dry-run) mode: send the result back to the
     // onboarding window and skip paste, history, and notifications.
     if (playgroundMode && sendPlaygroundText(text)) {
+      islandRest();
       clickPasteTargetApp = null;
       if (job) pipeline.finishJob(job.id, { keepAudio: false });
+      return;
+    }
+
+    // The command key sends what was said to the assistant, on the island.
+    if (purpose === 'command') {
+      clickPasteTargetApp = null;
+      if (job) pipeline.finishJob(job.id, { keepAudio: false });
+      startAssistantFromVoice(text);
       return;
     }
 
@@ -1960,6 +2159,12 @@ function registerIPC() {
       ? currentFrontmost
       : recordedTarget;
     pasteText(text, pasteTarget);
+    lastPaste = { app: pasteTarget };
+    const words = text.split(/\s+/).filter(Boolean).length;
+    island('dictation', 'done', {
+      content: { doneText: `Inserted ${words} word${words === 1 ? '' : 's'}`, canUndo: true },
+      autoRestMs: 3500,
+    });
     // Watch the field for corrections to learn from (auto-learn dictionary).
     autoLearn.watch(text, { app: pasteTarget });
   }
@@ -1982,13 +2187,13 @@ function registerIPC() {
     if (!isStreaming && (!pcm || pcm.length === 0)) {
       console.log('Empty audio received — skipping transcription.');
       clickPasteTargetApp = null;
-      hideToast();
+      islandRest();
       broadcastStatus('Ready');
       sendPlaygroundText('');
       return;
     }
 
-    showToast('transcribing');
+    island('dictation', 'transcribing');
     broadcastStatus('Transcribing...');
 
     // Durably save the audio and journal the job BEFORE transcription.
@@ -2026,7 +2231,7 @@ function registerIPC() {
     } catch (err) {
       console.error('Transcription failed:', err);
       clickPasteTargetApp = null;
-      hideToast();
+      islandRest();
       if (job) {
         // runJob already marked it; streaming chunk failures reach here first.
         if (journal.get(job.id)?.status !== 'failed') pipeline.failJob(job.id, err);
@@ -2036,14 +2241,21 @@ function registerIPC() {
 
       const isModelMissing = err.message && err.message.includes('not found');
       const crashed = err instanceof WorkerCrashError;
-      new Notification({
-        title: isModelMissing ? 'Tellaflow — Model Not Found' : 'Transcription Failed',
-        body: isModelMissing
-          ? `${err.message} Go to Settings → Models to download one.`
-          : job
-            ? `${crashed ? 'The speech engine crashed and was restarted. ' : ''}Audio saved — retry from Transcripts → Needs attention.`
-            : err.message,
-      }).show();
+      islandErrorAction = isModelMissing ? 'settings' : job ? 'transcripts' : null;
+      island('error', 'error', {
+        content: {
+          notice: {
+            title: isModelMissing ? 'No speech model yet' : 'Transcription failed',
+            body: isModelMissing
+              ? `${err.message} Download one in Settings → Models.`
+              : job
+                ? `${crashed ? 'The speech engine crashed and restarted. ' : ''}Your audio is saved — retry it from Transcripts.`
+                : String(err.message || err),
+            primary: isModelMissing ? 'Open Settings' : job ? 'Open Transcripts' : null,
+            secondary: 'Dismiss',
+          },
+        },
+      });
 
       if (isModelMissing) { broadcastStatus('No model downloaded'); return; }
     }
@@ -2054,7 +2266,7 @@ function registerIPC() {
 
 async function processWavFile(filePath) {
   try {
-    showToast('transcribing');
+    island('dictation', 'transcribing');
     broadcastStatus('Transcribing file...');
 
     const buf = fs.readFileSync(filePath);
@@ -2104,13 +2316,13 @@ async function processWavFile(filePath) {
     // Long files are split into ~30 s windows by the pipeline.
     const rawText = await pipeline.transcribePcm(mono16k);
     if (!rawText) {
-      hideToast();
+      islandRest();
       broadcastStatus('Ready');
       return;
     }
     const text = await postProcessTranscript(rawText);
 
-    hideToast();
+    islandRest();
 
     if (text && text.length > 0) {
       history.addEntry(text);
@@ -2125,7 +2337,7 @@ async function processWavFile(filePath) {
     broadcastStatus('Ready');
   } catch (err) {
     console.error('WAV test failed:', err);
-    hideToast();
+    islandRest();
     broadcastStatus('Ready');
     new Notification({ title: 'Test Failed', body: err.message }).show();
   }
