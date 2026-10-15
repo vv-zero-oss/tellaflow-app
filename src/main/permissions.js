@@ -34,7 +34,7 @@ function openAccessibilityPrefs() {
 // ─── Screen Recording ─────────────────────────────────────────────────────────
 
 function isScreenRecordingGranted() {
-  return systemPreferences.getMediaAccessStatus('screen') === 'granted';
+  return isMac ? systemPreferences.getMediaAccessStatus('screen') === 'granted' : true;
 }
 
 /**
