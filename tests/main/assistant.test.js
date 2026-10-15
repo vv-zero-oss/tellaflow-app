@@ -9,7 +9,7 @@ import {
   createOllamaProvider,
   pickProvider,
 } from '../../src/main/assistant/providers.js';
-import { matchWakeWord, createAssistantService } from '../../src/main/assistant/index.js';
+import { createAssistantService } from '../../src/main/assistant/index.js';
 
 // ─── protocol ────────────────────────────────────────────────────────────────
 
@@ -278,28 +278,7 @@ describe('providers', () => {
   });
 });
 
-// ─── wake word + service ─────────────────────────────────────────────────────
-
-describe('matchWakeWord', () => {
-  it.each([
-    ['Hey Tella, open Safari.', 'open Safari.'],
-    ['hey tella open spotify', 'open spotify'],
-    ['Hey Tela, what time is it?', 'what time is it?'],
-    ['Hey, Tella: set volume to 20', 'set volume to 20'],
-  ])('%s', (input, expected) => {
-    expect(matchWakeWord(input, 'hey tella')).toBe(expected);
-  });
-
-  it('ignores normal dictation and bare wake words', () => {
-    expect(matchWakeWord('Hey Tom, are we still on for lunch?', 'hey tella')).toBeNull();
-    expect(matchWakeWord('Please tell a story', 'hey tella')).toBeNull();
-    expect(matchWakeWord('Hey Tella.', 'hey tella')).toBeNull();
-  });
-
-  it('supports a custom wake word', () => {
-    expect(matchWakeWord('Computer, lock the screen', 'computer')).toBe('lock the screen');
-  });
-});
+// ─── service ─────────────────────────────────────────────────────────────────
 
 describe('assistant service', () => {
   it('routes approvals from the UI to the running agent and saves the result', async () => {

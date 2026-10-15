@@ -169,6 +169,7 @@ function isResting() {
 }
 
 function getIslandState() { return view.state; }
+function getIslandView() { return view; }
 
 function setIslandInteractive(on) {
   interactive = !!on;
@@ -215,6 +216,7 @@ module.exports = {
   setRestOverride,
   isResting,
   getIslandState,
+  getIslandView,
   setIslandInteractive,
   refreshPlacement,
   onIslandRest,

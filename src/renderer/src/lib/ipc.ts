@@ -82,8 +82,6 @@ export type AssistantProviderId = 'claude' | 'codex' | 'gemini' | 'ollama';
 export interface AssistantSettings {
   provider: 'auto' | AssistantProviderId;
   autoApprove: boolean;
-  voiceTrigger: boolean;
-  wakeWord: string;
   ollamaModel: string;
 }
 

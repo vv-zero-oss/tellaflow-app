@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { CheckCircle2, CircleDashed, RefreshCw } from 'lucide-react';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAssistant } from '@/hooks/use-assistant';
 import type { AssistantSettings as Settings } from '@/lib/ipc';
@@ -14,10 +13,8 @@ import type { AssistantSettings as Settings } from '@/lib/ipc';
  */
 export function AssistantSettings() {
   const { providers, settings, refreshProviders, updateSettings } = useAssistant();
-  const [wakeWord, setWakeWord] = useState('');
 
   useEffect(() => { refreshProviders(); }, [refreshProviders]);
-  useEffect(() => { if (settings) setWakeWord(settings.wakeWord); }, [settings]);
 
   if (!settings) return null;
   const ollama = providers?.find((p) => p.id === 'ollama');
@@ -83,27 +80,6 @@ export function AssistantSettings() {
             </div>
           </WellItem>
         )}
-        <WellItem>
-          <div className="flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <span className="text-sm">Voice trigger</span>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">Start a dictation with the wake word to send it to the assistant instead of typing it.</p>
-            </div>
-            <Switch checked={settings.voiceTrigger} onCheckedChange={(v) => updateSettings({ voiceTrigger: v })} />
-          </div>
-        </WellItem>
-        <WellItem>
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-sm">Wake word</span>
-            <Input
-              value={wakeWord}
-              onChange={(e) => setWakeWord(e.target.value)}
-              onBlur={() => wakeWord.trim() && wakeWord !== settings.wakeWord && updateSettings({ wakeWord })}
-              className="w-[200px] h-8 text-sm"
-              placeholder="hey tella"
-            />
-          </div>
-        </WellItem>
         <WellItem>
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
