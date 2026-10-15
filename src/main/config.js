@@ -217,19 +217,27 @@ function getAutoLearnBlocklist() {
  * Returns the entries actually added.
  */
 function addLearnedEntries(corrections) {
+  const insert = getDb().prepare('INSERT INTO dictionary (from_word, to_word, pack_id) VALUES (?, ?, ?)');
+  const added = filterNewLearnedEntries(corrections);
+  for (const { from, to } of added) insert.run(from, to, AUTO_LEARN_PACK_ID);
+  return added;
+}
+
+/** The corrections addLearnedEntries would add (not in the dictionary, not blocked). */
+function filterNewLearnedEntries(corrections) {
   const blocked = new Set(getAutoLearnBlocklist());
   const findExisting = getDb().prepare('SELECT id, pack_id FROM dictionary WHERE lower(from_word) = lower(?)');
-  const insert = getDb().prepare('INSERT INTO dictionary (from_word, to_word, pack_id) VALUES (?, ?, ?)');
-  const added = [];
+  const out = [];
+  const seen = new Set();
   for (const c of corrections || []) {
     const from = String(c.from || '').trim();
     const to = String(c.to || '').trim();
     if (!from || !to || blocked.has(blockKey(from, to))) continue;
-    if (findExisting.get(from)) continue;
-    insert.run(from, to, AUTO_LEARN_PACK_ID);
-    added.push({ from, to });
+    if (seen.has(from.toLowerCase()) || findExisting.get(from)) continue;
+    seen.add(from.toLowerCase());
+    out.push({ from, to });
   }
-  return added;
+  return out;
 }
 
 function getDictionary() {
@@ -362,6 +370,7 @@ module.exports = {
   getAssistantSettings,
   setAssistantSettings,
   getAutoLearnBlocklist,
+  filterNewLearnedEntries,
   addLearnedEntries,
   blockLearnedEntries,
   getHotkey,
