@@ -1,0 +1,194 @@
+/* ── Tellaflow dynamic island: simulated glass + border beam ───────────────── */
+
+.island {
+  --glass-bg: rgba(22, 22, 26, 0.58);
+  --glass-edge: rgba(255, 255, 255, 0.14);
+  --glass-highlight: rgba(255, 255, 255, 0.22);
+  --ink: rgba(255, 255, 255, 0.96);
+  --ink-2: rgba(255, 255, 255, 0.62);
+  --ink-3: rgba(255, 255, 255, 0.4);
+  --chip: rgba(255, 255, 255, 0.1);
+  --chip-hover: rgba(255, 255, 255, 0.18);
+  --primary-bg: rgba(255, 255, 255, 0.95);
+  --primary-ink: #111;
+  --command: #b39bff;
+  --record: #ff453a;
+  --ok: #32d74b;
+  --warn: #ffb340;
+
+  position: relative;
+  isolation: isolate;
+  color: var(--ink);
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: var(--glass-bg);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    inset 0 0 0 1px var(--glass-edge),
+    inset 0 -10px 24px -18px rgba(255, 255, 255, 0.18),
+    0 18px 40px -12px rgba(0, 0, 0, 0.45),
+    0 4px 12px -4px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  cursor: default;
+  user-select: none;
+}
+
+.island[data-blur='on'] {
+  backdrop-filter: blur(28px) saturate(185%);
+  -webkit-backdrop-filter: blur(28px) saturate(185%);
+}
+
+/* Without real backdrop blur (what an Electron transparent window gives us
+   over the desktop) the tint has to carry more of the legibility. */
+.island[data-blur='off'] {
+  --glass-bg: rgba(22, 22, 26, 0.78);
+}
+
+/* Subtle grain + top sheen so the glass reads as a material, not a flat fill. */
+.island::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(120% 80% at 50% -30%, rgba(255, 255, 255, 0.16), transparent 60%),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='.05'/></svg>");
+}
+
+.island[data-theme='light'] {
+  --glass-bg: rgba(250, 250, 252, 0.62);
+  --glass-edge: rgba(255, 255, 255, 0.7);
+  --glass-highlight: rgba(255, 255, 255, 0.9);
+  --ink: rgba(10, 10, 14, 0.94);
+  --ink-2: rgba(10, 10, 14, 0.6);
+  --ink-3: rgba(10, 10, 14, 0.4);
+  --chip: rgba(10, 10, 14, 0.07);
+  --chip-hover: rgba(10, 10, 14, 0.12);
+  --primary-bg: #111;
+  --primary-ink: #fff;
+  --command: #7c5cff;
+}
+.island[data-theme='light'][data-blur='off'] {
+  --glass-bg: rgba(250, 250, 252, 0.86);
+}
+
+/* ── Border beam (Magic UI style, pure CSS) ── */
+@property --beam-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.island-beam,
+.island-beam-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--beam-angle),
+    transparent 0deg 250deg,
+    #7c5cff 290deg,
+    #5ac8fa 325deg,
+    #ffffff 345deg,
+    transparent 360deg
+  );
+  animation: island-beam-spin 2.6s linear infinite;
+}
+
+.island-beam {
+  padding: 1.5px;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.island-beam-glow {
+  padding: 6px;
+  filter: blur(8px);
+  opacity: 0.55;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+@keyframes island-beam-spin {
+  to { --beam-angle: 360deg; }
+}
+
+/* ── Text shimmer for "thinking" labels ── */
+.island-shimmer {
+  background: linear-gradient(90deg, var(--ink-3) 0%, var(--ink) 45%, var(--ink-3) 90%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: island-shimmer 1.8s linear infinite;
+}
+@keyframes island-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+/* ── Controls ── */
+.island-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 550;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  background: var(--chip);
+  color: var(--ink);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.island-btn:hover { background: var(--chip-hover); }
+.island-btn:active { transform: scale(0.97); }
+.island-btn[data-variant='primary'] { background: var(--primary-bg); color: var(--primary-ink); }
+.island-btn[data-variant='primary']:hover { filter: brightness(0.92); }
+.island-btn[data-variant='record'] { background: var(--record); color: #fff; }
+.island-btn[data-variant='ghost'] { background: transparent; color: var(--ink-2); }
+.island-btn[data-variant='ghost']:hover { background: var(--chip); color: var(--ink); }
+.island-btn[data-size='icon'] { width: 30px; padding: 0; }
+
+.island-kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  background: var(--chip);
+  color: var(--ink);
+}
+
+.island-code {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 10px;
+  padding: 8px 10px;
+  white-space: pre;
+  overflow: hidden;
+}
+.island[data-theme='light'] .island-code { background: rgba(0, 0, 0, 0.05); }
+
+@keyframes island-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+.island-pulse { animation: island-pulse 1.4s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .island-beam, .island-beam-glow, .island-shimmer, .island-pulse { animation: none; }
+}
