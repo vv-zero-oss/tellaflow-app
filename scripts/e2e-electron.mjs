@@ -44,7 +44,7 @@ await waitFor(async () => { try { return (await fetch('http://localhost:5173/ind
 
 const app = await electron.launch({
   executablePath: path.join(ROOT, 'node_modules/electron/dist/electron'),
-  args: ['.', '--no-sandbox', `--user-data-dir=${userData}`],
+  args: ['.', '--no-sandbox', '--disable-gpu', `--user-data-dir=${userData}`],
   cwd: ROOT,
   env: { ...process.env, TELLAFLOW_E2E: '1', ELECTRON_DISABLE_SECURITY_WARNINGS: '1' },
   timeout: 60_000,
@@ -52,7 +52,16 @@ const app = await electron.launch({
 const mainLogs = [];
 app.process().stdout.on('data', (d) => mainLogs.push(String(d)));
 app.process().stderr.on('data', (d) => mainLogs.push(String(d)));
-const T = (fn, arg) => app.evaluate(fn, arg);
+// Main-process evaluate can transiently lose its context while a utility
+// process spawns (the debugger re-targets) — retry those.
+async function T(fn, arg) {
+  for (let i = 0; ; i++) {
+    try { return await app.evaluate(fn, arg); } catch (err) {
+      if (i < 20 && /context was destroyed|Target closed|navigation/i.test(err.message)) { await sleep(500); continue; }
+      throw err;
+    }
+  }
+}
 
 try {
   // ── Onboarding → main window ───────────────────────────────────────────────
@@ -74,13 +83,10 @@ try {
   check('dictation (12 s clip) → transcript in history', /\w+/.test(first.text), `"${first.text.slice(0, 120)}"`);
 
   // ── 2. Kill the worker mid-transcription → auto restart + retry ────────────
-  const killWorker = () => T(({ app }) => {
-    const w = app.getAppMetrics().find((m) => m.type === 'Utility' && /Transcription/i.test(m.serviceName || m.name || ''));
-    if (w) { try { process.kill(w.pid, 'SIGKILL'); } catch {} }
-    return w ? w.pid : null;
-  });
+  // Not retried: a retry after a lost context would kill the replacement worker too.
+  const killWorker = () => app.evaluate(() => globalThis.__tellaflowTest.killWorker()).catch(() => 'killed (context reset)');
   await T((_, p) => globalThis.__tellaflowTest.dictateWav(p), clip45);
-  await sleep(400);
+  await sleep(150);
   const killedPid = await killWorker();
   const second = await waitFor(async () => {
     const h = await T(() => globalThis.__tellaflowTest.history());
@@ -91,18 +97,13 @@ try {
     `killed pid ${killedPid}, crashes=${stats.crashes}, retries=${stats.retries} → "${second.text.slice(0, 100)}"`);
 
   // ── 3. Crash loop → recording parked in Needs attention ────────────────────
-  await T(() => { globalThis.__killLoop = setInterval(() => {
-    const { app } = require('electron');
-    const w = app.getAppMetrics().find((m) => m.type === 'Utility' && /Transcription/i.test(m.serviceName || m.name || ''));
-    if (w) { try { process.kill(w.pid, 'SIGKILL'); } catch {} }
-  }, 150); }).catch(async () => {
-    // `require` isn't in scope inside evaluate on some Electron builds — fall back to polling from here.
-    globalThis.__fallbackKill = setInterval(() => killWorker().catch(() => {}), 150);
-  });
+  // Kill every worker that comes up, from the driver side.
+  let looping = true;
+  const killLoop = (async () => { while (looping) { await killWorker().catch(() => {}); await sleep(100); } })();
   await T((_, p) => globalThis.__tellaflowTest.dictateWav(p), shortWav);
   const failed = await waitFor(async () => (await T(() => globalThis.__tellaflowTest.failedJobs()))[0], { label: 'failed job', timeout: 120_000 });
-  await T(() => clearInterval(globalThis.__killLoop)).catch(() => {});
-  if (globalThis.__fallbackKill) clearInterval(globalThis.__fallbackKill);
+  looping = false;
+  await killLoop;
   check('repeated crashes → audio saved under Needs attention', !!failed && fs.existsSync(failed.audioPath), `error: "${failed.error}"`);
 
   // ── 4. Meeting notes entry (two real 30 s chunks) ──────────────────────────
@@ -135,11 +136,20 @@ try {
   await sleep(800);
   await main.locator('textarea').fill('Open the Calculator app, then tell me today\'s date.');
   await main.locator('button[title="Run"]').click();
-  const approval = await waitFor(() => main.locator('text=Allow').count(), { label: 'approval prompt', timeout: 180_000 }).catch(() => 0);
-  await sleep(500);
-  await main.screenshot({ path: path.join(OUT, '04-assistant-approval.png') });
-  if (approval) await main.getByRole('button', { name: 'Allow' }).click();
-  await waitFor(() => main.locator('svg.lucide-sparkles').count(), { label: 'assistant final', timeout: 240_000 }).catch(() => null);
+  // Answer every approval until the run ends: allow normal actions, deny
+  // custom AppleScript (exercises both paths). Screenshot the first prompt.
+  let shotApproval = false;
+  await waitFor(async () => {
+    const [run] = await main.evaluate(() => window.tellaflow.assistantListRuns());
+    if (run && run.status !== 'running') return true;
+    const allow = main.getByRole('button', { name: 'Allow' });
+    if (await allow.count()) {
+      if (!shotApproval) { await sleep(400); await main.screenshot({ path: path.join(OUT, '04-assistant-approval.png') }); shotApproval = true; }
+      const isScript = await main.locator('text=Review the script above first').count();
+      await (isScript ? main.getByRole('button', { name: 'Deny' }) : allow).first().click();
+    }
+    return false;
+  }, { label: 'assistant run to finish', timeout: 300_000, every: 1000 });
   await sleep(800);
   await main.screenshot({ path: path.join(OUT, '05-assistant-chain.png') });
   const runs = await main.evaluate(() => window.tellaflow.assistantListRuns());

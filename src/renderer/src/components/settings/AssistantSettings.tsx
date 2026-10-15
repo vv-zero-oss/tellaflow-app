@@ -35,7 +35,7 @@ export function AssistantSettings() {
               <p className="text-xs text-muted-foreground/60 mt-0.5">Uses an AI you're signed in to on this Mac. No API keys.</p>
             </div>
             <Select value={settings.provider} onValueChange={(v) => updateSettings({ provider: v as Settings['provider'] })}>
-              <SelectTrigger className="w-[200px] h-8 text-sm shrink-0">
+              <SelectTrigger className="w-[240px] h-8 text-sm shrink-0">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

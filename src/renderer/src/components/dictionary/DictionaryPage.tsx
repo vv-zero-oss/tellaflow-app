@@ -89,7 +89,7 @@ export function DictionaryPage() {
         </div>
       </div>
 
-        <div className="min-w-0 max-w-full px-7 pb-6 overflow-scroll">
+        <div className="min-w-0 max-w-full px-7 pb-6 overflow-y-auto">
 
           <Well className="mb-7">
             <WellHeader>

@@ -132,6 +132,7 @@ function toFloat32(pcmArray) {
 
 // Transcription runs in an Electron utility process so a native Whisper /
 // Parakeet crash or OOM can't take the app down (see transcription-service.js).
+let currentWorkerChild = null;
 function spawnTranscriptionWorker({ onMessage, onExit }) {
   const child = utilityProcess.fork(path.join(__dirname, 'transcription-worker.js'), [], {
     serviceName: 'Tellaflow Transcription',
@@ -141,6 +142,7 @@ function spawnTranscriptionWorker({ onMessage, onExit }) {
   child.stderr?.on('data', (d) => process.stderr.write(`[worker] ${d}`));
   child.on('message', onMessage);
   child.on('exit', onExit);
+  currentWorkerChild = child;
   return {
     send: (msg) => child.postMessage(msg),
     kill: () => child.kill(),
@@ -453,6 +455,12 @@ function initCoreServices() {
       failedJobs: () => failedJobsSummary(),
       journal,
       stats: () => transcriptionService.getStats(),
+      // Hard-kill the worker like a native crash would.
+      killWorker: () => {
+        const pid = currentWorkerChild && currentWorkerChild.pid;
+        if (pid) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+        return pid || null;
+      },
       navigate: (page) => sendToMainWindow('navigate', page),
       learn: (corrections) => {
         const added = config.addLearnedEntries(corrections);
