@@ -34,12 +34,12 @@ const { createAutoLearnWatcher } = require('./auto-learn');
 const { createMeetingDetector } = require('./meeting-detector');
 const { createMeetingNotes } = require('./meeting-notes');
 const macAutomation = require('./mac-automation');
-const { createAssistantService, matchWakeWord } = require('./assistant');
+const { createAssistantService } = require('./assistant');
 const { formatTranscription } = require('./formatter');
 const grammar = require('./grammar');
 const { applyDictionary } = require('./dictionary');
 const snippets = require('./snippets');
-const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState, setToastInteractive, showIsland, restIsland, setRestOverride, isResting, refreshPlacement } = require('./toast');
+const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState, setToastInteractive, getIslandView, showIsland, restIsland, setRestOverride, isResting, refreshPlacement } = require('./toast');
 const { createIslandAssistant } = require('./island-assistant');
 const { showMainWindow, sendToMainWindow, destroyMainWindow, createMainWindow } = require('./main-window');
 const history = require('./history');
@@ -634,6 +634,7 @@ function initCoreServices() {
       // Voice island: drive the real flows and read what it shows.
       island: {
         state: () => getCurrentToastState(),
+        view: () => getIslandView(),
         action: (name) => handleIslandAction(name),
         startClickRecording: () => startClickRecording(),
         askMeeting: (info) => askToTranscribeMeeting(info),
@@ -2151,18 +2152,6 @@ function registerIPC() {
       if (job) pipeline.finishJob(job.id, { keepAudio: false });
       startAssistantFromVoice(text);
       return;
-    }
-
-    // "Hey Tella, …" routes the request to the assistant instead of pasting.
-    const assistantSettings = config.getAssistantSettings();
-    if (assistantSettings.voiceTrigger) {
-      const request = matchWakeWord(text, assistantSettings.wakeWord);
-      if (request) {
-        clickPasteTargetApp = null;
-        if (job) pipeline.finishJob(job.id, { keepAudio: false });
-        startAssistantFromVoice(request);
-        return;
-      }
     }
 
     history.addEntry(text, job ? job.audioPath : null);

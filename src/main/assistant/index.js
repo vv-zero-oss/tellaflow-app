@@ -6,30 +6,8 @@
 const { runAgent } = require('./agent');
 const { createProviders, detectProviders, pickProvider } = require('./providers');
 const { createMacTools } = require('./mac-tools');
-const { soundsLike } = require('../text-similarity');
 
 const MAX_RUNS_KEPT = 20;
-
-/**
- * If `text` starts with the wake word ("Hey Tella, open Safari"), return the
- * request after it; otherwise null. Tolerates ASR spellings ("Hey Tela",
- * "hey, tella", "Hay Tella") by comparing sound-alike.
- */
-function matchWakeWord(text, wakeWord = 'hey tella') {
-  if (!text || !wakeWord) return null;
-  const wakeWords = wakeWord.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
-  if (!wakeWords.length) return null;
-  const re = /[\p{L}\p{N}'’]+/gu;
-  const words = [];
-  let m;
-  while ((m = re.exec(text)) && words.length < wakeWords.length) words.push({ w: m[0], end: m.index + m[0].length });
-  if (words.length < wakeWords.length) return null;
-  const spoken = words.map((x) => x.w.toLowerCase()).join(' ');
-  const target = wakeWords.join(' ');
-  if (spoken !== target && soundsLike(spoken, target) < 0.8) return null;
-  const rest = text.slice(words[words.length - 1].end).replace(/^[\s,.:;!?-]+/, '').trim();
-  return rest || null;
-}
 
 function createAssistantService({
   getSettings,
@@ -133,4 +111,4 @@ function createAssistantService({
   };
 }
 
-module.exports = { createAssistantService, matchWakeWord };
+module.exports = { createAssistantService };

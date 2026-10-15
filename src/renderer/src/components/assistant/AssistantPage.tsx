@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Well, WellCard } from '@/components/ui/well';
 import { useAssistant } from '@/hooks/use-assistant';
-import type { AssistantRun, AssistantStep } from '@/lib/ipc';
+import { ipc, type AssistantRun, type AssistantStep } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
 
 const EXAMPLES = [
@@ -142,6 +142,11 @@ function RunCard({ run, onApprove, onCancel }: { run: AssistantRun; onApprove: (
 
 export function AssistantPage({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const { runs, providers, settings, refreshProviders, start, approve, cancel } = useAssistant();
+  // The key that sends speech to the assistant (Settings → General → Command key).
+  const [commandKey, setCommandKey] = useState('Right ⌥');
+  useEffect(() => {
+    ipc?.getConfig?.().then((c) => { if (c.commandHotkey?.label) setCommandKey(c.commandHotkey.label); }).catch(() => {});
+  }, []);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -177,8 +182,8 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings?: () => void 
       <div className="px-7 pt-12 pb-3 [-webkit-app-region:drag]">
         <h2 className="text-xl font-bold tracking-tight">Assistant</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Ask in words or say “{settings?.wakeWord ? settings.wakeWord.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Hey Tella'}, …” while dictating
-          {settings && !settings.voiceTrigger ? ' (turn on in Settings)' : ''}. Your signed-in AI plans each step; Tellaflow runs it on this Mac and asks before changing anything.
+          Type below, or hold <kbd className="font-mono text-foreground">{commandKey}</kbd> anywhere and speak.
+          Your signed-in AI plans each step; Tellaflow runs it on this Mac and asks before changing anything.
         </p>
       </div>
 

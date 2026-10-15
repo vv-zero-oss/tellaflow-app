@@ -53,7 +53,7 @@ describe('island assistant', () => {
     t.step('r2', { id: 2, type: 'action', tool: 'quit_app', args: { name: 'Music' } });
     t.step('r2', { id: 3, type: 'approval', actionId: 2, status: 'pending', tool: 'quit_app' });
     expect(t.last().state).toBe('approval');
-    expect(t.last().content.notice).toMatchObject({ title: 'Allow Quit app: Music?', primary: 'Allow', tertiary: 'Deny' });
+    expect(t.last().content.notice).toMatchObject({ title: 'Quit app?', body: 'Name: Music', primary: 'Allow', tertiary: 'Deny' });
 
     expect(t.ia.action('approve')).toBe(true);
     expect(t.assistant.respondApproval).toHaveBeenCalledWith('r2', 2, true);
@@ -89,6 +89,18 @@ describe('island assistant', () => {
     t.step('r5', { id: 1, type: 'error', text: "The AI didn't follow the step format" });
     expect(t.last().state).toBe('error');
     expect(t.ia.action('retry')).toEqual({ retry: 'do it' });
+  });
+
+  it('never shows a check mark for a denied or failed action', () => {
+    const t = setup();
+    t.ia.expect('open safari');
+    t.ia.handle('assistant-run', { id: 'r6', request: 'open safari', status: 'running' });
+    t.step('r6', { id: 2, type: 'action', tool: 'open_app', args: { name: 'Safari' } });
+    t.step('r6', { id: 3, type: 'result', actionId: 2, ok: false, error: 'The user denied this action.' });
+    expect(t.last().content.plan.steps).toEqual([{ label: 'Open app: Safari — denied', status: 'pending' }]);
+    t.step('r6', { id: 4, type: 'action', tool: 'create_note', args: { title: 'Groceries' } });
+    t.step('r6', { id: 5, type: 'result', actionId: 4, ok: false, error: 'spawn osascript ENOENT' });
+    expect(t.last().content.plan.steps[1]).toEqual({ label: 'Create note: Groceries — failed', status: 'pending' });
   });
 });
 

@@ -31,8 +31,6 @@ const DEFAULTS = {
   audioRetentionDays: 30,
   assistantProvider: 'auto',
   assistantAutoApprove: false,
-  assistantVoiceTrigger: false,
-  assistantWakeWord: 'hey tella',
   ollamaModel: '',
   automationGranted: false,
 };
@@ -192,20 +190,15 @@ function setAudioRetentionDays(days) { setSetting('audioRetentionDays', Number(d
 const ASSISTANT_PROVIDERS = ['auto', 'claude', 'codex', 'gemini', 'ollama'];
 function getAssistantSettings() {
   const provider = getSetting('assistantProvider');
-  const wake = getSetting('assistantWakeWord');
   return {
     provider: ASSISTANT_PROVIDERS.includes(provider) ? provider : 'auto',
     autoApprove: getBool('assistantAutoApprove'),
-    voiceTrigger: getBool('assistantVoiceTrigger'),
-    wakeWord: typeof wake === 'string' && wake.trim() ? wake.trim().slice(0, 40) : DEFAULTS.assistantWakeWord,
     ollamaModel: typeof getSetting('ollamaModel') === 'string' ? getSetting('ollamaModel') : '',
   };
 }
 function setAssistantSettings(patch = {}) {
   if (patch.provider !== undefined && ASSISTANT_PROVIDERS.includes(patch.provider)) setSetting('assistantProvider', patch.provider);
   if (patch.autoApprove !== undefined) setSetting('assistantAutoApprove', !!patch.autoApprove);
-  if (patch.voiceTrigger !== undefined) setSetting('assistantVoiceTrigger', !!patch.voiceTrigger);
-  if (typeof patch.wakeWord === 'string') setSetting('assistantWakeWord', patch.wakeWord.trim().slice(0, 40));
   if (typeof patch.ollamaModel === 'string') setSetting('ollamaModel', patch.ollamaModel.trim().slice(0, 100));
   return getAssistantSettings();
 }

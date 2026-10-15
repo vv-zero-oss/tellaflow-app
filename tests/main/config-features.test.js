@@ -20,7 +20,7 @@ describe('feature settings defaults', () => {
     expect(config.getMeetingNotesEnabled()).toBe(false); // opt-in
     expect(config.getMeetingBrowserDetection()).toBe(true);
     expect(config.getAudioRetentionDays()).toBe(30);
-    expect(config.getAssistantSettings()).toEqual({ provider: 'auto', autoApprove: false, voiceTrigger: false, wakeWord: 'hey tella', ollamaModel: '' });
+    expect(config.getAssistantSettings()).toEqual({ provider: 'auto', autoApprove: false, ollamaModel: '' });
   });
 
   it('persists toggles and validates assistant settings', () => {
@@ -29,8 +29,8 @@ describe('feature settings defaults', () => {
     config.setAudioRetentionDays(0);
     expect(config.getMeetingNotesEnabled()).toBe(true);
     expect(config.getAudioRetentionDays()).toBe(0);
-    const s = config.setAssistantSettings({ provider: 'nonsense', autoApprove: true, wakeWord: '  OK Tella  ' });
-    expect(s).toMatchObject({ provider: 'auto', autoApprove: true, wakeWord: 'OK Tella' });
+    const s = config.setAssistantSettings({ provider: 'nonsense', autoApprove: true });
+    expect(s).toMatchObject({ provider: 'auto', autoApprove: true });
     expect(config.setAssistantSettings({ provider: 'codex' }).provider).toBe('codex');
   });
 });

@@ -32,6 +32,15 @@ function actionLabel(tool, args) {
   return first ? `${name}: ${clip(first, 40)}` : name;
 }
 
+/** What an action will do, for the approval card: "Title: Groceries · Body: eggs and milk". */
+function describeArgs(args) {
+  if (!args || typeof args !== 'object') return '';
+  return Object.entries(args)
+    .filter(([, v]) => v !== '' && v != null)
+    .map(([k, v]) => `${k.charAt(0).toUpperCase()}${k.slice(1).replace(/_/g, ' ')}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+    .join(' · ');
+}
+
 const PROVIDER_LABELS = { claude: 'Claude', codex: 'ChatGPT (Codex)', gemini: 'Gemini', ollama: 'Ollama' };
 
 function createIslandAssistant({ island, assistant, openAssistantPage = () => {}, openSettings = () => {}, startSignIn = () => {} }) {
@@ -99,16 +108,19 @@ function createIslandAssistant({ island, assistant, openAssistantPage = () => {}
     switch (step.type) {
       case 'action':
         for (const a of run.actions.values()) if (a.status === 'current') a.status = 'done';
-        run.actions.set(step.id, { label: actionLabel(step.tool, step.args), status: 'current', preview: step.preview });
+        run.actions.set(step.id, { label: actionLabel(step.tool, step.args), status: 'current', tool: step.tool, args: step.args });
         plan();
         break;
       case 'approval':
         if (step.status === 'pending') {
           run.approvalId = step.actionId;
           const a = run.actions.get(step.actionId);
-          const body = step.preview ? clip(step.preview, 160) : a ? a.label : actionLabel(step.tool, step.args);
+          const args = step.args ?? a?.args;
+          const name = String(step.tool || a?.tool || 'action').replace(/_/g, ' ');
+          // Title: the action. Body: exactly what it will do (or the script).
+          const body = step.preview ? clip(step.preview, 160) : clip(describeArgs(args), 160) || 'Tellaflow will run this on your Mac.';
           island.show('approval', {
-            content: { notice: { title: `Allow ${a ? a.label : actionLabel(step.tool, step.args)}?`, body, primary: 'Allow', secondary: null, tertiary: 'Deny' } },
+            content: { notice: { title: `${name.charAt(0).toUpperCase()}${name.slice(1)}?`, body, primary: 'Allow', secondary: null, tertiary: 'Deny' } },
           });
         } else {
           run.approvalId = null;
@@ -117,7 +129,13 @@ function createIslandAssistant({ island, assistant, openAssistantPage = () => {}
         break;
       case 'result': {
         const a = run.actions.get(step.actionId);
-        if (a) a.status = 'done';
+        if (a && step.ok === false) {
+          // Denied or failed: no check mark.
+          a.status = 'pending';
+          a.label += /denied/i.test(step.error || '') ? ' — denied' : ' — failed';
+        } else if (a) {
+          a.status = 'done';
+        }
         plan();
         break;
       }
