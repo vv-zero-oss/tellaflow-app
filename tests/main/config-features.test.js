@@ -61,6 +61,18 @@ describe('auto-learned dictionary entries', () => {
     expect(config.addLearnedEntries([{ from: 'katlin', to: 'Kaitlyn' }])).toHaveLength(1);
   });
 
+  it('filters out corrections that would not be added, without writing', () => {
+    const config = freshConfig();
+    config.addDictionaryEntry('jon', 'John');
+    config.blockLearnedEntries([{ from: 'katlin', to: 'Caitlin' }]);
+    expect(config.filterNewLearnedEntries([
+      { from: 'Jon', to: 'John' },
+      { from: 'katlin', to: 'Caitlin' },
+      { from: 'cooper netties', to: 'Kubernetes' },
+    ])).toEqual([{ from: 'cooper netties', to: 'Kubernetes' }]);
+    expect(config.getDictionary()).toHaveLength(1);
+  });
+
   it('deleting a manual entry does not blocklist it', () => {
     const config = freshConfig();
     config.addDictionaryEntry('jon', 'John');

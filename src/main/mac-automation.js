@@ -56,6 +56,30 @@ end tell
 return appName & linefeed & bid & linefeed & winTitle & linefeed & fv
 `;
 
+// Like FRONTMOST_CONTEXT_SCRIPT, but when the focused element has no value it
+// asks the app to expose its accessibility tree (Electron apps such as Slack,
+// Discord, Notion and VS Code, and Chromium browsers, keep it off unless an
+// assistive app sets AXManualAccessibility) and reads again.
+const FOCUSED_FIELD_SCRIPT = `
+set appName to ""
+set fv to ""
+tell application "System Events"
+  set p to first application process whose frontmost is true
+  set appName to name of p
+  try
+    set fv to (value of attribute "AXValue" of (value of attribute "AXFocusedUIElement" of p)) as text
+  end try
+  if fv is "" then
+    try
+      set value of attribute "AXManualAccessibility" of p to true
+      delay 0.1
+      set fv to (value of attribute "AXValue" of (value of attribute "AXFocusedUIElement" of p)) as text
+    end try
+  end if
+end tell
+return appName & linefeed & "" & linefeed & "" & linefeed & fv
+`;
+
 function parseContextOutput(out, maxValue = 4000) {
   const lines = String(out || '').split('\n');
   const [app = '', bundleId = '', windowTitle = '', ...rest] = lines;
@@ -80,7 +104,7 @@ async function getFrontmostContext() {
 /** { app, value } of the focused text field — used by auto-learn. */
 async function readFocusedField() {
   try {
-    const ctx = parseContextOutput(await runAppleScript(FRONTMOST_CONTEXT_SCRIPT, [], { timeout: 1500 }), 20000);
+    const ctx = parseContextOutput(await runAppleScript(FOCUSED_FIELD_SCRIPT, [], { timeout: 1500 }), 20000);
     return { app: ctx.app, value: ctx.focusedValue };
   } catch {
     return null;

@@ -103,6 +103,46 @@ describe('auto-learn watcher', () => {
     expect(learned).toEqual([{ from: 'katlin', to: 'Caitlin' }]);
   });
 
+  it('learns when the correction replaces most of a short dictation', async () => {
+    const pasted = 'cooper netties docs';
+    const values = [pasted, 'Kubernetes docs', 'Kubernetes docs'];
+    const timers = fakeTimers();
+    const learned = [];
+    const w = createAutoLearnWatcher({
+      readFocused: async () => ({ app: 'Notes', value: values.length > 1 ? values.shift() : values[0] }),
+      onLearn: (c) => learned.push(...c),
+      timers,
+      windowMs: 1e9,
+    });
+    w.watch(pasted, { app: 'Notes' });
+    await timers.runAll(5);
+    w.stop(true);
+    expect(learned).toEqual([{ from: 'cooper netties', to: 'Kubernetes' }]);
+  });
+
+  it('waits for a slow paste to land before taking the baseline', async () => {
+    const pasted = 'thanks katlin for the notes';
+    const seq = [
+      { app: 'Finder', value: '' }, // target app not frontmost yet
+      { app: 'Mail', value: 'Hi,' }, // paste not in the field yet
+      { app: 'Mail', value: `Hi, ${pasted}` },
+      { app: 'Mail', value: 'Hi, thanks Caitlin for the notes' },
+    ];
+    const timers = fakeTimers();
+    const learned = [];
+    const w = createAutoLearnWatcher({
+      readFocused: async () => (seq.length > 1 ? seq.shift() : seq[0]),
+      onLearn: (c) => learned.push(...c),
+      timers,
+      windowMs: 1e9,
+      log: {},
+    });
+    w.watch(pasted, { app: 'Mail' });
+    await timers.runAll(6);
+    w.stop(true);
+    expect(learned).toEqual([{ from: 'katlin', to: 'Caitlin' }]);
+  });
+
   it('does nothing when disabled or when the field never contained the paste', async () => {
     const timers = fakeTimers();
     const learned = [];
@@ -110,7 +150,7 @@ describe('auto-learn watcher', () => {
     disabled.watch('hello world');
     expect(disabled.isWatching()).toBe(false);
 
-    const w = createAutoLearnWatcher({ readFocused: async () => ({ app: 'X', value: 'unrelated' }), onLearn: (c) => learned.push(c), timers });
+    const w = createAutoLearnWatcher({ readFocused: async () => ({ app: 'X', value: 'unrelated' }), onLearn: (c) => learned.push(c), timers, log: {} });
     w.watch('hello there friend', { app: 'X' });
     await timers.runAll();
     expect(w.isWatching()).toBe(false);
