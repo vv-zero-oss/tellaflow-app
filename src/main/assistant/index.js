@@ -59,7 +59,8 @@ function createAssistantService({
       request: text,
       complete: (prompt, o) => provider.complete(prompt, o),
       tools,
-      autoApprove: !!settings.autoApprove,
+      fullAccess: !!settings.fullAccess,
+      vision: !!provider.vision,
       maxSteps: 10,
       signal: run.controller.signal,
       onStep: (step) => {

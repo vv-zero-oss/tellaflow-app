@@ -183,7 +183,8 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings?: () => void 
         <h2 className="text-xl font-bold tracking-tight">Assistant</h2>
         <p className="text-sm text-muted-foreground mt-1">
           Type below, or hold <kbd className="font-mono text-foreground">{commandKey}</kbd> anywhere and speak.
-          Your signed-in AI plans each step; Tellaflow runs it on this Mac and asks before changing anything.
+          Your signed-in AI plans each step and can look at your screen; Tellaflow runs it on this Mac
+          {settings && !settings.fullAccess ? ', asking before it changes anything.' : ' right away — Full access is on.'}
         </p>
       </div>
 
