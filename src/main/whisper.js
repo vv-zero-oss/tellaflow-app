@@ -88,7 +88,7 @@ async function _doTranscribe(pcmFloat32Array) {
   };
 
   if (config.getProgrammingMode()) {
-    opts.initial_prompt = 'Technical dictation with programming terminology.';
+    opts.prompt = 'Technical dictation with programming terminology.'; // addon field is `prompt`
   }
 
   const result = await whisperTranscribe(opts);

@@ -13,6 +13,9 @@ export function useDictionary() {
     refresh();
   }, [refresh]);
 
+  // Auto-learned words arrive from the main process.
+  useEffect(() => ipc.onDictionaryChanged?.(setEntries), []);
+
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;

@@ -146,6 +146,11 @@ function createTestDb() {
           const row = tables.settings.find((r) => r.key === args[0]);
           return row ? { value: row.value } : undefined;
         }
+        // SELECT from_word, to_word, pack_id FROM dictionary WHERE id = ?
+        if (/SELECT from_word, to_word, pack_id FROM dictionary WHERE id = \?/i.test(s)) {
+          const row = tables.dictionary.find((r) => r.id === Number(args[0]));
+          return row ? { from_word: row.from_word, to_word: row.to_word, pack_id: row.pack_id ?? null } : undefined;
+        }
         // SELECT id, pack_id FROM dictionary WHERE lower(from_word) = lower(?)
         if (/SELECT id, pack_id FROM dictionary WHERE lower\(from_word\) = lower\(\?\)/i.test(s)) {
           const from = args[0];

@@ -10,6 +10,7 @@ let onCheckForUpdatesFn = null;
 let onInstallUpdateFn = null;
 let getUpdaterStatusFn = null;
 let quitCallback = null;
+let getExtraItemsFn = null;
 
 function getIconPath() {
   const { app } = require('electron');
@@ -30,7 +31,9 @@ function createTray({
   onCheckForUpdates,
   onInstallUpdate,
   getUpdaterStatus,
+  getExtraItems,
 }) {
+  getExtraItemsFn = getExtraItems;
   onTrayClickFn = onTrayClick;
   onStartRecordingFn = onStartRecording;
   onStopRecordingFn = onStopRecording;
@@ -83,8 +86,12 @@ function buildTrayMenu() {
           label: 'Start Recording',
           click: () => { if (onStartRecordingFn) onStartRecordingFn(); },
         },
-    { type: 'separator' },
   ];
+
+  // Contextual items (meeting notes, recordings needing attention).
+  let extra = [];
+  try { extra = getExtraItemsFn ? getExtraItemsFn() || [] : []; } catch {}
+  template.push(...extra, { type: 'separator' });
 
   if (updateDownloaded) {
     const ver = status.updateVersion ? ` (v${status.updateVersion})` : '';

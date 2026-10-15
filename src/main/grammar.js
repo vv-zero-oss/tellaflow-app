@@ -338,8 +338,25 @@ function withTimeout(promise, ms, label) {
   });
 }
 
+// Unload the LLM after a quiet period: a 0.5-4B model holds 0.5-3 GB of RAM
+// that nothing else can use. It reloads (1-3 s) on the next recording start.
+const IDLE_UNLOAD_MS = 10 * 60 * 1000;
+let idleTimer = null;
+function armIdleUnload() {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    if (worker && pending.size === 0) {
+      console.log('Grammar worker idle — unloading model to free memory');
+      dispose();
+    }
+  }, IDLE_UNLOAD_MS);
+  idleTimer.unref?.();
+}
+
 async function correctGrammar(text, tone = 'casual') {
   if (!text || text.trim().length === 0) return text;
+  armIdleUnload();
 
   // Wait for the worker to be ready. The transcription pipeline already
   // shows "Formatting..." to the user during this call, so a short wait
@@ -368,6 +385,7 @@ async function correctGrammar(text, tone = 'casual') {
 }
 
 async function dispose() {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
   // Reject any in-flight corrections before clearing the map so callers
   // unblock instead of hanging on a promise that will never resolve.
   for (const [, p] of pending) p.reject(new Error('Grammar worker disposed'));
@@ -384,6 +402,7 @@ async function restartWorker() {
 
 async function warmup() {
   if (!isModelAvailable()) return;
+  armIdleUnload();
   try { await ensureWorker(); } catch (err) { console.warn('Grammar warmup failed:', err.message); }
 }
 
@@ -401,4 +420,5 @@ module.exports = {
   dispose,
   restartWorker,
   warmup,
+  isLoaded: () => workerReady,
 };

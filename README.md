@@ -14,6 +14,11 @@ Offline speech-to-text for macOS. Hold a hotkey, speak, release — your words a
 - **Light & dark themes** — follows your preference or the system setting.
 - **Floating toast** — a small pill-shaped indicator with an 8-bit waveform animation appears near your cursor while recording.
 - **Programming mode** — biases the model toward technical vocabulary.
+- **Crash-safe transcription** (0.9) — Whisper/Parakeet run in a supervised worker process that restarts itself after a crash, retries the interrupted job, and is recycled periodically to release memory. Every recording is saved and journaled before transcription; anything that fails or is cut off by a crash shows up under **Transcripts → Needs attention** with its audio, ready to retry after restarts.
+- **Learns from your corrections** (0.9) — fix a misheard word right after dictating and it's added to your Dictionary automatically.
+- **App-aware vocabulary** (0.9) — recognizes people's names in Slack and other chat apps, and file names in Cursor/VS Code ("index dot js" → `index.js`).
+- **Automatic meeting notes** (0.9, opt-in) — detects Zoom, Google Meet, Teams and Slack huddles and transcribes the meeting locally in 30-second chunks.
+- **Assistant** (0.9) — say "Hey Tella, …" or type a request. An AI you're already signed in to (Claude Code, Codex or Gemini CLI, or local Ollama — no API keys) plans each step, and Tellaflow carries it out on your Mac (open apps, reminders, notes, calendar, music, volume, AppleScript) showing every step and asking before it changes anything. Run `npm run test:assistant-e2e` to exercise it against your signed-in Claude CLI.
 
 ## Requirements
 

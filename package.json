@@ -1,6 +1,6 @@
 {
   "name": "tellaflow",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "macOS menubar dictation app powered by Whisper",
   "main": "src/main/index.js",
   "scripts": {
@@ -18,7 +18,9 @@
     "postinstall": "node scripts/postinstall.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "DYLD_LIBRARY_PATH=./node_modules/@kutalia/whisper-node-addon/dist/mac-arm64:$DYLD_LIBRARY_PATH vitest run --config vitest.config.integration.ts"
+    "test:integration": "DYLD_LIBRARY_PATH=./node_modules/@kutalia/whisper-node-addon/dist/mac-arm64:$DYLD_LIBRARY_PATH vitest run --config vitest.config.integration.ts",
+    "test:assistant-e2e": "vitest run --config vitest.config.integration.ts tests/integration/assistant-claude.test.js",
+    "typecheck": "tsc --noEmit -p ."
   },
   "author": "Tellaflow",
   "license": "MIT",

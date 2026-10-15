@@ -27,6 +27,82 @@ export interface AppConfig {
   parakeetAvailable?: boolean;
   microphoneDeviceId?: string;
   hotkeyActivationDelay?: number;
+  autoLearnEnabled?: boolean;
+  contextAwarenessEnabled?: boolean;
+  meetingNotesEnabled?: boolean;
+  meetingBrowserDetection?: boolean;
+  audioRetentionDays?: number;
+}
+
+export type FeatureSettingKey =
+  | 'autoLearnEnabled'
+  | 'contextAwarenessEnabled'
+  | 'meetingNotesEnabled'
+  | 'meetingBrowserDetection'
+  | 'audioRetentionDays';
+
+export interface FailedJob {
+  id: string;
+  audioPath: string | null;
+  source: 'dictation' | 'meeting' | 'recovered' | string;
+  error: string | null;
+  createdAt: number;
+  durationSec: number | null;
+  attempts: number;
+  meetingId: string | null;
+}
+
+export interface MeetingState {
+  enabled: boolean;
+  active: boolean;
+  app: string | null;
+  since: number | null;
+  historyId: number | null;
+}
+
+export type AssistantProviderId = 'claude' | 'codex' | 'gemini' | 'ollama';
+
+export interface AssistantSettings {
+  provider: 'auto' | AssistantProviderId;
+  autoApprove: boolean;
+  voiceTrigger: boolean;
+  wakeWord: string;
+  ollamaModel: string;
+}
+
+export interface AssistantProviderStatus {
+  id: AssistantProviderId;
+  label: string;
+  available: boolean;
+  detail?: string;
+  path?: string;
+  models?: string[];
+}
+
+export type AssistantStep =
+  | { id: number; at: number; type: 'thought'; text: string }
+  | { id: number; at: number; type: 'action'; tool: string; args: Record<string, unknown>; readOnly: boolean; needsApproval: boolean; preview: string | null }
+  | { id: number; at: number; type: 'approval'; actionId: number; status: 'pending' | 'approved' | 'denied'; tool: string; args?: Record<string, unknown>; preview?: string | null }
+  | { id: number; at: number; type: 'result'; actionId: number; tool: string; ok: boolean; output?: unknown; error?: string }
+  | { id: number; at: number; type: 'final'; text: string }
+  | { id: number; at: number; type: 'error'; text: string };
+
+export interface AssistantRun {
+  id: string;
+  request: string;
+  steps: AssistantStep[];
+  status: 'running' | 'done' | 'error' | 'cancelled' | 'max-steps';
+  final: string | null;
+  provider: AssistantProviderId | null;
+  startedAt: number;
+  source: 'typed' | 'voice';
+}
+
+export interface AssistantToolInfo {
+  name: string;
+  description: string;
+  readOnly: boolean;
+  alwaysAsk: boolean;
 }
 
 export interface ParakeetModelInfo {
@@ -43,6 +119,7 @@ export interface HistoryEntry {
   text: string;
   timestamp: string;
   audioPath?: string | null;
+  kind?: 'dictation' | 'meeting' | 'assistant';
 }
 
 export interface ModelInfo {
@@ -253,6 +330,33 @@ interface TellaflowAPI {
   checkForUpdates: () => void;
   installUpdate: () => void;
   onUpdateStatus: (cb: (status: UpdateStatus) => void) => () => void;
+
+  getFailedJobs: () => Promise<FailedJob[]>;
+  retryFailedJob: (id: string) => Promise<string>;
+  retryAllFailedJobs: () => Promise<{ ok: number; failed: number }>;
+  discardFailedJob: (id: string) => Promise<FailedJob[]>;
+  onFailedJobsChanged: (cb: (jobs: FailedJob[]) => void) => () => void;
+  getTranscriptionStats: () => Promise<Record<string, number | boolean>>;
+
+  setFeatureSetting: (key: FeatureSettingKey, value: boolean | number) => Promise<boolean>;
+  onDictionaryChanged: (cb: (entries: DictionaryEntry[]) => void) => () => void;
+
+  getMeetingState: () => Promise<MeetingState>;
+  startMeetingNotes: () => Promise<MeetingState>;
+  stopMeetingNotes: () => Promise<MeetingState>;
+  onMeetingState: (cb: (s: MeetingState) => void) => () => void;
+
+  assistantStart: (request: string) => Promise<string>;
+  assistantApprove: (runId: string, actionId: number, approved: boolean) => Promise<boolean>;
+  assistantCancel: (runId: string) => Promise<boolean>;
+  assistantListRuns: () => Promise<AssistantRun[]>;
+  assistantDetect: () => Promise<AssistantProviderStatus[]>;
+  assistantTools: () => Promise<AssistantToolInfo[]>;
+  assistantGetSettings: () => Promise<AssistantSettings>;
+  assistantSetSettings: (patch: Partial<AssistantSettings>) => Promise<AssistantSettings>;
+  onAssistantRun: (cb: (run: AssistantRun) => void) => () => void;
+  onAssistantStep: (cb: (e: { runId: string; step: AssistantStep }) => void) => () => void;
+  onNavigate: (cb: (page: string) => void) => () => void;
 }
 
 export type UpdatePhase =

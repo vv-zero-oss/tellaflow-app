@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('tellaflow', {
   onStopRecording: (callback) => ipcRenderer.on('stop-recording', callback),
   sendAudio: (pcmBuffer) => ipcRenderer.send('audio-captured', pcmBuffer),
   sendAudioChunk: (pcmBuffer) => ipcRenderer.send('audio-chunk', pcmBuffer),
+  sendMeetingChunk: (pcmBuffer, info) => ipcRenderer.send('meeting-chunk', pcmBuffer, info || {}),
   sendCaptureReady: () => ipcRenderer.send('capture-ready'),
 
   // Toast IPC
@@ -118,6 +119,37 @@ contextBridge.exposeInMainWorld('tellaflow', {
   copyToClipboard: (text) => ipcRenderer.send('copy-to-clipboard', text),
   pasteText: (text) => ipcRenderer.send('paste-text', text),
   onHistoryUpdate: (callback) => { const h = (_, entries) => callback(entries); ipcRenderer.on('history-update', h); return () => ipcRenderer.removeListener('history-update', h); },
+
+  // Needs attention (failed / crash-interrupted recordings)
+  getFailedJobs: () => ipcRenderer.invoke('get-failed-jobs'),
+  retryFailedJob: (id) => ipcRenderer.invoke('retry-failed-job', id),
+  retryAllFailedJobs: () => ipcRenderer.invoke('retry-all-failed-jobs'),
+  discardFailedJob: (id) => ipcRenderer.invoke('discard-failed-job', id),
+  onFailedJobsChanged: (cb) => { const h = (_, jobs) => cb(jobs); ipcRenderer.on('failed-jobs-changed', h); return () => ipcRenderer.removeListener('failed-jobs-changed', h); },
+  getTranscriptionStats: () => ipcRenderer.invoke('get-transcription-stats'),
+
+  // Feature settings (auto-learn, context, meetings, retention)
+  setFeatureSetting: (key, value) => ipcRenderer.invoke('set-feature-setting', key, value),
+  onDictionaryChanged: (cb) => { const h = (_, d) => cb(d); ipcRenderer.on('dictionary-changed', h); return () => ipcRenderer.removeListener('dictionary-changed', h); },
+
+  // Meeting notes
+  getMeetingState: () => ipcRenderer.invoke('get-meeting-state'),
+  startMeetingNotes: () => ipcRenderer.invoke('start-meeting-notes'),
+  stopMeetingNotes: () => ipcRenderer.invoke('stop-meeting-notes'),
+  onMeetingState: (cb) => { const h = (_, st) => cb(st); ipcRenderer.on('meeting-state', h); return () => ipcRenderer.removeListener('meeting-state', h); },
+
+  // Assistant
+  assistantStart: (request) => ipcRenderer.invoke('assistant-start', request),
+  assistantApprove: (runId, actionId, approved) => ipcRenderer.invoke('assistant-approve', runId, actionId, approved),
+  assistantCancel: (runId) => ipcRenderer.invoke('assistant-cancel', runId),
+  assistantListRuns: () => ipcRenderer.invoke('assistant-list-runs'),
+  assistantDetect: () => ipcRenderer.invoke('assistant-detect'),
+  assistantTools: () => ipcRenderer.invoke('assistant-tools'),
+  assistantGetSettings: () => ipcRenderer.invoke('assistant-get-settings'),
+  assistantSetSettings: (patch) => ipcRenderer.invoke('assistant-set-settings', patch),
+  onAssistantRun: (cb) => { const h = (_, run) => cb(run); ipcRenderer.on('assistant-run', h); return () => ipcRenderer.removeListener('assistant-run', h); },
+  onAssistantStep: (cb) => { const h = (_, ev) => cb(ev); ipcRenderer.on('assistant-step', h); return () => ipcRenderer.removeListener('assistant-step', h); },
+  onNavigate: (cb) => { const h = (_, page) => cb(page); ipcRenderer.on('navigate', h); return () => ipcRenderer.removeListener('navigate', h); },
 
   // Status updates
   onStatusChange: (callback) => { const h = (_, status) => callback(status); ipcRenderer.on('status-change', h); return () => ipcRenderer.removeListener('status-change', h); },
