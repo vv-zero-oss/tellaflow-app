@@ -151,6 +151,7 @@ contextBridge.exposeInMainWorld('tellaflow', {
   assistantWorkspaceUrl: (threadId) => ipcRenderer.invoke('assistant-workspace-url', threadId),
   assistantTranscript: () => ipcRenderer.invoke('assistant-transcript'),
   assistantReset: () => ipcRenderer.invoke('assistant-reset'),
+  assistantStyleFrame: (options) => ipcRenderer.invoke('assistant-style-frame', options),
   assistantGetSettings: () => ipcRenderer.invoke('assistant-get-settings'),
   assistantSetSettings: (patch) => ipcRenderer.invoke('assistant-set-settings', patch),
   assistantInstallHelper: () => ipcRenderer.invoke('assistant-install-helper'),

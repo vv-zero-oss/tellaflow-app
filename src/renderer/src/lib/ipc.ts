@@ -73,6 +73,18 @@ export interface MeetingState {
   historyId: number | null;
 }
 
+/** The theme tokens the Assistant page hands bb's frame — the names both
+ *  apps share; main re-checks them (src/main/jarvis/bb/bb-chrome.js). */
+export const THEME_TOKENS_FOR_BB = [
+  'background', 'foreground', 'card', 'card-foreground', 'popover', 'popover-foreground',
+  'primary', 'primary-foreground', 'secondary', 'secondary-foreground',
+  'muted', 'muted-foreground', 'accent', 'accent-foreground',
+  'destructive', 'border', 'input', 'ring',
+  'sidebar', 'sidebar-foreground', 'sidebar-primary', 'sidebar-primary-foreground',
+  'sidebar-accent', 'sidebar-accent-foreground', 'sidebar-border', 'sidebar-ring',
+  'radius',
+] as const;
+
 export interface AssistantSettings {
   /** One of bb's provider ids ("claude-code", "codex", …), or 'auto'. */
   provider: string;
@@ -338,6 +350,7 @@ interface TellaflowAPI {
   assistantWorkspaceUrl: (threadId?: string) => Promise<{ ok: true; url: string; origin: string; projectId: string; threadId?: string } | { ok: false; error: string }>;
   assistantTranscript: () => Promise<AssistantTranscriptEntry[]>;
   assistantReset: () => Promise<void>;
+  assistantStyleFrame: (options: { theme: 'light' | 'dark'; tokens: Record<string, string> }) => Promise<{ ok: boolean; applied?: number; error?: string }>;
   assistantGetSettings: () => Promise<AssistantSettings>;
   assistantSetSettings: (patch: Partial<AssistantSettings>) => Promise<AssistantSettings>;
   assistantInstallHelper: () => Promise<{ ok: boolean; error?: string }>;

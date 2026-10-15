@@ -301,7 +301,13 @@ async function dispatchOsAction(action, ctx, chain) {
   if (!isLive(ctx)) return cancelled();
 
   if (!status.supported) {
-    // Terminal, and therefore NOT a Settings offer.
+    // The helper is simply not downloaded yet: that one has a fix, offered
+    // once the turn is over (Tellaflow installs it from the island).
+    if (/isn.t installed|not found|install it/i.test(status.peekaboo?.error ?? '') && ctx.offerHelper) {
+      ctx.offerHelper();
+      return refuse(ctx, 'desktop helper not installed', 'I need the desktop helper to work in your apps.');
+    }
+    // Otherwise terminal, and therefore NOT a Settings offer.
     const why = status.peekaboo?.error ? ` (${status.peekaboo.error})` : '';
     return refuse(ctx, `desktop actions unsupported${why}`, "I can't act on this Mac's desktop — that needs macOS 15 or later with the desktop helper installed.");
   }

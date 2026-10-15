@@ -76,6 +76,19 @@ writes: `ffmpeg -i in.mp3 -ac 1 -ar 16000 -map_metadata -1 -fflags +bitexact -c:
   Code "unauthenticated" (it reads the keychain/`~/.claude/.credentials.json`
   shape a Mac login writes) but runs it when named — the script names
   `claude-code` (`E2E_PROVIDER`).
+- **The assistant's island states:**
+  `xvfb-run -a node scripts/e2e-island-assistant.mjs` — every assistant view
+  (asking, reply short/long/streaming, steps, hand-off, confirmations with
+  long payloads, questions with long options, install/sign-in/accessibility
+  cards) with layout-breaking content; fails if a card leaves the window or
+  anything overflows. No AI needed. Island text follows `--island-text-*` /
+  `--island-weight-body` / `--island-leading-body`: labels are 600 at 1.15,
+  reading text 450 at 1.45, and a long block scrolls inside the card with
+  faded edges — never grows past the window.
+- **bb's theme** follows the app: the Assistant page reads its own computed
+  shadcn tokens and main injects them into bb's frame
+  (`src/main/jarvis/bb/bb-chrome.js`, `assistant-style-frame`); the e2e checks
+  bb's background equals the page's card colour in dark and light.
 - **Real Peekaboo / Accessibility / Screen Recording** need a Mac with the
   grants — not runnable in the container.
 

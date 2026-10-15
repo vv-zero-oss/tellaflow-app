@@ -38,6 +38,8 @@ const { createJarvis } = require('./jarvis');
 const osActions = require('./jarvis/desktop/os-actions');
 const { setPeekabooDownloadRoot, resolvePeekaboo } = require('./jarvis/desktop/peekaboo');
 const { installPeekaboo } = require('./jarvis/desktop/peekaboo-install');
+const { currentBbServer } = require('./jarvis/bb/supervisor');
+const { buildBbChromeScript } = require('./jarvis/bb/bb-chrome');
 const { formatTranscription } = require('./formatter');
 const { applyDictionary } = require('./dictionary');
 const snippets = require('./snippets');
@@ -570,6 +572,37 @@ function initCoreServices() {
     openChat: (url) => { pendingChatUrl = { url, at: Date.now() }; showMainWindow(); sendToMainWindow('navigate', 'assistant'); sendToMainWindow('assistant-open-chat', url); },
     openAccessibility: () => { osActions.requestAccessibility().catch(() => {}); },
     openSettings: () => { showMainWindow(); sendToMainWindow('navigate', 'settings'); },
+    // Insert: the answer typed into the app the user was in when they pressed
+    // the key — the same paste dictation uses, with the same Undo pill.
+    insertText: async (text) => {
+      const c = await peekRecordingContext();
+      const target = c?.ctx?.app && !isOwnApp(c.ctx.app) ? c.ctx.app : null;
+      pasteText(text, target);
+      lastPaste = { app: target };
+      const words = text.split(/\s+/).filter(Boolean).length;
+      island('dictation', 'done', { content: { doneText: `Inserted ${words} word${words === 1 ? '' : 's'}`, canUndo: true }, autoRestMs: 3500 });
+    },
+    copyText: (text) => clipboard.writeText(text),
+    // Answers live with the transcripts, as the assistant's always have.
+    saveAnswer: ({ request, text }) => {
+      config.setAssistantUsed(true);
+      history.addEntry(`Assistant: ${request}\n\n${text}`, null, { kind: 'assistant' });
+      sendToMainWindow('history-update', history.getEntries());
+    },
+    // Sign in: the AI's own login in Terminal (it opens the browser).
+    signIn: async () => {
+      let cmd = 'claude';
+      try {
+        const list = await assistant.providers();
+        const pick = config.getAssistantSettings().provider;
+        const p = list.find((x) => x.id === pick) || list.find((x) => x.status === 'unauthenticated' || x.status === 'expired');
+        if (p?.loginCommand) cmd = p.loginCommand;
+      } catch {}
+      if (process.platform !== 'darwin') { showMainWindow(); sendToMainWindow('navigate', 'settings'); return; }
+      macAutomation.runAppleScript('tell application "Terminal"\nactivate\ndo script (item 1 of argv)\nend tell', [cmd])
+        .catch((err) => console.error('[assistant] could not open Terminal for sign-in:', err.message));
+    },
+    installHelper: (onProgress) => installPeekaboo(onProgress),
   });
 
   meetingDetector = createMeetingDetector({
@@ -634,6 +667,8 @@ function initCoreServices() {
         startClickRecording: () => startClickRecording(),
         askMeeting: (info) => askToTranscribeMeeting(info),
         command: (request) => startAssistantFromVoice(request),
+        // Any assistant view, for the island gallery (scripts/e2e-island-assistant.mjs).
+        show: (state, opts) => island('assistant', state, opts),
         offerWord: (corrections) => {
           pendingLearn = { corrections, app: 'e2e' };
           island('learn', 'dictionary', { correctedWord: corrections[0].to });
@@ -935,8 +970,11 @@ async function startApp() {
   }
 
   // Bring bb up and warm the assistant's thread in the background, so the
-  // first command answers in seconds rather than after a cold start.
-  setTimeout(() => { assistant?.warm().catch(() => {}); }, 8000).unref?.();
+  // first command answers in seconds rather than after a cold start — but
+  // only for someone who uses the assistant: a warm is a (tiny) model call,
+  // and nobody who only dictates should pay for one on every launch. Their
+  // first command warms it on key-down (beginRecording) instead.
+  if (config.getAssistantUsed()) setTimeout(() => { assistant?.warm().catch(() => {}); }, 8000).unref?.();
 
   startHotkeyListener();
   initFloatingBar();
@@ -1066,7 +1104,7 @@ function startHotkeyListener() {
         sounds.playStart();
         sounds.muteMusic();
         broadcastStatus(recordingPurpose === 'command' ? 'Listening for a command...' : 'Recording...');
-        island('dictation', 'listening');
+        island('dictation', recordingPurpose === 'command' ? 'asking' : 'listening');
         createAudioCaptureWindow();
         beginRecording();
       },
@@ -1782,6 +1820,25 @@ function registerIPC() {
     return assistant.workspaceUrl(typeof threadId === 'string' ? threadId : undefined).then((r) => ({ ok: true, ...r }), errorOf);
   });
   ipcMain.handle('assistant-transcript', () => assistant.transcript());
+  // bb's framed app in Tellaflow's theme (src/main/jarvis/bb/bb-chrome.js).
+  // Only ever into a frame of the window that asked, served by OUR bb.
+  ipcMain.handle('assistant-style-frame', async (event, options) => {
+    const server = currentBbServer();
+    if (!server) return { ok: false, error: 'the assistant is not running' };
+    const origin = server.client.origin;
+    const frames = event.sender.mainFrame.framesInSubtree.filter((f) => {
+      try { return new URL(f.url).origin === origin; } catch { return false; }
+    });
+    const script = buildBbChromeScript({
+      theme: options?.theme === 'dark' ? 'dark' : 'light',
+      tokens: options?.tokens && typeof options.tokens === 'object' ? options.tokens : {},
+    });
+    let applied = 0;
+    for (const frame of frames) {
+      try { await frame.executeJavaScript(script); applied++; } catch (err) { console.warn('[assistant] could not style bb:', err.message); }
+    }
+    return { ok: applied > 0, applied };
+  });
   ipcMain.handle('assistant-reset', () => assistant.reset());
   ipcMain.handle('assistant-get-settings', () => config.getAssistantSettings());
   ipcMain.handle('assistant-set-settings', (_, patch) => config.setAssistantSettings(patch || {}));

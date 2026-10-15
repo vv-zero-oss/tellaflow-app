@@ -163,6 +163,32 @@ try {
   await sleep(2500);
   await main.screenshot({ path: path.join(OUT, 'assistant-page.png') });
 
+  // bb wears the app's theme: its mode, and its background is the card it sits in.
+  const themeMatches = async () => {
+    const app = await main.evaluate(() => ({
+      dark: document.documentElement.classList.contains('dark'),
+      card: getComputedStyle(document.querySelector('[data-assistant-frame]').parentElement).backgroundColor,
+    }));
+    const bb = await frame.evaluate(() => ({
+      dark: document.documentElement.classList.contains('dark'),
+      bg: getComputedStyle(document.body).backgroundColor,
+      styled: !!document.getElementById('__tellaflow_bb_chrome'),
+    }));
+    return { ok: bb.styled && app.dark === bb.dark && app.card === bb.bg, app, bb };
+  };
+  if (frame) {
+    const dark = await waitFor(async () => { const r = await themeMatches(); return r.ok ? r : null; }, { label: 'bb in the dark theme', timeout: 15_000 }).catch(async () => themeMatches());
+    check('bb wears the app’s dark theme', dark.ok, JSON.stringify(dark));
+    // What the app's own applyTheme does (src/renderer/src/lib/theme.ts).
+    await main.evaluate(() => { window.tellaflow.setTheme('light'); document.documentElement.classList.remove('dark'); document.documentElement.classList.add('light'); });
+    const light = await waitFor(async () => { const r = await themeMatches(); return r.ok && !r.app.dark ? r : null; }, { label: 'bb in the light theme', timeout: 15_000 }).catch(async () => themeMatches());
+    check('bb follows the app to light, live', light.ok && !light.app.dark, JSON.stringify(light));
+    await sleep(1000);
+    await main.screenshot({ path: path.join(OUT, 'assistant-page-light.png') });
+    await main.evaluate(() => { window.tellaflow.setTheme('dark'); document.documentElement.classList.remove('light'); document.documentElement.classList.add('dark'); });
+    await sleep(800);
+  }
+
   await T(() => globalThis.__tellaflowTest.navigate('settings'));
   await sleep(800);
   await main.locator('text=Run actions without asking').first().scrollIntoViewIfNeeded();

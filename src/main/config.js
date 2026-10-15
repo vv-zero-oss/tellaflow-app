@@ -37,6 +37,8 @@ const DEFAULTS = {
   assistantDesktopActions: true,
   // A still of the screen goes with each request (needs Screen Recording).
   assistantScreenVision: true,
+  // Set once the assistant has answered: from then on it warms at launch.
+  assistantUsed: false,
 };
 
 const AUTO_LEARN_PACK_ID = 'auto-learned';
@@ -193,6 +195,8 @@ function getAssistantSettings() {
     screenVision: getBool('assistantScreenVision'),
   };
 }
+function getAssistantUsed() { return getBool('assistantUsed'); }
+function setAssistantUsed(v) { if (getBool('assistantUsed') !== !!v) setSetting('assistantUsed', !!v); }
 function setAssistantSettings(patch = {}) {
   if (typeof patch.provider === 'string' && PROVIDER_ID.test(patch.provider)) setSetting('assistantProvider', patch.provider);
   if (patch.fullAccess !== undefined) setSetting('assistantFullAccess', !!patch.fullAccess);
@@ -357,6 +361,8 @@ module.exports = {
   getAudioRetentionDays,
   setAudioRetentionDays,
   getAssistantSettings,
+  getAssistantUsed,
+  setAssistantUsed,
   setAssistantSettings,
   getAutoLearnBlocklist,
   addLearnedEntries,

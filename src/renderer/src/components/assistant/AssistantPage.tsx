@@ -1,7 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, MessagesSquare, RotateCw } from 'lucide-react';
+import { Loader2, SquarePen, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { ipc } from '@/lib/ipc';
+import { THEME_TOKENS_FOR_BB, ipc } from '@/lib/ipc';
+
+/** This page's theme, read live: the mode and the shadcn tokens bb shares. */
+function currentTheme() {
+  const root = document.documentElement;
+  const style = getComputedStyle(root);
+  const tokens: Record<string, string> = {};
+  for (const name of THEME_TOKENS_FOR_BB) {
+    const v = style.getPropertyValue(`--${name}`).trim();
+    if (v) tokens[name] = v;
+  }
+  return { theme: root.classList.contains('dark') ? ('dark' as const) : ('light' as const), tokens };
+}
+
+/** Dress bb's frame as part of the app (main runs it inside the frame). */
+function styleBb() {
+  return ipc.assistantStyleFrame(currentTheme()).catch(() => ({ ok: false }));
+}
 
 /**
  * The assistant's chats — bb's own app, framed.
@@ -40,6 +57,13 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings?: () => void 
     }
   }, []);
 
+  // Tellaflow's theme changes (Settings, or the system's) restyle bb live.
+  useEffect(() => {
+    const observer = new MutationObserver(() => { styleBb(); });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
     open();
     // The island's "Open chat": show the chat the work just went into.
@@ -58,9 +82,9 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings?: () => void 
           </p>
         </div>
         <div className="flex gap-1.5 shrink-0 [-webkit-app-region:no-drag]">
-          <Button variant="outline" size="sm" onClick={() => open({ list: true })} title="All chats">
-            <MessagesSquare className="w-3.5 h-3.5" />
-            Chats
+          <Button variant="outline" size="sm" onClick={() => open({ list: true })} title="Start a new chat — your chats are listed beside it">
+            <SquarePen className="w-3.5 h-3.5" />
+            New chat
           </Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setFrameKey((k) => k + 1)} title="Reload">
             <RotateCw className="w-3.5 h-3.5" />
@@ -76,7 +100,8 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings?: () => void 
             title="Assistant chats"
             data-assistant-frame=""
             className="absolute inset-0 w-full h-full border-0"
-            onLoad={() => setLoading(false)}
+            // Covered until it wears the app's theme, so bb's own never flashes.
+            onLoad={() => { styleBb().finally(() => setLoading(false)); }}
           />
         )}
         {loading && !error && (

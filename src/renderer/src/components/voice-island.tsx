@@ -28,6 +28,7 @@ import {
   MicOff,
   Pause,
   Play,
+  Sparkles,
   Square,
   X,
 } from "lucide-react";
@@ -77,6 +78,13 @@ const ISLAND_CSS = `
   --island-leading: 1.15;
   --island-text-title: 14px;
   --island-text-button: 13px;
+  /* Reading text — an answer, the text a step will type — is set lighter and
+     looser than the island's labels: 600 at 1.15 is right for a chip and
+     tiring for four lines. Captions (step, status, notes) step down again. */
+  --island-text-body: 13px;
+  --island-weight-body: 450;
+  --island-leading-body: 1.45;
+  --island-text-caption: 12px;
   --island-wave-duration: 900ms;
   --island-shimmer-duration: 1400ms;
 }
@@ -164,6 +172,28 @@ const ISLAND_CSS = `
 }
 
 /* A highlight that sweeps through the text while the island thinks. */
+/* A long answer scrolls inside the card instead of growing it past the
+   screen; the edges fade where there is more to read (classes set from JS). */
+.island-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--island-track) transparent;
+}
+.island-scroll[data-more-above] { mask-image: linear-gradient(to bottom, transparent 0, #000 18px); }
+.island-scroll[data-more-below] { mask-image: linear-gradient(to top, transparent 0, #000 18px); }
+.island-scroll[data-more-above][data-more-below] {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+}
+.island-body {
+  font-size: var(--island-text-body);
+  font-weight: var(--island-weight-body);
+  line-height: var(--island-leading-body);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+  white-space: pre-wrap;
+}
+
 .island-shimmer {
   background-image: linear-gradient(
     90deg,
@@ -1062,6 +1092,7 @@ export type IslandState =
   | "none"
   | "idle"
   | "listening"
+  | "asking"
   | "dictating"
   | "thinking"
   | "transcribing"
@@ -1101,6 +1132,7 @@ export type IslandMaterial = "translucent" | "opaque";
 const PILL_HEIGHT: Partial<Record<IslandState, number>> = {
   idle: 20,
   listening: 30,
+  asking: 30,
   dictating: 30,
   thinking: 30,
   transcribing: 30,
@@ -1113,6 +1145,7 @@ const PILL_HEIGHT: Partial<Record<IslandState, number>> = {
 const PILL_PADDING: Partial<Record<IslandState, string>> = {
   idle: "p-0",
   listening: "p-0",
+  asking: "pl-2.5 pr-3",
   dictating: "px-[3px]",
   recording: "pl-3 pr-[3px]",
   done: "pl-3 pr-[3px]",
@@ -1123,6 +1156,7 @@ const LABELS: Record<IslandState, string> = {
   none: "",
   idle: "Voice typing ready",
   listening: "Listening",
+  asking: "Listening to your request",
   dictating: "Dictating",
   thinking: "Thinking",
   transcribing: "Transcribing",
@@ -1144,6 +1178,15 @@ const LABELS: Record<IslandState, string> = {
 export type IslandNotice = {
   title: string;
   body: string;
+  /** The exact payload of an action (text to type, an address), shown whole. */
+  quote?: string;
+  /** A line under everything: why this asks, what happens next. */
+  footnote?: string;
+  /** 0–1 while something downloads; null shows none. */
+  progress?: number | null;
+  /** The action the primary / secondary button sends, when not the state's default. */
+  primaryAction?: string;
+  secondaryAction?: string;
   primary?: string;
   secondary?: string | null;
   tertiary?: string | null;
@@ -1185,6 +1228,12 @@ export type IslandReply = {
   done?: boolean;
   /** The work went to a chat on the Assistant page. */
   chat?: boolean;
+  /** Which step of a desktop task this is (from 2 on). */
+  step?: number;
+  /** The answer can be typed into the app the user was in. */
+  canInsert?: boolean;
+  /** Copy was just pressed. */
+  copied?: boolean;
 };
 
 const spring = { type: "spring", bounce: 0.22, duration: 0.55 } as const;
@@ -1285,6 +1334,15 @@ export function VoiceIsland({
                     <Wave upright={upright} />
                   </button>
                 )}
+                {state === "asking" && (
+                  /* The command key: the same wave, marked as a request to the
+                     assistant, so you know what you're about to do — ask, not type. */
+                  <span className="flex h-full items-center gap-2">
+                    <Sparkles className="size-3.5 text-[var(--island-fg)]" aria-hidden="true" />
+                    <span className="text-[length:var(--island-text-button)] whitespace-nowrap">Ask</span>
+                    <Wave />
+                  </span>
+                )}
                 {state === "dictating" && (
                   <div className={cn("flex items-center gap-2.5", upright && "flex-col")}>
                     <RoundButton label="Cancel dictation" onClick={act("cancel-dictation")}>
@@ -1339,28 +1397,39 @@ export function VoiceIsland({
                     icon={<MicOff className="size-4 text-[var(--island-danger)]" aria-hidden="true" />}
                     title={notice?.title ?? "Microphone disconnected"}
                     body={notice?.body ?? "Your AirPods stopped sending audio. Reconnect them, then try again."}
+                    footnote={notice?.footnote}
                   >
                     {notice?.primary !== null && (
-                      <IslandButton tone="accent" onClick={act("retry")}>
+                      <IslandButton tone="accent" onClick={act(notice?.primaryAction ?? "retry")}>
                         {notice?.primary ?? "Try again"}
                       </IslandButton>
                     )}
-                    <IslandButton onClick={act("dismiss")}>{notice?.secondary ?? "Dismiss"}</IslandButton>
+                    {notice?.secondary !== null && (
+                      <IslandButton onClick={act(notice?.secondaryAction ?? "dismiss")}>{notice?.secondary ?? "Dismiss"}</IslandButton>
+                    )}
                   </Notice>
                 )}
                 {state === "setup" && (
                   <Notice
                     icon={
-                      <AlertTriangle className="size-4 text-[var(--island-warning)]" aria-hidden="true" />
+                      typeof notice?.progress === "number" ? (
+                        <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                      ) : (
+                        <AlertTriangle className="size-4 text-[var(--island-warning)]" aria-hidden="true" />
+                      )
                     }
                     title={notice?.title ?? "Allow microphone access"}
                     body={notice?.body ?? "Voice typing needs the microphone to hear you. You can change this any time in System Settings."}
+                    footnote={notice?.footnote}
+                    progress={notice?.progress}
                   >
-                    <IslandButton tone="accent" onClick={act("open-settings")}>
-                      {notice?.primary ?? "Open System Settings"}
-                    </IslandButton>
+                    {notice?.primary !== null && (
+                      <IslandButton tone="accent" onClick={act(notice?.primaryAction ?? "open-settings")}>
+                        {notice?.primary ?? "Open System Settings"}
+                      </IslandButton>
+                    )}
                     {notice?.secondary !== null && (
-                      <IslandButton onClick={act("later")}>{notice?.secondary ?? "Later"}</IslandButton>
+                      <IslandButton onClick={act(notice?.secondaryAction ?? "later")}>{notice?.secondary ?? "Later"}</IslandButton>
                     )}
                   </Notice>
                 )}
@@ -1370,6 +1439,8 @@ export function VoiceIsland({
                     icon={<span className="size-2 rounded-full bg-[var(--island-fg)]" aria-hidden="true" />}
                     title={notice?.title ?? "Send this to #design?"}
                     body={notice?.body ?? "“Moved the review to Thursday at 2pm — the new mocks are in Figma under Island v3.”"}
+                    quote={notice?.quote}
+                    footnote={notice?.footnote}
                   >
                     <IslandButton tone="accent" onClick={act("approve")}>
                       {notice?.primary ?? "Send"}
@@ -1383,7 +1454,7 @@ export function VoiceIsland({
                   </Notice>
                 )}
                 {state === "reply" && (
-                  <Reply reply={content.reply} onStop={act("stop")} onDismiss={act("dismiss")} onOpenChat={act("open-chat")} />
+                  <Reply reply={content.reply} onAction={(a) => onAction?.(a)} />
                 )}
                 {state === "ask" && (
                   <Ask ask={content.ask} onAnswer={(i) => onAction?.(`answer:${i}`)} onDismiss={act("dismiss")} />
@@ -1690,77 +1761,135 @@ function VoicePlayback({ text }: { text: string }) {
   );
 }
 
-/* The assistant's answer, streamed. Text grows in place; the status line
-   says what it is doing while it works (a step of a desktop task, a tool). */
+/** A scroll area that fades its edges where there is more, and — while text
+ *  is still arriving — follows the newest line, unless the reader scrolled
+ *  up to read something (then it stays where they are). */
+function useFollowingScroll(dep: unknown, { follow = true }: { follow?: boolean } = {}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const pinned = useRef(follow);
+  const mark = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.toggleAttribute("data-more-above", el.scrollTop > 2);
+    el.toggleAttribute("data-more-below", el.scrollTop + el.clientHeight < el.scrollHeight - 2);
+  };
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+    mark();
+  }, [dep]);
+  const onScroll = () => {
+    const el = ref.current;
+    if (!el) return;
+    pinned.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 4;
+    mark();
+  };
+  return { ref, onScroll };
+}
+
+/* How long an answer reads as "short": set as a headline instead of body. */
+const SHORT_ANSWER = 90;
+
+/* The assistant's answer, streamed. Text grows in place; the status line says
+   what it is doing while it works (a step of a desktop task, a tool). A short
+   answer reads as a headline; a long one as body text in a scroll area that
+   fades where there is more, so the card never outgrows the screen. */
 function Reply({
   reply,
-  onStop,
-  onDismiss,
-  onOpenChat,
+  onAction,
 }: {
   reply?: IslandReply;
-  onStop: () => void;
-  onDismiss: () => void;
-  onOpenChat: () => void;
+  onAction: (action: string) => void;
 }) {
   const text = reply?.text ?? "";
-  const scroller = useRef<HTMLDivElement>(null);
-  // Follow the newest words, like a caption.
-  useLayoutEffect(() => {
-    const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [text]);
+  const short = text.length <= SHORT_ANSWER && !text.includes("\n");
+  const scroll = useFollowingScroll(text);
+  const working = !!reply?.working;
   return (
     <div className="flex w-[288px] flex-col gap-3" data-island-reply="">
       <div className="flex flex-col gap-2 px-2">
-        <div className="flex items-center gap-2">
-          {reply?.working ? (
-            <LoaderCircle className="size-4 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        <div className="flex min-w-0 items-center gap-2">
+          {working ? (
+            <LoaderCircle className="size-3.5 shrink-0 animate-spin text-[var(--island-fg-muted)] motion-reduce:animate-none" aria-hidden="true" />
           ) : reply?.done ? (
-            <Check className="size-4 shrink-0 text-[var(--island-success)]" aria-hidden="true" />
+            <Check className="size-3.5 shrink-0 text-[var(--island-success)]" aria-hidden="true" />
           ) : (
-            <span className="size-2 shrink-0 rounded-full bg-[var(--island-fg)]" aria-hidden="true" />
+            <span className="size-1.5 shrink-0 rounded-full bg-[var(--island-fg-muted)]" aria-hidden="true" />
           )}
-          <p className="truncate text-[length:var(--island-text-button)] text-[var(--island-fg-muted)]">
+          <p
+            className="min-w-0 flex-1 truncate text-[length:var(--island-text-caption)] text-[var(--island-fg-muted)]"
+            title={reply?.title}
+          >
             {reply?.title || "Assistant"}
           </p>
+          {reply?.step ? (
+            <span className="shrink-0 rounded-full bg-[var(--island-button)] px-1.5 py-0.5 text-[length:var(--island-text-caption)] leading-none text-[var(--island-fg-soft)] tabular-nums">
+              Step {reply.step}
+            </span>
+          ) : null}
         </div>
-        {text && (
+        {text ? (
           <div
-            ref={scroller}
-            className="max-h-[168px] overflow-y-auto text-[length:var(--island-text-title)] text-pretty whitespace-pre-wrap"
+            ref={scroll.ref}
+            onScroll={scroll.onScroll}
+            className="island-scroll max-h-[188px]"
+            data-island-reply-text=""
           >
-            {text}
+            <p
+              className={cn(
+                short
+                  ? "text-[length:var(--island-text-title)] leading-[1.35] text-pretty [overflow-wrap:anywhere]"
+                  : "island-body",
+              )}
+            >
+              {text}
+            </p>
           </div>
-        )}
-        {reply?.status && (
-          <p className="text-[length:var(--island-text-button)] text-[var(--island-fg-muted)]" aria-live="polite">
+        ) : null}
+        {reply?.status ? (
+          <p
+            className={cn(
+              "truncate text-[length:var(--island-text-caption)] text-[var(--island-fg-muted)]",
+              working && !text && "island-shimmer",
+            )}
+            aria-live="polite"
+            title={reply.status}
+          >
             {reply.status}
           </p>
-        )}
+        ) : null}
       </div>
       <div className="flex gap-2">
-        {reply?.working ? (
-          <IslandButton onClick={onStop}>
+        {working ? (
+          <IslandButton onClick={() => onAction("stop")}>
             <Square className="size-3 fill-current" aria-hidden="true" />
             Stop
           </IslandButton>
-        ) : (
+        ) : reply?.chat ? (
           <>
-            {reply?.chat && (
-              <IslandButton tone="accent" onClick={onOpenChat}>
-                Open chat
-              </IslandButton>
-            )}
-            <IslandButton onClick={onDismiss}>Dismiss</IslandButton>
+            <IslandButton tone="accent" onClick={() => onAction("open-chat")}>Open chat</IslandButton>
+            <IslandButton onClick={() => onAction("dismiss")}>Dismiss</IslandButton>
           </>
+        ) : reply?.canInsert && text ? (
+          <>
+            <IslandButton tone="accent" onClick={() => onAction("insert")} title="Type the answer into the app you were in">
+              Insert
+            </IslandButton>
+            <IslandButton onClick={() => onAction("copy")}>{reply.copied ? "Copied" : "Copy"}</IslandButton>
+            <IslandButton tone="ghost" className="flex-none px-2" onClick={() => onAction("dismiss")} aria-label="Dismiss">
+              <X className="size-4" aria-hidden="true" />
+            </IslandButton>
+          </>
+        ) : (
+          <IslandButton onClick={() => onAction("dismiss")}>Dismiss</IslandButton>
         )}
       </div>
     </div>
   );
 }
 
-/* The assistant's one question: each answer is a button. */
+/* The assistant's one question: each answer is a row that wraps, so a long
+   option reads in full instead of running off the card. */
 function Ask({
   ask,
   onAnswer,
@@ -1773,13 +1902,32 @@ function Ask({
   const options = ask?.options ?? [];
   return (
     <div className="flex w-[288px] flex-col gap-3">
-      <div className="flex flex-col gap-2 px-2">
-        <p className="text-[length:var(--island-text-button)] text-[var(--island-fg-muted)]">Question</p>
-        <p className="text-[length:var(--island-text-title)] text-pretty">{ask?.question ?? "Which one?"}</p>
+      <div className="flex flex-col gap-1.5 px-2">
+        <p className="text-[length:var(--island-text-caption)] text-[var(--island-fg-muted)]">Question</p>
+        <p
+          className={cn(
+            "max-h-[120px] overflow-y-auto",
+            (ask?.question ?? "").length > SHORT_ANSWER
+              ? "island-body text-[var(--island-fg)]"
+              : "text-[length:var(--island-text-title)] leading-[1.35] text-pretty [overflow-wrap:anywhere]",
+          )}
+        >
+          {ask?.question ?? "Which one?"}
+        </p>
+        {!options.length && (
+          <p className="text-[length:var(--island-text-caption)] text-[var(--island-fg-muted)]">
+            Hold the command key and say your answer.
+          </p>
+        )}
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1.5">
         {options.map((option, i) => (
-          <IslandButton key={`${i}-${option}`} tone={i === 0 ? "accent" : "neutral"} onClick={() => onAnswer(i)}>
+          <IslandButton
+            key={`${i}-${option}`}
+            tone={i === 0 ? "accent" : "neutral"}
+            className="h-auto min-h-[30px] justify-start py-1.5 text-left leading-snug whitespace-normal [overflow-wrap:anywhere]"
+            onClick={() => onAnswer(i)}
+          >
             {option}
           </IslandButton>
         ))}
@@ -1791,27 +1939,70 @@ function Ask({
   );
 }
 
+/* The exact payload of a step — read from the top, its edge fading where
+   there is more below. */
+function Quote({ text }: { text: string }) {
+  const scroll = useFollowingScroll(text, { follow: false });
+  return (
+    <div className="rounded-[var(--island-radius-row)] bg-[var(--island-button)] px-2.5 py-2">
+      <div
+        ref={scroll.ref}
+        onScroll={scroll.onScroll}
+        className="island-scroll island-body max-h-[116px] text-[var(--island-fg)]"
+        data-island-quote=""
+      >
+        {text}
+      </div>
+    </div>
+  );
+}
+
 function Notice({
   icon,
   title,
   body,
+  quote,
+  footnote,
+  progress,
   children,
 }: {
   icon: ReactNode;
   title: string;
   body: string;
+  /** Exactly what will happen — the text to type, the address to open —
+   *  shown whole in its own block, scrolling if it is long. */
+  quote?: string;
+  /** Why this one asks, in a line under everything else. */
+  footnote?: string;
+  /** 0–1 while something downloads. */
+  progress?: number | null;
   children: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex w-[288px] flex-col gap-3">
       <div className="flex flex-col gap-2 px-2">
-        <div className="flex items-center gap-2">
-          {icon}
-          <p className="text-[length:var(--island-text-title)]">{title}</p>
+        <div className="flex items-start gap-2">
+          <span className="mt-[3px] flex shrink-0">{icon}</span>
+          <p className="min-w-0 text-[length:var(--island-text-title)] leading-[1.3] text-balance [overflow-wrap:anywhere]">{title}</p>
         </div>
-        <p className="text-[length:var(--island-text-button)] text-pretty text-[var(--island-fg-muted)]">
-          {body}
-        </p>
+        {body && (
+          <p className="island-body max-h-[96px] overflow-y-auto text-[var(--island-fg-muted)]">{body}</p>
+        )}
+        {quote && <Quote text={quote} />}
+        {typeof progress === "number" && (
+          <div
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(progress * 100)}
+            className="h-1 overflow-hidden rounded-full bg-[var(--island-track)]"
+          >
+            <motion.div className="h-full rounded-full bg-[var(--island-fg)]" animate={{ width: `${Math.max(4, progress * 100)}%` }} />
+          </div>
+        )}
+        {footnote && (
+          <p className="text-[length:var(--island-text-caption)] leading-snug text-[var(--island-fg-muted)]">{footnote}</p>
+        )}
       </div>
       <div className="flex gap-2">{children}</div>
     </div>

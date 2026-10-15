@@ -60,6 +60,30 @@ function clip(s, n) {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 }
 
+/** Why a forced confirmation asks, in the user's terms. */
+const FORCED_WHY = [
+  [/^quit$/, 'Quitting can lose unsaved work, so this always asks.'],
+  [/^destructive menu path$/, "This can't be undone, so it always asks."],
+  [/^destructive shortcut$/, 'That shortcut quits or deletes, so it always asks.'],
+  [/^denylisted app/, 'That app holds passwords or system settings, so it always asks.'],
+  [/^opens a program$/, 'Opening it runs a program, so this always asks.'],
+];
+
+/**
+ * The confirmation card: the step as the title, its payload (text to type, an
+ * address, a file) quoted in full underneath, and — for one that always asks
+ * — why, in a footnote. The payload is never summarised: a confirmation that
+ * shows a preview is a click the user was talked into.
+ */
+function confirmCard(action, seen, reason) {
+  const described = loopParts.describeOsAction(action, seen);
+  const [head, ...rest] = described.split('\n\n');
+  const quote = rest.join('\n\n').replace(/^“|”$/g, '');
+  const title = `${head.replace(/:$/, '').replace(/^Type this$/, 'Type this text')}?`;
+  const why = reason ? FORCED_WHY.find(([re]) => re.test(reason))?.[1] ?? 'This one always asks.' : null;
+  return { title, body: '', ...(quote ? { quote } : {}), ...(why ? { footnote: why } : {}) };
+}
+
 /**
  * @param {object} deps
  * @param {{ show(state: string, opts?: object): void, rest(): void }} deps.island
@@ -172,11 +196,16 @@ function createJarvis(deps) {
     island.show('reply', {
       content: {
         reply: {
-          title: clip(active.request, 60),
+          title: clip(active.request, 140),
           text,
           status: active.status || null,
           working: !!active.working,
           chat: !!lastChatUrl && active.delegated,
+          ...(loop && loop.steps > 0 ? { step: loop.steps + 1 } : active.lastStep ? { step: active.lastStep } : {}),
+          // An answer in words (not a desktop task, not a hand-off) can be
+          // typed into the app the user was in, or copied.
+          canInsert: !active.working && !active.done && !active.delegated && !active.ranOs && !!deps.insertText,
+          ...(active.copied ? { copied: true } : {}),
           ...extra,
         },
       },
@@ -192,6 +221,8 @@ function createJarvis(deps) {
     if (!active.prose && active.done) active.prose = active.done;
     const text = [active.prose, ...active.said].join(' ');
     if (!text.trim()) { island.rest(); return; }
+    active.answer = text;
+    try { deps.saveAnswer?.({ request: active.request, text }); } catch {}
     showReply(gen, { autoRestMs: readingTime(text), done: !!active.done });
   }
 
@@ -238,7 +269,7 @@ function createJarvis(deps) {
     if (gen !== generation) return Promise.resolve(false);
     const forced = !!opts.forced;
     if (!forced && (settings().fullAccess || active?.latch)) return Promise.resolve(true);
-    const body = loopParts.describeOsAction(action, heldSeen()?.result ?? null);
+    const card = confirmCard(action, heldSeen()?.result ?? null, forced ? opts.reason : null);
     return new Promise((resolve) => {
       settlePending();
       pending = {
@@ -251,8 +282,7 @@ function createJarvis(deps) {
       island.show('approval', {
         content: {
           notice: {
-            title: forced ? 'This one always asks' : 'Okay to do this?',
-            body,
+            ...card,
             primary: CONFIRM_YES,
             secondary: forced ? null : CONFIRM_ALL,
             tertiary: CONFIRM_NO,
@@ -437,6 +467,7 @@ function createJarvis(deps) {
         delegate,
         onDelegated: () => { if (active) active.delegated = true; },
         offerSettings: () => { if (active) active.offerAccessibility = true; },
+        offerHelper: () => { if (active) active.offerHelper = true; },
         beforeAction: (a) => {
           const caption = loopParts.stepCaption(a);
           if (caption && active) { active.status = caption; showReply(gen); }
@@ -457,6 +488,7 @@ function createJarvis(deps) {
     }
 
     const ran = actions.slice(0, results.length);
+    if (ran.some(isOsAction)) active.ranOs = true;
     const askIdx = ran.findIndex((a) => a.type === 'ask_user');
     if (askIdx >= 0) answer = results[askIdx]?.note ?? null;
 
@@ -477,9 +509,32 @@ function createJarvis(deps) {
       await runTurn(next, { step: true });
       return;
     }
+    if (active.offerHelper && deps.installHelper) {
+      active.setup = 'helper';
+      island.show('setup', {
+        content: {
+          notice: {
+            title: 'Install the desktop helper',
+            body: 'To see and use your other apps, Tellaflow needs a small helper (Peekaboo). It downloads once and is checked before it runs.',
+            primary: 'Install',
+            primaryAction: 'install-helper',
+            secondary: 'Later',
+          },
+        },
+      });
+      return;
+    }
     if (active.offerAccessibility) {
       island.show('setup', {
-        content: { notice: { title: 'Allow Accessibility', body: 'Tellaflow needs Accessibility to click and type in other apps for you.', primary: 'Open System Settings', secondary: 'Later' } },
+        content: {
+          notice: {
+            title: 'Allow Accessibility',
+            body: 'Tellaflow needs Accessibility to click and type in your other apps.',
+            footnote: 'Turn on Tellaflow in System Settings › Privacy & Security › Accessibility, then ask again.',
+            primary: 'Open System Settings',
+            secondary: 'Later',
+          },
+        },
       });
       active.setup = 'accessibility';
       return;
@@ -494,6 +549,7 @@ function createJarvis(deps) {
     const last = ran[ran.length - 1]?.type;
     const done = ran.find((a) => a.type === 'task_done');
     if (done) {
+      if (active && loop) active.lastStep = loop.steps + 1;
       loop = null;
       if (active) active.done = done.summary;
       return null;
@@ -535,15 +591,27 @@ function createJarvis(deps) {
   function showError(gen, message) {
     if (gen !== generation) return;
     const text = String(message || 'Something went wrong.');
-    const signIn = /sign ?in|log ?in|unauthenticated|not authenticated|credential|api key|unauthor|503/i.test(text);
+    const signIn = /sign ?in|log ?in|unauthenticated|not authenticated|credential|api key|unauthor|provider_unavailable|unable to load models/i.test(text);
     const noNode = /needs Node/i.test(text);
+    const unreachable = /isn't running|did not become ready|ECONNREFUSED|fetch failed/i.test(text);
+    if (active) active.setup = signIn ? 'sign-in' : null;
     island.show('error', {
       content: {
         notice: noNode
-          ? { title: 'The assistant needs Node', body: 'Install Node.js (nodejs.org), then try again.', primary: 'Try again', secondary: 'Dismiss' }
+          ? { title: 'The assistant couldn’t start', body: 'Its Node runtime is missing from this copy of Tellaflow. Reinstalling Tellaflow fixes it.', primary: 'Try again', secondary: 'Dismiss' }
           : signIn
-            ? { title: 'Sign in to your AI', body: 'Open Settings › Assistant to pick an AI you’re signed in to.', primary: 'Try again', secondary: 'Dismiss' }
-            : { title: 'That didn’t work', body: clip(text, 160), primary: 'Try again', secondary: 'Dismiss' },
+            ? {
+              title: 'Sign in to your AI',
+              body: 'The assistant runs on an AI you’re signed in to on this Mac — Claude Code or Codex. No API keys.',
+              footnote: 'Sign in opens Terminal for it; your browser finishes the sign-in. Then ask again.',
+              primary: deps.signIn ? 'Sign in' : 'Open Settings',
+              primaryAction: deps.signIn ? 'sign-in' : 'open-settings',
+              secondary: 'Settings',
+              secondaryAction: 'open-settings',
+            }
+            : unreachable
+              ? { title: 'The assistant isn’t running', body: 'It stopped or couldn’t start. Trying again restarts it.', footnote: clip(text, 140), primary: 'Try again', secondary: 'Dismiss' }
+              : { title: 'That didn’t work', body: clip(text, 220), primary: 'Try again', secondary: 'Dismiss' },
       },
     });
   }
@@ -625,6 +693,29 @@ function createJarvis(deps) {
         active = null;
         island.rest();
         return true;
+      case 'sign-in':
+        deps.signIn?.();
+        active = null;
+        island.rest();
+        return true;
+      case 'insert': {
+        const text = active.answer;
+        if (text && deps.insertText) {
+          active = null;
+          deps.insertText(text);
+        }
+        return true;
+      }
+      case 'copy':
+        if (active.answer) {
+          deps.copyText?.(active.answer);
+          active.copied = true;
+          showReply(generation, { autoRestMs: 4000 });
+        }
+        return true;
+      case 'install-helper':
+        void installHelperThenRetry();
+        return true;
       case 'dismiss':
       case 'later':
         void stop();
@@ -633,6 +724,27 @@ function createJarvis(deps) {
       default:
         return false;
     }
+  }
+
+  /** The helper, installed from the island, with its progress there; then
+   *  the request that needed it runs again. */
+  async function installHelperThenRetry() {
+    const request = active?.request;
+    const show = (progress, footnote) => island.show('setup', {
+      content: { notice: { title: 'Installing the desktop helper…', body: '', progress, footnote, primary: null, secondary: null } },
+    });
+    show(0, 'Downloading…');
+    try {
+      await deps.installHelper((received, total) => {
+        if (total) show(Math.min(1, received / total), `Downloading… ${Math.round((received / total) * 100)}%`);
+      });
+    } catch (err) {
+      island.show('error', {
+        content: { notice: { title: 'The helper didn’t install', body: clip(String(err?.message || err), 180), primary: 'Try again', primaryAction: 'install-helper', secondary: 'Dismiss' } },
+      });
+      return;
+    }
+    if (request) await ask(request);
   }
 
   async function providers() {

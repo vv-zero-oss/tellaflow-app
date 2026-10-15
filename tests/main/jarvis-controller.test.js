@@ -57,7 +57,7 @@ function fakeDesktop() {
   };
 }
 
-function setup({ replies, settings = {}, onShow } = {}) {
+function setup({ replies, settings = {}, onShow, extra = {}, os: osOverride } = {}) {
   const brain = scriptedThreads(replies);
   const desk = fakeDesktop();
   const shown = [];
@@ -67,7 +67,8 @@ function setup({ replies, settings = {}, onShow } = {}) {
       rest: () => shown.push({ state: 'rest' }),
     },
     getSettings: () => ({ desktopActions: true, fullAccess: false, screenVision: false, provider: 'auto', ...settings }),
-    os: desk.os,
+    os: osOverride ?? desk.os,
+    ...extra,
     workspaceDir: path.join(os.tmpdir(), 'tellaflow-jarvis-test'),
     bb: {
       ensureServer: async () => { throw new Error('no bb in unit tests'); },
@@ -102,7 +103,11 @@ describe('assistant controller', () => {
     await j.ask('open TextEdit and type buy milk');
     expect(desk.acts.map((a) => a.type)).toEqual(['os_app', 'os_type']);
     expect(desk.state.doc).toBe('Buy milk');
-    expect(shown.filter((s) => s.state === 'approval').map((s) => s.content.notice.body)).toEqual(['Open TextEdit', 'Type this:\n\n“Buy milk”']);
+    // The step is the title; what it will type is quoted whole underneath.
+    expect(shown.filter((s) => s.state === 'approval').map((s) => [s.content.notice.title, s.content.notice.quote])).toEqual([
+      ['Open TextEdit?', undefined],
+      ['Type this text?', 'Buy milk'],
+    ]);
     // The second step's prompt was a loop step, with a fresh look and the check.
     expect(brain.prompts[1]).toMatch(/STEP 2 of the desktop task/);
     expect(brain.prompts[1]).toMatch(/step check: screen changed/);
@@ -118,6 +123,7 @@ describe('assistant controller', () => {
       onShow: (state, opts, j) => {
         if (state === 'approval') {
           expect(opts.content.notice.secondary).toBeNull(); // no "run the rest" on a forced one
+          expect(opts.content.notice.footnote).toMatch(/unsaved work/);
           setTimeout(() => j.action('cancel'), 1);
         }
       },
@@ -159,5 +165,74 @@ describe('assistant controller', () => {
     await j.ask('tell me something');
     const afterRest = shown.slice(shown.findIndex((s) => s.state === 'rest') + 1);
     expect(afterRest.filter((s) => s.state === 'reply')).toEqual([]);
+  });
+
+  it('an answer in words can be inserted or copied, and is saved with the transcripts', async () => {
+    const inserted = [];
+    const copied = [];
+    const saved = [];
+    const { j, shown } = setup({
+      replies: ['Dear Sam, thanks for the notes — Thursday works for me.'],
+      extra: { insertText: (t) => inserted.push(t), copyText: (t) => copied.push(t), saveAnswer: (a) => saved.push(a) },
+    });
+    await j.ask('draft a reply to Sam saying Thursday works');
+    const last = shown.filter((x) => x.state === 'reply').at(-1).content.reply;
+    expect(last.canInsert).toBe(true);
+    expect(saved).toEqual([{ request: 'draft a reply to Sam saying Thursday works', text: 'Dear Sam, thanks for the notes — Thursday works for me.' }]);
+    j.action('copy');
+    expect(copied).toEqual([saved[0].text]);
+    expect(shown.filter((x) => x.state === 'reply').at(-1).content.reply.copied).toBe(true);
+    j.action('insert');
+    expect(inserted).toEqual([saved[0].text]);
+  });
+
+  it('a desktop task is not offered for Insert', async () => {
+    const { j, shown } = setup({
+      replies: ['Opening Notes.' + fence([{ type: 'os_app', name: 'Notes', action: 'launch' }]), 'Done.' + fence([{ type: 'task_done', summary: 'Opened Notes.' }])],
+      settings: { fullAccess: true },
+      extra: { insertText: () => {} },
+    });
+    await j.ask('open notes');
+    const last = shown.filter((x) => x.state === 'reply').at(-1).content.reply;
+    expect(last).toMatchObject({ done: true, canInsert: false, step: 2 });
+  });
+
+  it('a missing helper is offered on the island, installed with progress, and the request runs again', async () => {
+    let installed = false;
+    const desk = fakeDesktop();
+    const os2 = {
+      ...desk.os,
+      getOsStatus: async () => (installed
+        ? { supported: true, accessibility: true, screenRecording: true, peekaboo: { ok: true } }
+        : { supported: false, accessibility: false, screenRecording: false, peekaboo: { ok: false, error: 'the desktop helper isn’t installed yet — install it from Settings › Assistant' } }),
+    };
+    const { j, shown } = setup({
+      replies: [
+        'Opening Notes.' + fence([{ type: 'os_app', name: 'Notes', action: 'launch' }]),
+        'Opening Notes.' + fence([{ type: 'os_app', name: 'Notes', action: 'launch' }]),
+        'Done.' + fence([{ type: 'task_done', summary: 'Opened Notes.' }]),
+      ],
+      settings: { fullAccess: true },
+      os: os2,
+      extra: { installHelper: async (progress) => { progress(5, 10); installed = true; } },
+    });
+    await j.ask('open notes');
+    const offer = shown.filter((x) => x.state === 'setup').at(-1).content.notice;
+    expect(offer).toMatchObject({ primary: 'Install', primaryAction: 'install-helper' });
+    j.action('install-helper');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(shown.some((x) => x.state === 'setup' && x.content.notice.progress === 0.5)).toBe(true);
+    expect(desk.acts.map((a) => a.type)).toEqual(['os_app']);
+  });
+
+  it('a signed-out AI offers Sign in on the island', async () => {
+    const signIns = [];
+    const brain = setup({ extra: { signIn: () => signIns.push(1) } });
+    brain.brain.threads.turn = async (req) => { throw new Error('Claude Code is not authenticated'); };
+    await brain.j.ask('hello');
+    const card = brain.shown.filter((x) => x.state === 'error').at(-1).content.notice;
+    expect(card).toMatchObject({ title: 'Sign in to your AI', primaryAction: 'sign-in', secondaryAction: 'open-settings' });
+    brain.j.action('sign-in');
+    expect(signIns).toEqual([1]);
   });
 });
