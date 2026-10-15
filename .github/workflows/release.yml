@@ -14,7 +14,10 @@ permissions:
 jobs:
   release:
     name: Build, sign, notarize, publish
-    runs-on: macos-latest
+    # Pinned: on the macOS 26 image electron-builder cannot unlock its temporary
+    # signing keychain ("SecKeychainUnlock: passphrase not correct"); every
+    # successful release so far was built on macOS 15.
+    runs-on: macos-15
     timeout-minutes: 300
 
     steps:
