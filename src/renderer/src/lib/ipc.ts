@@ -1,3 +1,13 @@
+/** What the main process asks the voice island to show. */
+export interface IslandView {
+  state: import('@/components/voice-island').IslandState;
+  answerKind?: import('@/components/voice-island').AnswerKind;
+  content?: import('@/components/voice-island').IslandContent;
+  correctedWord?: string;
+  placement: import('@/components/voice-island').IslandPlacement;
+  material: import('@/components/voice-island').IslandMaterial;
+}
+
 export interface HotkeyConfig {
   /** keyspy key names: modifiers first, trigger last. E.g. ["Function"] or ["LEFT CTRL", "A"] */
   names: string[];
@@ -32,9 +42,15 @@ export interface AppConfig {
   meetingNotesEnabled?: boolean;
   meetingBrowserDetection?: boolean;
   audioRetentionDays?: number;
+  commandHotkey?: HotkeyConfig | null;
+  islandPlacement?: 'left' | 'bottom' | 'right';
+  islandMaterial?: 'translucent' | 'opaque';
 }
 
 export type FeatureSettingKey =
+  | 'islandPlacement'
+  | 'islandMaterial'
+  | 'commandHotkey'
   | 'autoLearnEnabled'
   | 'contextAwarenessEnabled'
   | 'meetingNotesEnabled'
@@ -202,6 +218,8 @@ interface TellaflowAPI {
   sendCaptureReady: () => void;
 
   onToastState: (cb: (state: string) => void) => () => void;
+  onIslandUpdate: (cb: (view: IslandView) => void) => () => void;
+  islandAction: (action: string) => void;
   onAudioLevel: (cb: (level: number) => void) => () => void;
   sendAudioLevel: (level: number) => void;
   onToastHotkey: (cb: (label: string) => void) => () => void;
@@ -342,7 +360,7 @@ interface TellaflowAPI {
   onFailedJobsChanged: (cb: (jobs: FailedJob[]) => void) => () => void;
   getTranscriptionStats: () => Promise<Record<string, number | boolean>>;
 
-  setFeatureSetting: (key: FeatureSettingKey, value: boolean | number) => Promise<boolean>;
+  setFeatureSetting: (key: FeatureSettingKey, value: boolean | number | string | HotkeyConfig | null) => Promise<boolean>;
   onDictionaryChanged: (cb: (entries: DictionaryEntry[]) => void) => () => void;
 
   getMeetingState: () => Promise<MeetingState>;

@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('tellaflow', {
   onToastState: (callback) => { const h = (_, state) => callback(state); ipcRenderer.on('toast-state', h); return () => ipcRenderer.removeListener('toast-state', h); },
   onAudioLevel: (callback) => { const h = (_, level) => callback(level); ipcRenderer.on('audio-level', h); return () => ipcRenderer.removeListener('audio-level', h); },
   sendAudioLevel: (level) => ipcRenderer.send('audio-level', level),
+  // Voice island
+  onIslandUpdate: (callback) => { const h = (_, view) => callback(view); ipcRenderer.on('island-update', h); return () => ipcRenderer.removeListener('island-update', h); },
+  islandAction: (action) => ipcRenderer.send('island-action', String(action)),
   onToastHotkey: (callback) => { const h = (_, label) => callback(label); ipcRenderer.on('toast-hotkey', h); return () => ipcRenderer.removeListener('toast-hotkey', h); },
 
   // Floating bar click-to-dictate

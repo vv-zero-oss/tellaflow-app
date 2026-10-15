@@ -1,49 +1,68 @@
+/**
+ * The voice island window: a transparent, always-on-top window that hosts the
+ * VoiceIsland component (src/renderer/src/IslandApp.tsx).
+ *
+ * The main process owns what the island shows. Callers use:
+ *   showIsland(state, { content, answerKind, correctedWord, autoRestMs })
+ *   restIsland()          → back to the resting state (idle dot, or hidden)
+ *   setRestOverride(view) → a view to rest on instead (e.g. a meeting recording)
+ *
+ * The old floating-bar names (showToast / hideToast …) still work and map the
+ * legacy states onto island states.
+ */
+
 const { BrowserWindow, screen } = require('electron');
 const path = require('path');
 const config = require('./config');
 
-let toastWindow = null;
-let toastReady = false;
-let pendingState = null;
-// Track current state so we can restore to correct idle when needed
-let currentState = 'idle';
+// Big enough for the largest card (320px wide + shadow); the island anchors
+// to the window edge facing the screen edge, the rest is click-through.
+const WIN_W = 400;
+const WIN_H = 560;
+const EDGE_GAP = 8;
 
-// States where the renderer drives mouse capture via hover.
-// In all other states, the window stays click-through so apps behind it stay clickable.
-const HOVER_INTERACTIVE_STATES = new Set(['floating-idle', 'click-recording']);
+const LEGACY = {
+  'floating-idle': 'idle',
+  recording: 'listening',
+  'click-recording': 'dictating',
+  transcribing: 'transcribing',
+};
 
-// Apply the default click-through mode. With { forward: true } on macOS/Windows,
-// the window passes mouse events through to apps below but still forwards
-// mousemove events to the renderer, so DOM mouseenter/mouseleave keep working.
-// This is what lets the renderer toggle capture only while the cursor is over
-// a visibly-rendered element (the pill or the 8px trigger strip), instead of
-// blocking the entire 280×68 transparent area.
-function applyClickThrough(win) {
-  if (!win || win.isDestroyed()) return;
-  win.setIgnoreMouseEvents(true, { forward: true });
-}
+let win = null;
+let ready = false;
+let view = { state: 'none' };
+let restOverride = null;
+let autoRestTimer = null;
+let hideTimer = null;
+let interactive = false;
+let onRest = null;
 
-function getToastPosition() {
+function placement() { return config.getIslandPlacement(); }
+
+function windowBounds() {
   const cursor = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(cursor);
-  const { x, y, width, height } = display.workArea;
-  return {
-    x: Math.round(x + width / 2 - 140),
-    y: y + height - 80,
-  };
+  const { x, y, width, height } = screen.getDisplayNearestPoint(cursor).workArea;
+  switch (placement()) {
+    case 'left':
+      return { x: x + EDGE_GAP, y: Math.round(y + height / 2 - WIN_H / 2) };
+    case 'right':
+      return { x: x + width - WIN_W - EDGE_GAP, y: Math.round(y + height / 2 - WIN_H / 2) };
+    default:
+      return { x: Math.round(x + width / 2 - WIN_W / 2), y: y + height - WIN_H };
+  }
 }
 
-function createToastWindow() {
-  if (toastWindow && !toastWindow.isDestroyed()) return toastWindow;
+function clickThrough() {
+  if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(true, { forward: true });
+}
 
-  toastReady = false;
-  pendingState = null;
-
-  const pos = getToastPosition();
-
-  toastWindow = new BrowserWindow({
-    width: 280,
-    height: 68,
+function createWindow() {
+  if (win && !win.isDestroyed()) return win;
+  ready = false;
+  const pos = windowBounds();
+  win = new BrowserWindow({
+    width: WIN_W,
+    height: WIN_H,
     x: pos.x,
     y: pos.y,
     frame: false,
@@ -56,155 +75,156 @@ function createToastWindow() {
     hasShadow: false,
     backgroundColor: '#00000000',
     show: false,
+    // macOS: a non-activating panel — clicking the island must not bring
+    // Tellaflow (and its main window) to the front over the app in use.
+    ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
+  win.setAlwaysOnTop(true, 'floating');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  clickThrough();
 
-  toastWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  // Default: click-through with mousemove forwarded so the renderer can detect
-  // hover over visible elements and request capture only for those regions.
-  applyClickThrough(toastWindow);
-
-  toastWindow.webContents.on('did-finish-load', () => {
-    toastReady = true;
-    // Send hotkey label so the floating bar can display the hint
-    const hotkey = config.getHotkey();
-    toastWindow.webContents.send('toast-hotkey', hotkey?.label || '');
-
-    if (pendingState) {
-      sendState(pendingState);
-      pendingState = null;
-    }
+  win.webContents.on('did-finish-load', () => {
+    ready = true;
+    push();
   });
+  win.webContents.on('did-fail-load', (_e, code, desc) => console.error('Island window failed to load:', code, desc));
 
-  toastWindow.webContents.on('did-fail-load', (_e, code, desc) => {
-    console.error('Toast window failed to load:', code, desc);
-  });
-
-  const isDev = !require('electron').app.isPackaged;
-  if (isDev) {
-    toastWindow.loadURL('http://localhost:5173/toast.html').catch((err) => {
-      console.error('Toast loadURL error:', err.message);
-    });
+  if (!require('electron').app.isPackaged) {
+    win.loadURL('http://localhost:5173/toast.html').catch((err) => console.error('Island loadURL error:', err.message));
   } else {
-    toastWindow.loadFile(path.join(__dirname, '..', '..', 'dist', 'renderer', 'toast.html'));
+    win.loadFile(path.join(__dirname, '..', '..', 'dist', 'renderer', 'toast.html'));
   }
 
-  toastWindow.on('closed', () => {
-    toastWindow = null;
-    toastReady = false;
-    pendingState = null;
+  win.on('closed', () => { win = null; ready = false; });
+  return win;
+}
+
+function push() {
+  if (!win || win.isDestroyed() || !ready) return;
+  win.webContents.send('island-update', {
+    ...view,
+    placement: placement(),
+    material: config.getIslandMaterial(),
   });
-
-  return toastWindow;
 }
 
-function sendState(state) {
-  if (!toastWindow || toastWindow.isDestroyed()) return;
-  currentState = state;
-  toastWindow.webContents.send('toast-state', state);
+function clearTimers() {
+  if (autoRestTimer) { clearTimeout(autoRestTimer); autoRestTimer = null; }
+  if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+}
 
-  // For visual-only states (idle, recording, transcribing) the user has no
-  // reason to click the bar — force click-through so apps behind stay usable.
-  // For hover-interactive states (floating-idle, click-recording) leave the
-  // capture state alone; the renderer toggles it via setToastInteractive
-  // based on real-time cursor position over visible elements.
-  if (!HOVER_INTERACTIVE_STATES.has(state)) {
-    applyClickThrough(toastWindow);
+/** Show a state. `autoRestMs` returns to rest afterwards (paused while hovered). */
+function showIsland(state, { content, answerKind, correctedWord, autoRestMs } = {}) {
+  clearTimers();
+  view = { state, content: content || {}, answerKind: answerKind || 'text', correctedWord };
+  if (state === 'none') {
+    clickThrough();
+    push();
+    // Let the exit animation play before hiding the window.
+    hideTimer = setTimeout(() => { if (view.state === 'none' && win && !win.isDestroyed()) win.hide(); }, 450);
+    return;
   }
-}
-
-// Called from the renderer when the cursor enters/leaves a visibly-rendered
-// interactive element. `true` captures mouse events (so clicks land on the
-// pill / trigger strip); `false` returns to click-through so the transparent
-// areas of the window stop blocking icons and buttons behind it.
-function setToastInteractive(interactive) {
-  if (!toastWindow || toastWindow.isDestroyed()) return;
-  if (interactive) {
-    toastWindow.setIgnoreMouseEvents(false);
-  } else {
-    applyClickThrough(toastWindow);
+  const w = createWindow();
+  if (!w.isVisible()) {
+    const pos = windowBounds();
+    w.setPosition(pos.x, pos.y, false);
+    w.showInactive();
   }
+  push();
+  if (autoRestMs) scheduleRest(autoRestMs);
 }
 
-function showToast(state) {
-  const win = createToastWindow();
-  const pos = getToastPosition();
+function scheduleRest(ms) {
+  autoRestTimer = setTimeout(() => {
+    autoRestTimer = null;
+    if (interactive) { scheduleRest(1500); return; } // don't vanish under the pointer
+    restIsland();
+  }, ms);
+}
+
+function restView() {
+  if (restOverride) return restOverride;
+  return { state: config.getFloatingBarEnabled() ? 'idle' : 'none' };
+}
+
+/** Back to rest: a pinned view (meeting recording), the idle dot, or hidden. */
+function restIsland() {
+  const r = restView();
+  showIsland(r.state, r);
+  if (onRest) { try { onRest(); } catch (err) { console.error('[island] onRest failed:', err); } }
+}
+
+function setRestOverride(next) {
+  restOverride = next;
+}
+
+function isResting() {
+  const r = restView();
+  return view.state === r.state;
+}
+
+function getIslandState() { return view.state; }
+
+function setIslandInteractive(on) {
+  interactive = !!on;
+  if (!win || win.isDestroyed()) return;
+  if (interactive) win.setIgnoreMouseEvents(false);
+  else clickThrough();
+}
+
+/** Re-anchor after the placement setting changes. */
+function refreshPlacement() {
+  if (!win || win.isDestroyed()) return;
+  const pos = windowBounds();
   win.setPosition(pos.x, pos.y, false);
-  if (!win.isVisible()) {
-    win.showInactive();
-  }
-  if (toastReady && !win.webContents.isLoading()) {
-    sendState(state);
-  } else {
-    pendingState = state;
-  }
+  push();
 }
 
-function hideToast() {
-  if (!toastWindow || toastWindow.isDestroyed()) return;
-  pendingState = null;
+function onIslandRest(fn) { onRest = fn; }
 
-  // If floating bar is enabled, go back to idle floating state instead of hiding
-  if (config.getFloatingBarEnabled()) {
-    sendState('floating-idle');
-  } else {
-    sendState('idle');
-    toastWindow.hide();
-  }
-}
+// ── Legacy floating-bar API ──────────────────────────────────────────────────
 
-// Called on app startup when floating bar setting is enabled
-function initFloatingBar() {
-  if (!config.getFloatingBarEnabled()) return;
-  showToast('floating-idle');
-}
-
-// Called when user toggles the floating bar on/off from settings
+function showToast(state) { showIsland(LEGACY[state] || state); }
+function hideToast() { restIsland(); }
+function initFloatingBar() { if (config.getFloatingBarEnabled()) restIsland(); }
 function setFloatingBarEnabled(enabled) {
   config.setFloatingBarEnabled(enabled);
-  if (enabled) {
-    // Only show floating-idle if not currently recording/transcribing
-    const idle = currentState === 'idle' || !toastWindow || toastWindow.isDestroyed() || !toastWindow.isVisible();
-    showToast('floating-idle');
-    if (!idle) {
-      // Already recording — leave current state, hideToast will return to floating-idle
-    }
-  } else {
-    // Hide the bar unless we're in a recording/transcribing state
-    if (currentState === 'floating-idle') {
-      if (toastWindow && !toastWindow.isDestroyed()) {
-        sendState('idle');
-        toastWindow.hide();
-      }
-    }
-  }
+  if (isResting() || view.state === 'none' || view.state === 'idle') restIsland();
 }
-
 function destroyToast() {
-  if (toastWindow && !toastWindow.isDestroyed()) {
-    toastWindow.destroy();
-    toastWindow = null;
-  }
-  toastReady = false;
-  pendingState = null;
+  clearTimers();
+  if (win && !win.isDestroyed()) win.destroy();
+  win = null;
+  ready = false;
 }
-
 function sendToToast(channel, data) {
-  if (toastWindow && !toastWindow.isDestroyed() && toastReady) {
-    toastWindow.webContents.send(channel, data);
-  }
+  if (win && !win.isDestroyed() && ready) win.webContents.send(channel, data);
 }
+function getToastWindow() { return win; }
+function getCurrentToastState() { return view.state; }
+function setToastInteractive(on) { setIslandInteractive(on); }
 
-function getToastWindow() {
-  return toastWindow;
-}
-
-function getCurrentToastState() {
-  return currentState;
-}
-
-module.exports = { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled, getToastWindow, getCurrentToastState, setToastInteractive };
+module.exports = {
+  showIsland,
+  restIsland,
+  setRestOverride,
+  isResting,
+  getIslandState,
+  setIslandInteractive,
+  refreshPlacement,
+  onIslandRest,
+  showToast,
+  hideToast,
+  destroyToast,
+  sendToToast,
+  initFloatingBar,
+  setFloatingBarEnabled,
+  getToastWindow,
+  getCurrentToastState,
+  setToastInteractive,
+};
