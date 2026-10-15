@@ -26,11 +26,6 @@ describe('config defaults', () => {
     expect(config.getProgrammingMode()).toBe(false);
   });
 
-  it('getGrammarEnabled returns false by default', () => {
-    const { config } = freshConfig();
-    expect(config.getGrammarEnabled()).toBe(false);
-  });
-
   it('getTheme returns "dark" by default (no stored value)', () => {
     const { config } = freshConfig();
     expect(config.getTheme()).toBe('dark');
@@ -71,16 +66,6 @@ describe('config defaults', () => {
     expect(config.getTranscriptionEngine()).toBe('parakeet');
   });
 
-  it('getGrammarModel returns "qwen2.5-0.5b" by default', () => {
-    const { config } = freshConfig();
-    expect(config.getGrammarModel()).toBe('qwen2.5-0.5b');
-  });
-
-  it('getGrammarTone returns "casual" by default', () => {
-    const { config } = freshConfig();
-    expect(config.getGrammarTone()).toBe('casual');
-  });
-
   it('isOnboardingComplete returns false by default', () => {
     const { config } = freshConfig();
     expect(config.isOnboardingComplete()).toBe(false);
@@ -113,24 +98,6 @@ describe('config get/set round-trips', () => {
     const { config } = freshConfig();
     config.setProgrammingMode(true);
     expect(config.getProgrammingMode()).toBe(true);
-  });
-
-  it('setGrammarEnabled / getGrammarEnabled', () => {
-    const { config } = freshConfig();
-    config.setGrammarEnabled(true);
-    expect(config.getGrammarEnabled()).toBe(true);
-  });
-
-  it('setGrammarModel / getGrammarModel', () => {
-    const { config } = freshConfig();
-    config.setGrammarModel('smollm2-360m');
-    expect(config.getGrammarModel()).toBe('smollm2-360m');
-  });
-
-  it('setGrammarTone / getGrammarTone', () => {
-    const { config } = freshConfig();
-    config.setGrammarTone('formal');
-    expect(config.getGrammarTone()).toBe('formal');
   });
 
   it('setTheme / getTheme', () => {

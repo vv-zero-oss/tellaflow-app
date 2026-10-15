@@ -66,10 +66,10 @@
   },
   "dependencies": {
     "@kutalia/whisper-node-addon": "^1.1.0",
-    "better-sqlite3": "^12.8.0",
+    "bb-app": "0.42.1",
+    "better-sqlite3": "12.8.0",
     "electron-updater": "^6.8.3",
     "keyspy": "^1.1.1",
-    "node-llama-cpp": "^3.18.1",
     "sherpa-onnx-node": "^1.13.8"
   }
 }

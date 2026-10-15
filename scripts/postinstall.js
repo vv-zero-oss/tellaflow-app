@@ -62,6 +62,20 @@ try {
   console.warn('better-sqlite3 rebuild failed:', err.message);
 }
 
+// bb (the assistant's agent backend) runs under plain Node, never inside
+// Electron, and keeps its own better-sqlite3 (bb-app pins a different version,
+// so npm nests it). Put back the Node build in case the Electron rebuild above
+// reached the nested copy too — an Electron-ABI binary there stops bb starting.
+const bbSqlite = path.join(__dirname, '..', 'node_modules', 'bb-app', 'node_modules', 'better-sqlite3');
+if (fs.existsSync(bbSqlite)) {
+  try {
+    execSync('npx --yes prebuild-install --runtime node', { stdio: 'inherit', cwd: bbSqlite });
+    console.log('bb better-sqlite3 (Node ABI) restored.');
+  } catch (err) {
+    console.warn('bb better-sqlite3 restore failed:', err.message);
+  }
+}
+
 // Ad-hoc sign Electron.app so dev-mode Accessibility grants persist across rebuilds
 if (process.platform === 'darwin') {
   const electronApp = path.join(__dirname, '..', 'node_modules', 'electron', 'dist', 'Electron.app');

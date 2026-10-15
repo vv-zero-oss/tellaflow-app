@@ -9,7 +9,6 @@ const DEFAULTS = {
   islandMaterial: 'translucent',
   model: 'small',
   programmingMode: false,
-  grammarEnabled: false,
   onboardingComplete: false,
   accessibilityGrantedOnce: false,
   floatingBarEnabled: false,
@@ -29,11 +28,15 @@ const DEFAULTS = {
   meetingNotesEnabled: false,
   meetingBrowserDetection: true,
   audioRetentionDays: 30,
+  // Which of bb's providers answers ('auto' = the first one signed in).
   assistantProvider: 'auto',
-  // Full access: the assistant runs every action without asking first.
+  // Run actions without asking: plain desktop steps run without a
+  // confirmation. Quitting, deleting and password managers always ask.
   assistantFullAccess: true,
-  ollamaModel: '',
-  automationGranted: false,
+  // The assistant may click and type in other apps (needs Accessibility).
+  assistantDesktopActions: true,
+  // A still of the screen goes with each request (needs Screen Recording).
+  assistantScreenVision: true,
 };
 
 const AUTO_LEARN_PACK_ID = 'auto-learned';
@@ -112,20 +115,10 @@ function setModel(model) { setSetting('model', model); }
 function getProgrammingMode() { return getSetting('programmingMode'); }
 function setProgrammingMode(enabled) { setSetting('programmingMode', enabled); }
 
-function getGrammarEnabled() { return getSetting('grammarEnabled'); }
-function setGrammarEnabled(enabled) { setSetting('grammarEnabled', enabled); }
-
-function getGrammarModel() { return getSetting('grammarModel') || 'qwen2.5-0.5b'; }
-function setGrammarModel(key) { setSetting('grammarModel', key); }
-
-function getGrammarTone() { return getSetting('grammarTone') || 'casual'; }
-function setGrammarTone(tone) { setSetting('grammarTone', tone); }
 
 function isOnboardingComplete() { return getSetting('onboardingComplete'); }
 function setOnboardingComplete(complete) { setSetting('onboardingComplete', complete); }
 
-function getAutomationGranted() { return getBool('automationGranted'); }
-function setAutomationGranted(v) { setSetting('automationGranted', !!v); }
 function getAccessibilityGrantedOnce() { return getSetting('accessibilityGrantedOnce'); }
 function setAccessibilityGrantedOnce(value) { setSetting('accessibilityGrantedOnce', value); }
 
@@ -188,19 +181,23 @@ function getAudioRetentionDays() {
 }
 function setAudioRetentionDays(days) { setSetting('audioRetentionDays', Number(days)); }
 
-const ASSISTANT_PROVIDERS = ['auto', 'claude', 'codex', 'gemini', 'ollama'];
+// bb's provider ids ("claude-code", "codex", …) — any id of that shape; bb
+// itself refuses one it does not know, and the thread falls back to its default.
+const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 function getAssistantSettings() {
   const provider = getSetting('assistantProvider');
   return {
-    provider: ASSISTANT_PROVIDERS.includes(provider) ? provider : 'auto',
+    provider: typeof provider === 'string' && PROVIDER_ID.test(provider) ? provider : 'auto',
     fullAccess: getBool('assistantFullAccess'),
-    ollamaModel: typeof getSetting('ollamaModel') === 'string' ? getSetting('ollamaModel') : '',
+    desktopActions: getBool('assistantDesktopActions'),
+    screenVision: getBool('assistantScreenVision'),
   };
 }
 function setAssistantSettings(patch = {}) {
-  if (patch.provider !== undefined && ASSISTANT_PROVIDERS.includes(patch.provider)) setSetting('assistantProvider', patch.provider);
+  if (typeof patch.provider === 'string' && PROVIDER_ID.test(patch.provider)) setSetting('assistantProvider', patch.provider);
   if (patch.fullAccess !== undefined) setSetting('assistantFullAccess', !!patch.fullAccess);
-  if (typeof patch.ollamaModel === 'string') setSetting('ollamaModel', patch.ollamaModel.trim().slice(0, 100));
+  if (patch.desktopActions !== undefined) setSetting('assistantDesktopActions', !!patch.desktopActions);
+  if (patch.screenVision !== undefined) setSetting('assistantScreenVision', !!patch.screenVision);
   return getAssistantSettings();
 }
 
@@ -378,18 +375,10 @@ module.exports = {
   setModel,
   getProgrammingMode,
   setProgrammingMode,
-  getGrammarEnabled,
-  setGrammarEnabled,
-  getGrammarModel,
-  setGrammarModel,
-  getGrammarTone,
-  setGrammarTone,
   isOnboardingComplete,
   setOnboardingComplete,
   getAccessibilityGrantedOnce,
   setAccessibilityGrantedOnce,
-  getAutomationGranted,
-  setAutomationGranted,
   getTheme,
   setTheme,
   getFloatingBarEnabled,

@@ -64,15 +64,15 @@ files:
   - "!node_modules/@kutalia/whisper-node-addon/dist/linux-*"
   - "!node_modules/@kutalia/whisper-node-addon/dist/darwin-x64"
   - "!node_modules/@kutalia/whisper-node-addon/dist/mac-x64"
-  # Exclude node-llama-cpp build-time artifacts (keep runtime binaries)
-  - "!node_modules/node-llama-cpp/llama/llama.cpp"
-  - "!node_modules/node-llama-cpp/llama/xpack"
 asarUnpack:
   - node_modules/@kutalia/whisper-node-addon/**/*
-  - node_modules/node-llama-cpp/**/*
-  - node_modules/@node-llama-cpp/**/*
   - node_modules/better-sqlite3/**/*
-  - src/main/grammar-worker.js
+  # bb, the assistant's agent backend, runs as a plain-Node child and loads
+  # native binaries (its own better-sqlite3, node-pty, @parcel/watcher), which
+  # must be real files — supervisor.js rewrites the launcher to this copy…
+  # …and everything bb-app needs, since plain Node cannot read inside app.asar
+  # (tests/main/bb-unpack.test.js fails when a bb bump adds a dependency).
+  - "node_modules/{@parcel/watcher*,@pinojs/redact,atomic-sleep,base64-js,bb-app,bindings,bl,buffer,colorette,date-fns,dateformat,decompress-response,deep-extend,detect-libc,end-of-stream,expand-template,fast-copy,fast-safe-stringify,file-uri-to-path,fs-constants,github-from-package,help-me,hono,ieee754,inherits,ini,is-extglob,is-glob,jiti,joycon,minimist,mkdirp-classic,napi-build-utils,node-pty,on-exit-leak-free,once,picomatch,pino,pino-abstract-transport,pino-pretty,pino-roll,pino-std-serializers,prebuild-install,process-warning,pump,quick-format-unescaped,rc,readable-stream,real-require,safe-buffer,safe-stable-stringify,secure-json-parse,simple-concat,simple-get,sonic-boom,split2,string_decoder,strip-json-comments,tar-fs,tar-stream,thread-stream,tunnel-agent,util-deprecate,wrappy,zod}/**/*"
   - dist/renderer/*.mp4
   - dist/renderer/*.png
   - dist/renderer/*.svg

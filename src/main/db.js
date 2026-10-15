@@ -6,7 +6,6 @@ let db = null;
 const DEFAULTS = {
   hotkey: { names: ['FN'], label: 'fn' },
   model: 'small',
-  grammarEnabled: false,
   onboardingComplete: false,
   accessibilityGrantedOnce: false,
 };
