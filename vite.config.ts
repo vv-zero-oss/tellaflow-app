@@ -24,7 +24,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: Number(process.env.TELLAFLOW_DEV_PORT) || 5173,
     strictPort: true,
   },
 });

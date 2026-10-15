@@ -95,7 +95,7 @@ function createWindow() {
   win.webContents.on('did-fail-load', (_e, code, desc) => console.error('Island window failed to load:', code, desc));
 
   if (!require('electron').app.isPackaged) {
-    win.loadURL('http://localhost:5173/toast.html').catch((err) => console.error('Island loadURL error:', err.message));
+    win.loadURL(require('./dev-server').devUrl('toast.html')).catch((err) => console.error('Island loadURL error:', err.message));
   } else {
     win.loadFile(path.join(__dirname, '..', '..', 'dist', 'renderer', 'toast.html'));
   }

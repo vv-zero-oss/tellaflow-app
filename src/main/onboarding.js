@@ -28,7 +28,7 @@ function createOnboardingWindow() {
 
   const isDev = !require('electron').app.isPackaged;
   if (isDev) {
-    onboardingWindow.loadURL('http://localhost:5173/onboarding.html');
+    onboardingWindow.loadURL(require('./dev-server').devUrl('onboarding.html'));
   } else {
     onboardingWindow.loadFile(path.join(__dirname, '..', '..', 'dist', 'renderer', 'onboarding.html'));
   }

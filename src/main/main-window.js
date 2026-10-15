@@ -28,7 +28,7 @@ function createMainWindow({ showOnReady = true } = {}) {
 
   const isDev = !require('electron').app.isPackaged;
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173/index.html');
+    mainWindow.loadURL(require('./dev-server').devUrl('index.html'));
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', '..', 'dist', 'renderer', 'index.html'));
   }
