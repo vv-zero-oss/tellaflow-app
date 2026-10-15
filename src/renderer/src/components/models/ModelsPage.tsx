@@ -8,10 +8,10 @@ import { Input } from '@/components/ui/input';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import { ModelCards } from './ModelCards';
 import { GrammarModelCard } from './GrammarModelCard';
-import { ParakeetModelCard } from './ParakeetModelCard';
+import { ParakeetModelCard, type ParakeetCardMeta } from './ParakeetModelCard';
 import { useModels } from '@/hooks/use-models';
 import { useParakeet } from '@/hooks/use-parakeet';
-import type { AppConfig, TranscriptionEngine } from '@/lib/ipc';
+import { ipc, type AppConfig, type TranscriptionEngine } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
 import { Badge } from '../ui/badge';
 
@@ -79,11 +79,24 @@ const MODEL_META: Record<string, { params: string; speed: string }> = {
   base:     { params: '74M params',   speed: '~7× realtime' },
   small:    { params: '244M params',  speed: '~4× realtime' },
   medium:   { params: '769M params',  speed: '~2× realtime' },
+  turbo:    { params: '809M params',  speed: '~6× faster than large' },
   large:    { params: '1.55B params', speed: '~1× realtime' },
   parakeet: { params: '600M params',  speed: '~3–4× realtime' },
+  'parakeet-unified': { params: '600M params', speed: '~3–4× realtime · most accurate English' },
 };
 
+// Dropdown values for the two Parakeet variants (the engine is 'parakeet').
 const PARAKEET_KEY = 'parakeet';
+const PARAKEET_UNIFIED_KEY = 'parakeet-unified';
+
+const PARAKEET_UNIFIED_META: ParakeetCardMeta = {
+  title: 'Parakeet Unified 0.6b',
+  name: 'parakeet-unified-en-0.6b',
+  badge: 'New',
+  description:
+    "NVIDIA's newest English Parakeet (April 2026). Slightly more accurate than TDT v2 at the same speed, with punctuation and casing. Runs on the ONNX runtime (int8) — no GPU required.",
+  bullets: ['Lower word-error rate than TDT v2 (5.9 vs 6.0 on the Open ASR leaderboard)', 'Smaller download than v2 (~500 MB)', 'English only — no translation support'],
+};
 
 type Tab = 'models' | 'grammar';
 
@@ -227,17 +240,25 @@ function Tab({ label, active, onClick, badge }: { label: string; active: boolean
 export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslationEnabled, setTranslationLanguage, setTranscriptionEngine }: ModelsPageProps) {
   const [activeTab, setActiveTab] = useState<Tab>('models');
   const { models, startDownload, pauseDownload, cancelDownload, deleteModel } = useModels();
-  const parakeet = useParakeet();
+  const parakeet = useParakeet('v2');
+  const parakeetUnified = useParakeet('unified');
+  const parakeetVariant = config.parakeetVariant ?? 'v2';
 
   const whisperAvailable = Object.entries(models).filter(([, info]) => info.available);
   const engine = config.transcriptionEngine || 'parakeet';
 
   // Unified dropdown value: 'parakeet' when that engine is active, else the whisper model key
-  const dropdownValue = engine === 'parakeet' ? PARAKEET_KEY : (config.model || 'small');
+  const dropdownValue = engine === 'parakeet'
+    ? (parakeetVariant === 'unified' ? PARAKEET_UNIFIED_KEY : PARAKEET_KEY)
+    : (config.model || 'small');
   const activeMeta = MODEL_META[dropdownValue];
 
+  // Parakeet is English only; Whisper turbo was trained without translation.
+  const noTranslation = engine === 'parakeet' || config.model === 'turbo';
+
   function handleModelSelect(value: string) {
-    if (value === PARAKEET_KEY) {
+    if (value === PARAKEET_KEY || value === PARAKEET_UNIFIED_KEY) {
+      ipc.setParakeetVariant(value === PARAKEET_UNIFIED_KEY ? 'unified' : 'v2');
       setTranscriptionEngine('parakeet');
     } else {
       if (engine === 'parakeet') setTranscriptionEngine('whisper');
@@ -310,6 +331,14 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
                               </span>
                             </SelectItem>
                           )}
+                          {parakeetUnified.status.available && (
+                            <SelectItem value={PARAKEET_UNIFIED_KEY}>
+                              <span className="flex items-center gap-2">
+                                <img src={`${import.meta.env.BASE_URL}logo-nvidia.png`} alt="NVIDIA" className="w-4 h-4 rounded-full shrink-0 object-cover" />
+                                Parakeet Unified ({parakeetUnified.status.size})
+                              </span>
+                            </SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
                     </div>
@@ -327,10 +356,18 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
                 onDelete={deleteModel}
               />
 
-              {/* Parakeet model card — always shown so users can download it */}
+              {/* Parakeet model cards — always shown so users can download them */}
+              <ParakeetModelCard
+                status={parakeetUnified.status}
+                meta={PARAKEET_UNIFIED_META}
+                isActive={engine === 'parakeet' && parakeetVariant === 'unified'}
+                onDownload={parakeetUnified.startDownload}
+                onCancel={parakeetUnified.cancelDownload}
+                onDelete={parakeetUnified.deleteModel}
+              />
               <ParakeetModelCard
                 status={parakeet.status}
-                isActive={engine === 'parakeet'}
+                isActive={engine === 'parakeet' && parakeetVariant !== 'unified'}
                 onDownload={parakeet.startDownload}
                 onCancel={parakeet.cancelDownload}
                 onDelete={parakeet.deleteModel}
@@ -343,24 +380,26 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
                 </WellHeader>
                 <WellCard>
                   <WellItem>
-                    <div className={cn('flex items-center justify-between gap-4', engine === 'parakeet' && 'opacity-50')}>
+                    <div className={cn('flex items-center justify-between gap-4', noTranslation && 'opacity-50')}>
                       <div className="min-w-0">
                         <span className="text-sm font-medium">Translate to English</span>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {engine === 'parakeet'
                             ? 'Not available — Parakeet is English only'
-                            : 'Speak in another language — Whisper will transcribe and translate to English'}
+                            : config.model === 'turbo'
+                              ? 'Not available with Whisper Turbo — pick another Whisper model to translate'
+                              : 'Speak in another language — Whisper will transcribe and translate to English'}
                         </p>
                       </div>
                       <Switch
                         checked={config.translationEnabled ?? false}
                         onCheckedChange={setTranslationEnabled}
-                        disabled={engine === 'parakeet'}
+                        disabled={noTranslation}
                       />
                     </div>
                   </WellItem>
 
-                  {config.translationEnabled && engine !== 'parakeet' && (
+                  {config.translationEnabled && !noTranslation && (
                     <WellItem>
                       <div className="flex items-center justify-between gap-4">
                         <div className="min-w-0">

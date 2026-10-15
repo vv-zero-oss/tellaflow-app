@@ -59,7 +59,8 @@ function buildEngineSpec({ prompt } = {}) {
       numThreads: lowMem ? 2 : Math.min(4, perf),
     };
   }
-  const translate = !!config.getTranslationEnabled();
+  // large-v3-turbo was trained without the translate task; it only transcribes.
+  const translate = !!config.getTranslationEnabled() && config.getModel() !== 'turbo';
   const prompts = [];
   if (config.getProgrammingMode()) prompts.push('Technical dictation with programming terminology.');
   if (prompt) prompts.push(prompt);

@@ -95,10 +95,11 @@ contextBridge.exposeInMainWorld('tellaflow', {
   onModelsChanged: (callback) => { const h = (_, m) => callback(m); ipcRenderer.on('models-changed', h); return () => ipcRenderer.removeListener('models-changed', h); },
 
   // Parakeet model management
-  getParakeetStatus: () => ipcRenderer.invoke('get-parakeet-status'),
-  startParakeetDownload: () => ipcRenderer.send('start-parakeet-download'),
-  cancelParakeetDownload: () => ipcRenderer.send('cancel-parakeet-download'),
-  deleteParakeet: () => ipcRenderer.send('delete-parakeet'),
+  getParakeetStatus: (variant) => ipcRenderer.invoke('get-parakeet-status', variant),
+  startParakeetDownload: (variant) => ipcRenderer.send('start-parakeet-download', variant),
+  cancelParakeetDownload: (variant) => ipcRenderer.send('cancel-parakeet-download', variant),
+  deleteParakeet: (variant) => ipcRenderer.send('delete-parakeet', variant),
+  setParakeetVariant: (variant) => ipcRenderer.send('set-parakeet-variant', variant),
   onParakeetDownloadProgress: (cb) => { const h = (_, p) => cb(p); ipcRenderer.on('parakeet-download-progress', h); return () => ipcRenderer.removeListener('parakeet-download-progress', h); },
   onParakeetDownloadError: (cb) => { const h = (_, e) => cb(e); ipcRenderer.on('parakeet-download-error', h); return () => ipcRenderer.removeListener('parakeet-download-error', h); },
   onParakeetStatusChanged: (cb) => { const h = (_, s) => cb(s); ipcRenderer.on('parakeet-status-changed', h); return () => ipcRenderer.removeListener('parakeet-status-changed', h); },

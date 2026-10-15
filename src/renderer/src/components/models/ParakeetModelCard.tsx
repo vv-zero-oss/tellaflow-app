@@ -13,8 +13,26 @@ import {
 } from '@/components/ui/dialog';
 import type { ParakeetModelInfo } from '@/lib/ipc';
 
+/** What the card says about one Parakeet variant. */
+export interface ParakeetCardMeta {
+  title: string;
+  name: string;
+  description: string;
+  bullets: string[];
+  badge?: string;
+}
+
+export const PARAKEET_V2_META: ParakeetCardMeta = {
+  title: 'Parakeet TDT 0.6b v2',
+  name: 'parakeet-tdt-0.6b-v2',
+  description:
+    "NVIDIA's Parakeet TDT is a state-of-the-art English ASR model with significantly lower word-error rates than Whisper large-v3 on most benchmarks. Uses the ONNX runtime (int8 quantised) — no GPU required.",
+  bullets: ['~3–4× faster than real-time on Apple Silicon (CPU)', 'Outputs clean text with punctuation', 'English only — no translation support'],
+};
+
 interface ParakeetModelCardProps {
   status: ParakeetModelInfo;
+  meta?: ParakeetCardMeta;
   isActive?: boolean;
   onDownload: () => void;
   onCancel: () => void;
@@ -27,7 +45,7 @@ function fmtBytes(b: number) {
   return (b / 1e3).toFixed(0) + ' KB';
 }
 
-export function ParakeetModelCard({ status, isActive = false, onDownload, onCancel, onDelete }: ParakeetModelCardProps) {
+export function ParakeetModelCard({ status, meta = PARAKEET_V2_META, isActive = false, onDownload, onCancel, onDelete }: ParakeetModelCardProps) {
   const [cancelPending, setCancelPending] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
 
@@ -40,7 +58,7 @@ export function ParakeetModelCard({ status, isActive = false, onDownload, onCanc
           <DialogHeader>
             <DialogTitle>Cancel download?</DialogTitle>
             <DialogDescription>
-              The partial download of <span className="font-semibold text-foreground">Parakeet TDT</span> will
+              The partial download of <span className="font-semibold text-foreground">{meta.title}</span> will
               be discarded. You can restart the download at any time.
             </DialogDescription>
           </DialogHeader>
@@ -56,7 +74,7 @@ export function ParakeetModelCard({ status, isActive = false, onDownload, onCanc
           <DialogHeader>
             <DialogTitle>Remove model?</DialogTitle>
             <DialogDescription>
-              <span className="font-semibold text-foreground">Parakeet TDT 0.6b v2</span> will be deleted
+              <span className="font-semibold text-foreground">{meta.title}</span> will be deleted
               from your disk. You can re-download it at any time.
             </DialogDescription>
           </DialogHeader>
@@ -72,7 +90,8 @@ export function ParakeetModelCard({ status, isActive = false, onDownload, onCanc
           <WellTitle>
             <span className="flex items-center gap-2">
               <img src={`${import.meta.env.BASE_URL}logo-nvidia.png`} alt="NVIDIA" className="w-5 h-5 rounded-full object-cover" />
-              Parakeet TDT 0.6b v2
+              {meta.title}
+              {meta.badge && <Badge variant="outline" className="text-[10px] font-normal">{meta.badge}</Badge>}
             </span>
           </WellTitle>
         </WellHeader>
@@ -82,7 +101,7 @@ export function ParakeetModelCard({ status, isActive = false, onDownload, onCanc
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2.5 flex-wrap">
-                    <span className="text-sm font-semibold">parakeet-tdt-0.6b-v2</span>
+                    <span className="text-sm font-semibold">{meta.name}</span>
                     {isActive && status.available && <Badge variant="downloaded">Active</Badge>}
                     {!isActive && status.available && <Badge variant="secondary">Downloaded</Badge>}
                     <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground border-muted-foreground/30">NVIDIA NeMo</Badge>
@@ -123,22 +142,16 @@ export function ParakeetModelCard({ status, isActive = false, onDownload, onCanc
                   </div>
                   {status.status === 'downloading' && (
                     <p className="text-[11px] text-muted-foreground mt-1">
-                      Large download (~632 MB). Extraction will happen automatically once complete.
+                      Large download ({status.size}). Extraction will happen automatically once complete.
                     </p>
                   )}
                 </div>
               )}
 
               <div className="text-xs text-muted-foreground leading-relaxed border-t border-border/40 pt-3">
-                <p>
-                  NVIDIA&apos;s Parakeet TDT is a state-of-the-art English ASR model with significantly lower
-                  word-error rates than Whisper large-v3 on most benchmarks. Uses the ONNX runtime (int8
-                  quantised) — no GPU required.
-                </p>
+                <p>{meta.description}</p>
                 <ul className="mt-2 space-y-0.5 list-disc list-inside text-muted-foreground/80">
-                  <li>~3–4× faster than real-time on Apple Silicon (CPU)</li>
-                  <li>Outputs clean text with punctuation</li>
-                  <li>English only — no translation support</li>
+                  {meta.bullets.map((b) => <li key={b}>{b}</li>)}
                 </ul>
               </div>
             </div>

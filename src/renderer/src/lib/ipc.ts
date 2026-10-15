@@ -35,6 +35,7 @@ export interface AppConfig {
   translationLanguage?: string;
   transcriptionEngine?: TranscriptionEngine;
   parakeetAvailable?: boolean;
+  parakeetVariant?: ParakeetVariant;
   microphoneDeviceId?: string;
   hotkeyActivationDelay?: number;
   autoLearnEnabled?: boolean;
@@ -121,7 +122,11 @@ export interface AssistantToolInfo {
   alwaysAsk: boolean;
 }
 
+export type ParakeetVariant = 'v2' | 'unified';
+
 export interface ParakeetModelInfo {
+  variant?: ParakeetVariant;
+  label?: string;
   size: string;
   quality: string;
   available: boolean;
@@ -149,6 +154,7 @@ export interface ModelInfo {
 
 export interface DownloadProgress {
   modelKey: string;
+  variant?: ParakeetVariant;
   downloaded: number;
   total: number;
   percent: number;
@@ -297,12 +303,13 @@ interface TellaflowAPI {
   onDownloadError: (cb: (e: DownloadError) => void) => () => void;
   onModelsChanged: (cb: (m: Models) => void) => () => void;
 
-  getParakeetStatus: () => Promise<ParakeetModelInfo>;
-  startParakeetDownload: () => void;
-  cancelParakeetDownload: () => void;
-  deleteParakeet: () => void;
+  getParakeetStatus: (variant?: ParakeetVariant) => Promise<ParakeetModelInfo>;
+  startParakeetDownload: (variant?: ParakeetVariant) => void;
+  cancelParakeetDownload: (variant?: ParakeetVariant) => void;
+  deleteParakeet: (variant?: ParakeetVariant) => void;
+  setParakeetVariant: (variant: ParakeetVariant) => void;
   onParakeetDownloadProgress: (cb: (p: DownloadProgress) => void) => () => void;
-  onParakeetDownloadError: (cb: (e: { error: string }) => void) => () => void;
+  onParakeetDownloadError: (cb: (e?: { variant?: ParakeetVariant; error: string }) => void) => () => void;
   onParakeetStatusChanged: (cb: (s: ParakeetModelInfo) => void) => () => void;
 
   setTranscriptionEngine: (engine: TranscriptionEngine) => void;
