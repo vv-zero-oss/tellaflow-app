@@ -1,28 +1,40 @@
-// Safety net: keyspy's native binary can exit abruptly (e.g. fn/Globe key on Apple Silicon),
-// causing a synchronous EPIPE when writing its stdin acknowledgment. Suppress those so
-// Electron doesn't show the fatal error dialog — the onError callback will restart the listener.
-process.on('uncaughtException', (err) => {
-  if (err.code === 'EPIPE') {
-    console.warn('[keyspy] Suppressed uncaught EPIPE – native process likely exited:', err.message);
-    return;
-  }
-  // Re-throw anything else so Electron's default handler shows the dialog.
-  throw err;
-});
-
-const { app, ipcMain, BrowserWindow, Notification, clipboard, dialog, shell, powerMonitor } = require('electron');
+// Anti-crash guards are installed first so even early startup errors are
+// logged instead of killing the app (see crash-guard.js).
+const { createCrashGuard } = require('./crash-guard');
+const { app, ipcMain, BrowserWindow, Notification, clipboard, dialog, shell, powerMonitor, utilityProcess } = require('electron');
 const path = require('path');
+const fs = require('fs');
+
+const crashGuard = createCrashGuard({
+  getLogDir: () => { try { return app.getPath('userData'); } catch { return null; } },
+  relaunch: () => {
+    app.relaunch({ args: [...process.argv.slice(1).filter((a) => a !== '--background-relaunch'), '--background-relaunch'] });
+    gracefulQuit();
+  },
+  // Only recycle the main process when nothing is in flight.
+  isIdle: () => !isAnyRecordingActive() && !transcriptionService?.isBusy() && !meetingNotes?.isActive(),
+});
+crashGuard.install();
+
 const config = require('./config');
 const { createTray, getTray, destroyTray } = require('./tray');
 const { createOnboardingWindow, closeOnboarding, getOnboardingWindow } = require('./onboarding');
 const hotkey = require('./hotkey');
-const whisper = require('./whisper');
-const parakeet = require('./parakeet');
 const { pasteText } = require('./paste');
 const permissions = require('./permissions');
 const models = require('./models');
 const { trimSilence, normalizeVolume } = require('./audio-preprocess');
-const { encodePcmToWav, decodeWavToPcm } = require('./audio-utils');
+const { decodeWavToPcm, createWavWriter } = require('./audio-utils');
+const { createTranscriptionService, WorkerCrashError } = require('./transcription-service');
+const { createJobJournal } = require('./job-journal');
+const { createPipeline } = require('./transcription-pipeline');
+const { buildEngineSpec, getActiveEngine, isEngineAvailable } = require('./engine-spec');
+const { extractContextVocabulary, buildWhisperPrompt, applyContextVocabulary, isEmptyVocab } = require('./app-context');
+const { createAutoLearnWatcher } = require('./auto-learn');
+const { createMeetingDetector } = require('./meeting-detector');
+const { createMeetingNotes } = require('./meeting-notes');
+const macAutomation = require('./mac-automation');
+const { createAssistantService, matchWakeWord } = require('./assistant');
 const { formatTranscription } = require('./formatter');
 const grammar = require('./grammar');
 const { applyDictionary } = require('./dictionary');
@@ -75,7 +87,10 @@ let pendingStop = false;
 // it sends intermediate audio chunks via 'audio-chunk' IPC. Each chunk is
 // transcribed in parallel with ongoing recording. When 'audio-captured' fires
 // (recording stopped), the final tail is transcribed and all results are merged.
-let streamingSession = null; // { chunkPromises: Promise<string>[], fullPcm: Float32Array[] }
+// Audio of the session is appended to a WAV on disk as chunks arrive, and a
+// journal job exists from the first chunk, so a crash mid-recording still
+// leaves a recoverable recording.
+let streamingSession = null; // { chunkPromises: Promise<string>[], writer, job }
 let recordingTimeout = null;
 // Grace period after hotkey release — keeps the mic open a little longer so the
 // user's last word isn't clipped when they lift the key slightly before finishing.
@@ -89,6 +104,342 @@ let accessibilityInitialState = null; // null = not yet checked
 // App captured at recording-start (before Electron stole focus).
 // Used as a fallback if Electron is still frontmost when paste fires.
 let clickPasteTargetApp = null;
+
+// ── Core services (created in initCoreServices once the app is ready) ───────
+let transcriptionService = null;
+let journal = null;
+let pipeline = null;
+let meetingNotes = null;
+let meetingDetector = null;
+let meetingCaptureWindow = null;
+let assistant = null;
+let autoLearn = null;
+let modelLoading = false;
+// App context (frontmost app, window title, focused text) captured when a
+// recording starts; resolves to { ctx, vocab } or null.
+let recordingContextPromise = null;
+
+const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function getRecordingsDir() {
+  return path.join(app.getPath('userData'), 'recordings');
+}
+
+function toFloat32(pcmArray) {
+  if (pcmArray instanceof Float32Array) return pcmArray;
+  return pcmArray && pcmArray.length ? new Float32Array(pcmArray) : null;
+}
+
+// Transcription runs in an Electron utility process so a native Whisper /
+// Parakeet crash or OOM can't take the app down (see transcription-service.js).
+function spawnTranscriptionWorker({ onMessage, onExit }) {
+  const child = utilityProcess.fork(path.join(__dirname, 'transcription-worker.js'), [], {
+    serviceName: 'Tellaflow Transcription',
+    stdio: 'pipe',
+  });
+  child.stdout?.on('data', (d) => process.stdout.write(`[worker] ${d}`));
+  child.stderr?.on('data', (d) => process.stderr.write(`[worker] ${d}`));
+  child.on('message', onMessage);
+  child.on('exit', onExit);
+  return {
+    send: (msg) => child.postMessage(msg),
+    kill: () => child.kill(),
+  };
+}
+
+// raw transcript → artifacts stripped → context vocabulary → dictionary →
+// grammar LLM → formatting → snippets.
+async function postProcessTranscript(raw, { context } = {}) {
+  let text = raw;
+  if (getActiveEngine() === 'whisper') text = stripWhisperArtifacts(text);
+  if (!text) return '';
+  if (context && context.vocab && config.getContextAwarenessEnabled()) {
+    text = applyContextVocabulary(text, context.vocab);
+  }
+  text = applyDictionary(text);
+  if (config.getGrammarEnabled() && grammar.isModelAvailable()) {
+    broadcastStatus('Formatting...');
+    try {
+      text = await grammar.correctGrammar(text, config.getGrammarTone());
+    } catch (err) {
+      console.warn('Grammar formatting failed, using raw text:', err.message);
+    }
+  }
+  text = formatTranscription(text);
+  return snippets.applySnippets(text);
+}
+
+function transcribeOptsFor(recCtx) {
+  if (!recCtx || isEmptyVocab(recCtx.vocab) || getActiveEngine() !== 'whisper') return undefined;
+  if (!config.getContextAwarenessEnabled()) return undefined;
+  const prompt = buildWhisperPrompt(recCtx.vocab);
+  return prompt ? { spec: buildEngineSpec({ prompt }) } : undefined;
+}
+
+/** Called the moment a recording starts: warm the engine, read app context. */
+function beginRecording() {
+  try { transcriptionService?.prewarm(); } catch {}
+  if (config.getGrammarEnabled() && grammar.isModelAvailable() && !grammar.isLoaded()) {
+    grammar.warmup().catch(() => {});
+  }
+  autoLearn?.stop(true); // a new dictation ends any pending correction watch
+  if (process.platform === 'darwin' && config.getContextAwarenessEnabled()) {
+    recordingContextPromise = macAutomation.getFrontmostContext()
+      .then((ctx) => (ctx && !isOwnApp(ctx.app) ? { ctx, vocab: extractContextVocabulary(ctx) } : null))
+      .catch(() => null);
+  } else {
+    recordingContextPromise = Promise.resolve(null);
+  }
+}
+
+function peekRecordingContext() {
+  const p = recordingContextPromise || Promise.resolve(null);
+  // Never let a hung osascript hold up transcription.
+  return Promise.race([p, new Promise((r) => setTimeout(() => r(null), 1500))]);
+}
+
+async function takeRecordingContext() {
+  const ctx = await peekRecordingContext();
+  recordingContextPromise = null;
+  return ctx;
+}
+
+function failedJobsSummary() {
+  if (!journal) return [];
+  return journal.list({ status: 'failed' }).map((j) => ({
+    id: j.id,
+    audioPath: j.audioPath,
+    source: j.source,
+    error: j.error,
+    createdAt: j.createdAt,
+    durationSec: j.durationSec,
+    attempts: j.attempts,
+    meetingId: j.meta?.meetingId || null,
+  }));
+}
+
+function broadcastFailedJobs() {
+  sendToMainWindow('failed-jobs-changed', failedJobsSummary());
+  try { refreshAppMenu(); } catch {}
+}
+
+/** Drop the in-progress streaming session. keep=true parks its audio for retry. */
+function abandonStreamingSession({ keep }) {
+  const s = streamingSession;
+  streamingSession = null;
+  if (!s) return;
+  try { s.writer.finalize(); } catch {}
+  if (keep) {
+    pipeline.failJob(s.job.id, new Error('Recording stopped unexpectedly before it was transcribed.'));
+    broadcastFailedJobs();
+  } else {
+    journal.remove(s.job.id, { deleteAudio: true });
+  }
+}
+
+/** Startup recovery: interrupted jobs, legacy failed rows, orphaned WAVs. */
+function recoverJobsOnStartup() {
+  let recovered = 0;
+  try { recovered += journal.recoverInterrupted(); } catch (err) { console.warn('[recovery] journal:', err.message); }
+  try {
+    for (const e of history.takeLegacyFailedEntries()) {
+      if (!e.audioPath || !fs.existsSync(e.audioPath)) continue;
+      const job = journal.create({ audioPath: e.audioPath, source: 'dictation' });
+      journal.update(job.id, { createdAt: Number(e.timestamp) || job.createdAt });
+      journal.markFailed(job.id, 'Transcription failed (saved by an earlier version).');
+      recovered++;
+    }
+  } catch (err) { console.warn('[recovery] legacy entries:', err.message); }
+  try {
+    recovered += journal.adoptOrphans(getRecordingsDir(), history.getAllAudioPaths()).length;
+  } catch (err) { console.warn('[recovery] orphans:', err.message); }
+  if (recovered > 0) {
+    console.log(`[recovery] ${recovered} recording(s) need attention`);
+    new Notification({
+      title: 'Tellaflow — Recordings recovered',
+      body: `${recovered} recording${recovered === 1 ? '' : 's'} weren't transcribed. Open Transcripts → Needs attention to retry.`,
+    }).show();
+  }
+}
+
+/** Delete audio older than the retention window (transcripts are kept). */
+function pruneOldRecordings() {
+  const days = config.getAudioRetentionDays();
+  if (!days) return;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  let removed = 0;
+  try { removed += history.pruneAudioOlderThan(cutoff); } catch (err) { console.warn('[prune] history:', err.message); }
+  // Stray files nobody references and that are past retention.
+  try {
+    const keep = history.getAllAudioPaths();
+    for (const j of journal.list()) if (j.audioPath) keep.add(j.audioPath);
+    const dir = getRecordingsDir();
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      if (keep.has(full)) continue;
+      try {
+        if (fs.statSync(full).mtimeMs < cutoff) { fs.unlinkSync(full); removed++; }
+      } catch {}
+    }
+  } catch (err) { console.warn('[prune] files:', err.message); }
+  if (removed) {
+    console.log(`[prune] removed ${removed} recording(s) older than ${days} days`);
+    sendToMainWindow('history-update', history.getEntries());
+  }
+}
+
+function startAssistantFromVoice(request) {
+  showMainWindow();
+  sendToMainWindow('navigate', 'assistant');
+  assistant.start(request, { source: 'voice' }).catch((err) => console.error('[assistant] start failed:', err));
+}
+
+// ── Meeting notes ───────────────────────────────────────────────────────────
+function getMeetingState() {
+  const m = meetingNotes?.getActive();
+  return {
+    enabled: config.getMeetingNotesEnabled(),
+    active: !!m,
+    app: m?.app || null,
+    since: m?.startedAt || null,
+    historyId: m?.historyId ?? null,
+  };
+}
+
+function startMeetingNotes(info = {}) {
+  if (!meetingNotes || meetingNotes.isActive()) return;
+  meetingNotes.start(info);
+  meetingCaptureWindow = new BrowserWindow({
+    show: false,
+    focusable: false,
+    width: 1,
+    height: 1,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+  meetingCaptureWindow.webContents.on('render-process-gone', () => {
+    console.warn('[meeting] capture renderer died — closing meeting notes');
+    meetingCaptureWindow = null;
+    finishMeetingNotes();
+  });
+  meetingCaptureWindow.loadFile(path.join(__dirname, '..', 'renderer', 'audio-capture.html'), { query: { mode: 'meeting' } });
+  new Notification({
+    title: 'Tellaflow — Taking meeting notes',
+    body: `${info.app || 'Meeting'} detected. Notes are transcribed on this Mac. Stop from the tray or Transcripts.`,
+  }).show();
+  sendToMainWindow('meeting-state', getMeetingState());
+  try { refreshAppMenu(); } catch {}
+}
+
+/** Ask the capture page to flush its last chunk; it replies with final=true. */
+function stopMeetingNotes() {
+  if (meetingCaptureWindow && !meetingCaptureWindow.isDestroyed()) {
+    try { meetingCaptureWindow.webContents.send('stop-recording'); } catch {}
+    // If the page never answers, finish anyway.
+    setTimeout(() => { if (meetingNotes?.isActive()) finishMeetingNotes(); }, 5000);
+  } else {
+    finishMeetingNotes();
+  }
+}
+
+function finishMeetingNotes() {
+  if (meetingCaptureWindow && !meetingCaptureWindow.isDestroyed()) meetingCaptureWindow.destroy();
+  meetingCaptureWindow = null;
+  if (!meetingNotes?.isActive()) return;
+  meetingNotes.stop().then(() => {
+    sendToMainWindow('history-update', history.getEntries());
+    sendToMainWindow('meeting-state', getMeetingState());
+  }).catch((err) => console.warn('[meeting] stop failed:', err.message));
+}
+
+function initCoreServices() {
+  const userData = app.getPath('userData');
+  const recordingsDir = getRecordingsDir();
+  fs.mkdirSync(recordingsDir, { recursive: true });
+
+  journal = createJobJournal(path.join(userData, 'jobs'));
+  transcriptionService = createTranscriptionService({
+    spawn: spawnTranscriptionWorker,
+    getSpec: () => buildEngineSpec(),
+  });
+  transcriptionService.onEvent((e) => {
+    if (e.type === 'crash') console.warn(`[transcription] worker crashed (code ${e.code}) — restarting`);
+    if (e.type === 'recycle') console.log(`[transcription] worker recycled (${e.reason}, ${e.jobs} jobs, ${(e.rss / 1048576).toFixed(0)} MB)`);
+    if (e.type === 'loaded') {
+      console.log(`[transcription] ${e.engine} model ready in ${e.ms} ms`);
+      if (modelLoading) { modelLoading = false; broadcastStatus('Ready'); }
+    }
+    if (e.type === 'load-error') {
+      console.error('[transcription] model load failed:', e.error);
+      if (modelLoading) { modelLoading = false; broadcastStatus('Model load failed'); }
+    }
+  });
+
+  pipeline = createPipeline({
+    service: transcriptionService,
+    journal,
+    recordingsDir,
+    preprocess: (pcm) => normalizeVolume(trimSilence(pcm)),
+    postProcess: (raw, { context }) => postProcessTranscript(raw, { context }),
+  });
+
+  meetingNotes = createMeetingNotes({
+    pipeline,
+    history,
+    dir: path.join(userData, 'meetings'),
+    recordingsDir,
+    onUpdate: () => {
+      sendToMainWindow('history-update', history.getEntries());
+      broadcastFailedJobs();
+    },
+  });
+
+  autoLearn = createAutoLearnWatcher({
+    readFocused: macAutomation.readFocusedField,
+    isEnabled: () => process.platform === 'darwin' && config.getAutoLearnEnabled(),
+    onLearn: (corrections, { app: appName }) => {
+      const added = config.addLearnedEntries(corrections);
+      if (!added.length) return;
+      console.log(`[auto-learn] learned ${added.map((a) => `"${a.from}" → "${a.to}"`).join(', ')} from ${appName}`);
+      sendToMainWindow('dictionary-changed', config.getDictionary());
+      new Notification({
+        title: 'Tellaflow learned a word',
+        body: added.map((a) => `${a.from} → ${a.to}`).join(', ') + '. Remove it in Dictionary if it is wrong.',
+      }).show();
+    },
+  });
+
+  assistant = createAssistantService({
+    getSettings: () => config.getAssistantSettings(),
+    send: (channel, data) => sendToMainWindow(channel, data),
+    saveToHistory: (text) => {
+      history.addEntry(text, null, { kind: 'assistant' });
+      sendToMainWindow('history-update', history.getEntries());
+    },
+  });
+
+  meetingDetector = createMeetingDetector({
+    probes: {
+      listProcessNames: macAutomation.listProcessNames,
+      listRunningApps: macAutomation.listRunningApps,
+      getWindowTitles: macAutomation.getWindowTitles,
+      getBrowserTabUrls: macAutomation.getBrowserTabUrls,
+    },
+    checkBrowsers: () => config.getMeetingBrowserDetection(),
+    onStart: (info) => startMeetingNotes(info),
+    onEnd: () => stopMeetingNotes(),
+  });
+
+  recoverJobsOnStartup();
+  pruneOldRecordings();
+  setInterval(pruneOldRecordings, PRUNE_INTERVAL_MS).unref?.();
+
+  if (process.platform === 'darwin' && config.getMeetingNotesEnabled()) meetingDetector.start();
+}
 
 // Returns the name of the current frontmost application asynchronously.
 // EC2 — resolves null after 800 ms if osascript hangs, preventing the
@@ -143,7 +494,10 @@ app.on('second-instance', () => {
 });
 
 function performCleanup() {
-  try { parakeet.free(); } catch (e) { console.error('parakeet.free error:', e); }
+  try { meetingDetector?.stop(); } catch (e) { console.error('meetingDetector.stop error:', e); }
+  try { autoLearn?.stop(false); } catch (e) { console.error('autoLearn.stop error:', e); }
+  try { if (meetingCaptureWindow && !meetingCaptureWindow.isDestroyed()) meetingCaptureWindow.destroy(); } catch {}
+  try { transcriptionService?.dispose(); } catch (e) { console.error('transcriptionService.dispose error:', e); }
   try { hotkey.stop(); } catch (e) { console.error('hotkey.stop error:', e); }
   try { grammar.dispose(); } catch (e) { console.error('grammar.dispose error:', e); }
   try { destroyToast(); } catch (e) { console.error('destroyToast error:', e); }
@@ -215,6 +569,22 @@ app.whenReady().then(async () => {
     onStopRecording: () => {
       stopAnyActiveRecording();
     },
+    getExtraItems: () => {
+      const items = [];
+      if (meetingNotes?.isActive()) {
+        items.push({ label: `Stop Meeting Notes (${meetingNotes.getActive().app})`, click: () => stopMeetingNotes() });
+      } else if (config.getMeetingNotesEnabled()) {
+        items.push({ label: 'Start Meeting Notes Now', click: () => startMeetingNotes({ app: 'Manual' }) });
+      }
+      const failed = journal ? journal.list({ status: 'failed' }).length : 0;
+      if (failed > 0) {
+        items.push({
+          label: `${failed} Recording${failed === 1 ? '' : 's'} Need Attention…`,
+          click: () => { showMainWindow(); sendToMainWindow('navigate', 'transcripts'); },
+        });
+      }
+      return items;
+    },
   });
 
   accessibilityInitialState = permissions.isTrustedAccessibility();
@@ -225,13 +595,9 @@ app.whenReady().then(async () => {
     config.setAccessibilityGrantedOnce(false);
   }
 
+  initCoreServices();
   registerIPC();
   registerDictionaryPackIpc();
-
-  // Ensure recordings directory exists
-  const fs = require('fs');
-  const recordingsDir = path.join(app.getPath('userData'), 'recordings');
-  if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
 
   // Start the hotkey listener early so it's available during onboarding playground
   startHotkeyListener();
@@ -296,7 +662,8 @@ app.on('window-all-closed', () => {
 });
 
 async function startApp() {
-  createMainWindow();
+  // After a watchdog relaunch, come back quietly in the menubar.
+  createMainWindow({ showOnReady: !process.argv.includes('--background-relaunch') });
 
   // Wire updater listeners BEFORE the slow model load below so the tray's
   // "Check for Updates…" works even during startup. initAutoUpdater is a no-op
@@ -322,73 +689,46 @@ async function startApp() {
 
   if (app.dock) app.dock.show();
 
-  const engine = config.getTranscriptionEngine();
+  if (getActiveEngine() === 'whisper' && !models.isModelAvailable(config.getModel())) {
+    const configuredKey = config.getModel();
+    if (models.isModelAvailable('small')) {
+      // Silently fall back to small and persist the change
+      config.setModel('small');
+      new Notification({
+        title: 'Tellaflow — Model Changed',
+        body: `"${configuredKey}" model not found. Switched to the Small model automatically.`,
+      }).show();
+      broadcastStatus('Switched to Small model');
+      sendToMainWindow('models-changed', models.getModelsStatus());
+    } else {
+      broadcastStatus('No model downloaded');
+      new Notification({
+        title: 'Tellaflow — No Model Found',
+        body: 'No transcription model is available. Please download one from Settings → Models.',
+      }).show();
+    }
+  }
 
-  if (engine === 'parakeet' && parakeet.isAvailable()) {
-    // Load Parakeet engine
+  if (isEngineAvailable()) {
+    // The worker loads the model in the background; status flips to Ready on
+    // the service's 'loaded' event.
+    modelLoading = true;
     broadcastStatus('Loading model...');
-    try {
-      parakeet.loadModel();
-      broadcastStatus('Ready');
-    } catch (err) {
-      console.error('Parakeet load failed:', err);
-      broadcastStatus('Model load failed');
-    }
-  } else {
-    // Whisper engine path
-    let modelKey = config.getModel();
+    transcriptionService.prewarm();
 
-    if (!models.isModelAvailable(modelKey)) {
-      const configuredKey = modelKey;
-
-      if (models.isModelAvailable('small')) {
-        // Silently fall back to small and persist the change
-        config.setModel('small');
-        modelKey = 'small';
-        new Notification({
-          title: 'Tellaflow — Model Changed',
-          body: `"${configuredKey}" model not found. Switched to the Small model automatically.`,
-        }).show();
-        broadcastStatus('Switched to Small model');
-        sendToMainWindow('models-changed', models.getModelsStatus());
-      } else {
-        // No model available at all — prompt the user to download one
-        broadcastStatus('No model downloaded');
-        new Notification({
-          title: 'Tellaflow — No Model Found',
-          body: 'No transcription model is available. Please download one from Settings → Models.',
-        }).show();
-      }
-    }
-
-    if (models.isModelAvailable(modelKey)) {
-      broadcastStatus('Loading model...');
-      try {
-        await whisper.loadModel(modelKey);
-        await whisper.warmup();
-        broadcastStatus('Ready');
-
-        // Run first-install smoke test in the background — never blocks startup.
-        const testAudioPath = app.isPackaged
-          ? path.join(process.resourcesPath, 'test.mp3')
-          : path.join(__dirname, '..', '..', 'resources', 'test.mp3');
-
-        runStartupSmokeTest({
-          userDataPath: app.getPath('userData'),
-          audioPath: testAudioPath,
-          transcribeFn: (pcm) => whisper.transcribe(pcm),
-        }).then(() => {
-          console.log('[smoke-test] Test complete.');
-        }).catch((err) => {
-          // Absolute last-resort guard — should never reach here since
-          // runStartupSmokeTest already swallows all internal errors.
-          console.error('[smoke-test] Unexpected error:', err.message);
-        });
-      } catch (err) {
-        console.error('Model load failed:', err);
-        broadcastStatus('Model load failed');
-      }
-    }
+    // Run first-install smoke test in the background — never blocks startup.
+    const testAudioPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'test.mp3')
+      : path.join(__dirname, '..', '..', 'resources', 'test.mp3');
+    runStartupSmokeTest({
+      userDataPath: app.getPath('userData'),
+      audioPath: testAudioPath,
+      transcribeFn: (pcm) => transcriptionService.transcribe(pcm),
+    }).then(() => {
+      console.log('[smoke-test] Test complete.');
+    }).catch((err) => {
+      console.error('[smoke-test] Unexpected error:', err.message);
+    });
   }
 
   // Pre-load the grammar model in the background so the first correction
@@ -436,7 +776,8 @@ function forceStopRecording() {
     try { audioCaptureWindow.webContents.send('stop-recording'); } catch {}
   }
   setTimeout(() => {
-    streamingSession = null; // safety: discard if renderer never responded
+    // Renderer never answered: keep whatever audio reached disk for retry.
+    if (streamingSession) abandonStreamingSession({ keep: true });
     destroyAudioCaptureWindow();
     hideToast();
     broadcastStatus('Ready');
@@ -454,6 +795,7 @@ function startClickRecording() {
   broadcastStatus('Recording...');
   showToast('click-recording');
   createAudioCaptureWindow();
+  beginRecording();
   recordingTimeout = setTimeout(forceStopRecording, CLICK_MODE_MAX_RECORDING_MS);
 }
 
@@ -521,6 +863,7 @@ function startHotkeyListener() {
         broadcastStatus('Recording...');
         showToast('recording');
         createAudioCaptureWindow();
+        beginRecording();
       },
       onHandsFree: () => {
         // Recording continues from the first press, but the bar now also
@@ -536,7 +879,8 @@ function startHotkeyListener() {
         if (cancelled) {
           pendingStop = false;
           clickPasteTargetApp = null;
-          streamingSession = null; // discard any in-flight chunk transcriptions
+          recordingContextPromise = null;
+          abandonStreamingSession({ keep: false }); // user cancelled: discard audio
           destroyAudioCaptureWindow();
           hideToast();
           broadcastStatus('Ready');
@@ -615,6 +959,21 @@ function createAudioCaptureWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  // Anti-crash: if the capture renderer dies mid-recording, reset the
+  // recording state (instead of leaving the mic "busy" forever) and keep any
+  // audio that already reached disk.
+  audioCaptureWindow.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[capture] renderer gone:', details.reason);
+    audioCaptureWindow = null;
+    pendingStop = false;
+    clearRecordingTimeout();
+    try { hotkey.resetRecordingState(); } catch {}
+    sounds.unmuteMusic();
+    if (streamingSession) abandonStreamingSession({ keep: true });
+    hideToast();
+    broadcastStatus('Ready');
   });
 
   audioCaptureWindow.loadFile(
@@ -697,28 +1056,12 @@ function registerIPC() {
       ? path.join(process.resourcesPath, 'test.mp3')
       : path.join(__dirname, '..', '..', 'resources', 'test.mp3');
 
-    const engine = config.getTranscriptionEngine();
-    const useParakeet = engine === 'parakeet' && parakeet.isAvailable();
-
-    const opts = useParakeet
-      ? {
-          audioPath: testAudioPath,
-          decodeFn: decodeWithFfmpeg,
-          isAvailableFn: () => parakeet.isAvailable(),
-          isLoadedFn: () => parakeet.isLoaded(),
-          loadFn: () => parakeet.loadModel(),
-          transcribeFn: (pcm) => parakeet.transcribe(pcm),
-        }
-      : {
-          audioPath: testAudioPath,
-          decodeFn: decodeWithFfmpeg,
-          isAvailableFn: () => models.isModelAvailable(config.getModel()),
-          isLoadedFn: () => !!require('./whisper').isLoaded?.(),
-          transcribeFn: async (pcm) => {
-            await whisper.loadModel(config.getModel());
-            return whisper.transcribe(pcm);
-          },
-        };
+    const opts = {
+      audioPath: testAudioPath,
+      decodeFn: decodeWithFfmpeg,
+      isAvailableFn: isEngineAvailable,
+      transcribeFn: (pcm) => transcriptionService.transcribe(pcm),
+    };
 
     warmUpModel(opts).catch((err) => {
       console.error('[warm-up] Unexpected top-level error:', err.message);
@@ -741,28 +1084,12 @@ function registerIPC() {
       ? path.join(process.resourcesPath, 'test.mp3')
       : path.join(__dirname, '..', '..', 'resources', 'test.mp3');
 
-    const engine = config.getTranscriptionEngine();
-    const useParakeet = engine === 'parakeet' && parakeet.isAvailable();
-
-    const opts = useParakeet
-      ? {
-          audioPath: testAudioPath,
-          decodeFn: decodeWithFfmpeg,
-          isAvailableFn: () => parakeet.isAvailable(),
-          isLoadedFn: () => parakeet.isLoaded(),
-          loadFn: () => parakeet.loadModel(),
-          transcribeFn: (pcm) => parakeet.transcribe(pcm),
-        }
-      : {
-          audioPath: testAudioPath,
-          decodeFn: decodeWithFfmpeg,
-          isAvailableFn: () => models.isModelAvailable(config.getModel()),
-          isLoadedFn: () => !!require('./whisper').isLoaded?.(),
-          transcribeFn: async (pcm) => {
-            await whisper.loadModel(config.getModel());
-            return whisper.transcribe(pcm);
-          },
-        };
+    const opts = {
+      audioPath: testAudioPath,
+      decodeFn: decodeWithFfmpeg,
+      isAvailableFn: isEngineAvailable,
+      transcribeFn: (pcm) => transcriptionService.transcribe(pcm),
+    };
 
     _modelTestPromise = warmUpModel(opts)
       .catch((err) => ({ skipped: true, reason: 'error', error: err.message }))
@@ -799,30 +1126,55 @@ function registerIPC() {
       parakeetAvailable: models.isParakeetAvailable(),
       microphoneDeviceId: config.getMicrophoneDeviceId(),
       hotkeyActivationDelay: config.getHotkeyActivationDelay(),
+      autoLearnEnabled: config.getAutoLearnEnabled(),
+      contextAwarenessEnabled: config.getContextAwarenessEnabled(),
+      meetingNotesEnabled: config.getMeetingNotesEnabled(),
+      meetingBrowserDetection: config.getMeetingBrowserDetection(),
+      audioRetentionDays: config.getAudioRetentionDays(),
     };
   });
 
+  // Feature toggles added in 0.9 share one setter with an allow-list.
+  const FEATURE_SETTERS = {
+    autoLearnEnabled: (v) => config.setAutoLearnEnabled(v),
+    contextAwarenessEnabled: (v) => config.setContextAwarenessEnabled(v),
+    meetingBrowserDetection: (v) => config.setMeetingBrowserDetection(v),
+    audioRetentionDays: (v) => {
+      const n = Number(v);
+      if (Number.isFinite(n) && n >= 0) { config.setAudioRetentionDays(n); pruneOldRecordings(); }
+    },
+    meetingNotesEnabled: (v) => {
+      config.setMeetingNotesEnabled(!!v);
+      if (v && process.platform === 'darwin') meetingDetector.start();
+      else { meetingDetector.stop(); stopMeetingNotes(); }
+      sendToMainWindow('meeting-state', getMeetingState());
+    },
+  };
+  ipcMain.handle('set-feature-setting', (_, key, value) => {
+    const setter = FEATURE_SETTERS[key];
+    if (!setter) throw new Error(`Unknown setting: ${key}`);
+    setter(value);
+    sendToMainWindow('config-changed', { [key]: value });
+    return true;
+  });
+
+  function reloadEngine() {
+    transcriptionService.reset();
+    if (!isEngineAvailable()) return;
+    modelLoading = true;
+    broadcastStatus('Loading model...');
+    transcriptionService.prewarm();
+  }
+
   ipcMain.on('set-model', (_, model) => {
     config.setModel(model);
-    broadcastStatus('Loading model...');
-    whisper.loadModel(model).then(() => {
-      broadcastStatus('Ready');
-    }).catch((err) => {
-      console.error('Model load failed:', err);
-      broadcastStatus('Model load failed');
-    });
+    reloadEngine();
   });
 
   ipcMain.on('set-transcription-engine', (_, engine) => {
     config.setTranscriptionEngine(engine);
-    if (engine === 'parakeet') {
-      // Pre-load Parakeet model if available so first transcription is fast
-      if (parakeet.isAvailable() && !parakeet.isLoaded()) {
-        try { parakeet.loadModel(); } catch (err) {
-          console.warn('Parakeet pre-load failed:', err.message);
-        }
-      }
-    }
+    // Swap the worker's engine now so the first transcription is fast.
+    reloadEngine();
     sendToMainWindow('config-changed', {
       transcriptionEngine: engine,
       parakeetAvailable: models.isParakeetAvailable(),
@@ -842,9 +1194,7 @@ function registerIPC() {
       onComplete: () => {
         sendToMainWindow('parakeet-status-changed', models.getParakeetStatus());
         // Auto-load model after download
-        try { parakeet.loadModel(); } catch (err) {
-          console.warn('Parakeet post-download load failed:', err.message);
-        }
+        if (getActiveEngine() === 'parakeet') reloadEngine();
       },
       onError: (err) => {
         console.error('Parakeet download error:', err.message);
@@ -861,7 +1211,7 @@ function registerIPC() {
   });
 
   ipcMain.on('delete-parakeet', () => {
-    parakeet.free();
+    transcriptionService.reset();
     models.deleteParakeet();
     // If Parakeet was active engine, fall back to Whisper
     if (config.getTranscriptionEngine() === 'parakeet') {
@@ -1168,55 +1518,104 @@ function registerIPC() {
     return history.getEntries();
   });
 
+  // Legacy per-history-entry retry (kept for older renderer builds).
   ipcMain.handle('retry-transcription', async (_, entryId) => {
-    // Prevent concurrent native addon access during active recording
-    if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) {
-      throw new Error('Cannot retry while recording is in progress');
-    }
-
     const entry = history.getEntryById(entryId);
     if (!entry || !entry.audioPath) throw new Error('No audio to retry');
-
     let pcm;
     try {
       pcm = decodeWavToPcm(entry.audioPath);
-    } catch (decodeErr) {
+    } catch {
       throw new Error('Audio file is corrupted or missing');
     }
-
-    let rawText;
-    if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
-      rawText = await parakeet.transcribe(pcm);
-    } else {
-      rawText = await whisper.transcribe(pcm);
-      rawText = stripWhisperArtifacts(rawText);
-    }
-
-    if (!rawText || rawText.trim().length === 0) {
-      throw new Error('No speech detected in audio');
-    }
-
-    rawText = applyDictionary(rawText);
-
-    if (config.getGrammarEnabled()) {
-      rawText = await grammar.correctGrammar(rawText, config.getGrammarTone());
-    }
-
-    let text = formatTranscription(rawText);
-    text = snippets.applySnippets(text);
-
+    const raw = await pipeline.transcribePcm(pcm);
+    if (!raw) throw new Error('No speech detected in audio');
+    const text = await postProcessTranscript(raw);
     history.updateEntryText(entryId, text);
     sendToMainWindow('history-update', history.getEntries());
     return text;
   });
 
+  // ── Needs attention: failed / crash-interrupted recordings ────────────────
+  async function retryJob(id) {
+    const job = journal.get(id);
+    if (!job) throw new Error('This recording is no longer available.');
+    if (!job.audioPath || !fs.existsSync(job.audioPath)) {
+      journal.remove(id);
+      broadcastFailedJobs();
+      throw new Error('The audio file for this recording is missing.');
+    }
+    broadcastStatus('Transcribing...');
+    try {
+      const { text } = await pipeline.runJob(id);
+      if (job.source === 'meeting' && job.meta?.meetingId) {
+        meetingNotes.addSegment(job.meta.meetingId, job.meta.seq, text, job.meta.at);
+        pipeline.finishJob(id, { keepAudio: false });
+      } else if (text) {
+        history.addEntry(text, job.audioPath, { timestamp: job.createdAt });
+        pipeline.finishJob(id);
+      } else {
+        pipeline.finishJob(id, { keepAudio: false }); // only silence
+      }
+      sendToMainWindow('history-update', history.getEntries());
+      return text;
+    } finally {
+      broadcastFailedJobs();
+      broadcastStatus('Ready');
+    }
+  }
+
+  ipcMain.handle('get-failed-jobs', () => failedJobsSummary());
+  ipcMain.handle('retry-failed-job', (_, id) => retryJob(String(id)));
+  ipcMain.handle('retry-all-failed-jobs', async () => {
+    let ok = 0;
+    let failed = 0;
+    for (const j of failedJobsSummary().reverse()) { // oldest first
+      try { await retryJob(j.id); ok++; } catch { failed++; }
+    }
+    return { ok, failed };
+  });
+  ipcMain.handle('discard-failed-job', (_, id) => {
+    journal.remove(String(id), { deleteAudio: true });
+    broadcastFailedJobs();
+    return failedJobsSummary();
+  });
+  ipcMain.handle('get-transcription-stats', () => transcriptionService.getStats());
+
+  // ── Meeting notes ─────────────────────────────────────────────────────────
+  ipcMain.handle('get-meeting-state', () => getMeetingState());
+  ipcMain.handle('start-meeting-notes', () => {
+    startMeetingNotes({ app: 'Manual', reason: 'started from Tellaflow' });
+    return getMeetingState();
+  });
+  ipcMain.handle('stop-meeting-notes', () => {
+    stopMeetingNotes();
+    return getMeetingState();
+  });
+  ipcMain.on('meeting-chunk', (event, pcmArray, info) => {
+    if (!meetingCaptureWindow || event.sender !== meetingCaptureWindow.webContents) return;
+    const pcm = toFloat32(pcmArray);
+    if (pcm && pcm.length) meetingNotes.addChunk(pcm);
+    if (info && info.final) finishMeetingNotes();
+  });
+
+  // ── Assistant ─────────────────────────────────────────────────────────────
+  ipcMain.handle('assistant-start', (_, request) => assistant.start(String(request || ''), { source: 'typed' }));
+  ipcMain.handle('assistant-approve', (_, runId, actionId, approved) => assistant.respondApproval(runId, actionId, !!approved));
+  ipcMain.handle('assistant-cancel', (_, runId) => assistant.cancel(runId));
+  ipcMain.handle('assistant-list-runs', () => assistant.listRuns());
+  ipcMain.handle('assistant-detect', () => assistant.detect());
+  ipcMain.handle('assistant-tools', () => assistant.toolList());
+  ipcMain.handle('assistant-get-settings', () => config.getAssistantSettings());
+  ipcMain.handle('assistant-set-settings', (_, patch) => config.setAssistantSettings(patch || {}));
+
   ipcMain.handle('get-audio-data', async (_, filePath) => {
     const fsp = require('fs').promises;
     if (!filePath || typeof filePath !== 'string') return null;
     // Prevent path traversal — only allow files inside the recordings directory
-    const recordingsDir = path.join(app.getPath('userData'), 'recordings');
+    const recordingsDir = getRecordingsDir();
     const resolved = path.resolve(filePath);
-    if (!resolved.startsWith(recordingsDir)) return null;
+    if (!resolved.startsWith(recordingsDir + path.sep)) return null;
     let buf;
     try {
       buf = await fsp.readFile(resolved);
@@ -1266,7 +1665,9 @@ function registerIPC() {
     }
   });
 
-  ipcMain.on('audio-level', (_, level) => {
+  ipcMain.on('audio-level', (event, level) => {
+    // Meeting capture runs silently in the background — no waveform.
+    if (meetingCaptureWindow && event.sender === meetingCaptureWindow.webContents) return;
     sendToToast('audio-level', level);
   });
 
@@ -1324,7 +1725,8 @@ function registerIPC() {
     sounds.unmuteMusic();
     pendingStop = false;
     clickPasteTargetApp = null;
-    streamingSession = null; // discard any in-flight chunk transcriptions
+    recordingContextPromise = null;
+    abandonStreamingSession({ keep: false }); // user cancelled: discard audio
     // Clear hotkey state too — a hands-free session may be active behind
     // this toast button, and we don't want a later key release to fire
     // a duplicate onStop.
@@ -1400,7 +1802,11 @@ function registerIPC() {
   });
 
   // Audio capture window signals it's loaded and ready
-  ipcMain.on('capture-ready', () => {
+  ipcMain.on('capture-ready', (event) => {
+    if (meetingCaptureWindow && !meetingCaptureWindow.isDestroyed() && event.sender === meetingCaptureWindow.webContents) {
+      meetingCaptureWindow.webContents.send('start-recording', { deviceId: config.getMicrophoneDeviceId() });
+      return;
+    }
     if (!audioCaptureWindow || audioCaptureWindow.isDestroyed()) return;
 
     if (pendingStop) {
@@ -1417,240 +1823,187 @@ function registerIPC() {
     }
   });
 
-  // Shared transcription helper: preprocess + transcribe a raw PCM chunk.
-  // Used by both the streaming chunk handler and the final assembly path.
-  async function transcribeRaw(pcm) {
-    let processed = trimSilence(pcm);
-    processed = normalizeVolume(processed);
-    let text;
-    if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
-      text = await parakeet.transcribe(processed);
-    } else {
-      text = await whisper.transcribe(processed);
-      text = stripWhisperArtifacts(text);
+  function sendPlaygroundText(text) {
+    if (!playgroundMode) return false;
+    const win = getOnboardingWindow();
+    if (win && !win.isDestroyed()) {
+      // Always send (even empty text) so the renderer can reset its recording state.
+      // Re-focus the onboarding window so subsequent hotkey presses are captured.
+      win.webContents.send('playground-text', text || '');
+      if (text) win.focus();
+      return true;
     }
-    return (text || '').trim();
+    // Onboarding window is gone (e.g. user closed it while playground was active).
+    // Auto-clear the stale flag so this and future transcriptions paste normally.
+    playgroundMode = false;
+    return false;
   }
 
   // Streaming chunked transcription: the renderer sends intermediate audio
-  // chunks when recording exceeds 2 minutes. Each chunk is transcribed
-  // immediately so work happens in parallel with ongoing recording.
-  ipcMain.on('audio-chunk', async (_, pcmArray) => {
-    const pcm = pcmArray instanceof Float32Array
-      ? pcmArray
-      : (pcmArray && pcmArray.length ? new Float32Array(pcmArray) : null);
+  // chunks when recording exceeds 2 minutes. Each chunk is appended to the
+  // on-disk WAV and transcribed immediately, in parallel with recording.
+  ipcMain.on('audio-chunk', (event, pcmArray) => {
+    if (!audioCaptureWindow || event.sender !== audioCaptureWindow.webContents) return;
+    const pcm = toFloat32(pcmArray);
     if (!pcm || pcm.length === 0) return;
 
     if (!streamingSession) {
-      streamingSession = { chunkPromises: [], fullPcm: [] };
+      const audioPath = pipeline.newAudioPath('recording');
+      let writer;
+      try {
+        writer = createWavWriter(audioPath);
+      } catch (err) {
+        console.error('Could not open recording file:', err.message);
+        return;
+      }
+      const job = journal.create({ audioPath, source: 'dictation', meta: { streaming: true } });
+      streamingSession = { chunkPromises: [], writer, job };
       console.log('Streaming transcription started — first chunk received while recording continues');
     }
+    const session = streamingSession;
+    try { session.writer.append(pcm); } catch (err) { console.warn('Append to recording failed:', err.message); }
 
-    // Keep raw PCM for WAV saving later
-    streamingSession.fullPcm.push(pcm);
-
-    // Start transcription immediately — runs in parallel with continued recording
-    const chunkIndex = streamingSession.chunkPromises.length;
-    const promise = transcribeRaw(pcm).catch((err) => {
-      console.warn(`Streaming chunk ${chunkIndex} transcription failed:`, err.message);
-      return '';
-    });
-    streamingSession.chunkPromises.push(promise);
+    const chunkIndex = session.chunkPromises.length;
+    session.chunkPromises.push(
+      peekRecordingContext().then((ctx) => pipeline.transcribePcm(pcm, transcribeOptsFor(ctx))),
+    );
+    // Avoid unhandled-rejection noise; the failure is surfaced at assembly.
+    session.chunkPromises[chunkIndex].catch(() => {});
     console.log(`Streaming chunk ${chunkIndex} queued for transcription (${(pcm.length / 16000).toFixed(1)}s of audio)`);
   });
 
-  // Audio captured from renderer -> preprocess -> transcribe -> format -> paste
-  ipcMain.on('audio-captured', async (_, pcmArray) => {
+  // Paste / history / assistant routing for a finished transcript.
+  async function deliverTranscript(text, { job }) {
+    hideToast();
+    if (!text) {
+      clickPasteTargetApp = null;
+      if (job) pipeline.finishJob(job.id, { keepAudio: false });
+      sendPlaygroundText('');
+      return;
+    }
+
+    // In playground (onboarding dry-run) mode: send the result back to the
+    // onboarding window and skip paste, history, and notifications.
+    if (playgroundMode && sendPlaygroundText(text)) {
+      clickPasteTargetApp = null;
+      if (job) pipeline.finishJob(job.id, { keepAudio: false });
+      return;
+    }
+
+    // "Hey Tella, …" routes the request to the assistant instead of pasting.
+    const assistantSettings = config.getAssistantSettings();
+    if (assistantSettings.voiceTrigger) {
+      const request = matchWakeWord(text, assistantSettings.wakeWord);
+      if (request) {
+        clickPasteTargetApp = null;
+        if (job) pipeline.finishJob(job.id, { keepAudio: false });
+        startAssistantFromVoice(request);
+        return;
+      }
+    }
+
+    history.addEntry(text, job ? job.audioPath : null);
+    if (job) pipeline.finishJob(job.id);
+    sendToMainWindow('history-update', history.getEntries());
+
+    const recordedTarget = clickPasteTargetApp;
+    clickPasteTargetApp = null;
+
+    // recordedTarget was captured synchronously at key-press time (before any
+    // Electron window creation could corrupt the query). Use it directly.
+    // As a bonus, if the user deliberately switched to a different real app
+    // during transcription, honour that switch by pasting there instead.
+    const currentFrontmost = await getFrontmostApp();
+    const pasteTarget = (!isOwnApp(currentFrontmost) && currentFrontmost !== recordedTarget)
+      ? currentFrontmost
+      : recordedTarget;
+    pasteText(text, pasteTarget);
+    // Watch the field for corrections to learn from (auto-learn dictionary).
+    autoLearn.watch(text, { app: pasteTarget });
+  }
+
+  // Audio captured from renderer → saved + journaled → worker transcription →
+  // post-process → paste. Any failure leaves the audio in "Needs attention".
+  ipcMain.on('audio-captured', async (event, pcmArray) => {
+    if (audioCaptureWindow && event.sender !== audioCaptureWindow.webContents) return;
     destroyAudioCaptureWindow();
 
     // Grab and reset the streaming session before doing anything else.
     const session = streamingSession;
     streamingSession = null;
-    const isStreaming = session && session.chunkPromises.length > 0;
+    const isStreaming = !!(session && session.chunkPromises.length > 0);
+    const pcm = toFloat32(pcmArray);
+    const recCtx = await takeRecordingContext();
 
-    // Renderer sends a Float32Array (preserved across IPC by structured clone).
-    // Older callers may still send a plain Array; normalise once here so the
-    // rest of the pipeline can avoid redundant typed-array allocations.
-    const pcm = pcmArray instanceof Float32Array
-      ? pcmArray
-      : (pcmArray && pcmArray.length ? new Float32Array(pcmArray) : null);
-
-    // For non-streaming: bail on empty audio as before.
+    // For non-streaming: bail on empty audio.
     // For streaming: prior chunks exist, so proceed even if the final tail is empty.
     if (!isStreaming && (!pcm || pcm.length === 0)) {
       console.log('Empty audio received — skipping transcription.');
       clickPasteTargetApp = null;
       hideToast();
       broadcastStatus('Ready');
-      if (playgroundMode) {
-        const win = getOnboardingWindow();
-        if (win && !win.isDestroyed()) {
-          win.webContents.send('playground-text', '');
-        } else {
-          playgroundMode = false; // window gone — clear stale flag
-        }
-      }
+      sendPlaygroundText('');
       return;
     }
 
     showToast('transcribing');
     broadcastStatus('Transcribing...');
 
-    // Build the full PCM for WAV saving. For streaming sessions, combine the
-    // chunks that were sent during recording with the final tail.
-    let fullPcm;
-    if (isStreaming) {
-      const allChunks = [...session.fullPcm];
-      if (pcm && pcm.length > 0) allChunks.push(pcm);
-      const totalLength = allChunks.reduce((s, c) => s + c.length, 0);
-      fullPcm = new Float32Array(totalLength);
-      let off = 0;
-      for (const chunk of allChunks) {
-        fullPcm.set(chunk, off);
-        off += chunk.length;
-      }
-    } else {
-      fullPcm = pcm;
-    }
-
-    // Save the raw audio to disk before transcription so it is always preserved.
-    // Async write keeps the event loop responsive — transcription only needs
-    // `savedAudioPath` for the unlink-on-failure paths, not the bytes on disk.
-    const fs = require('fs');
-    const recordingsDir = path.join(app.getPath('userData'), 'recordings');
-    const audioPath = path.join(recordingsDir, `recording-${Date.now()}.wav`);
-    let savedAudioPath = null;
-    let writePromise = Promise.resolve();
+    // Durably save the audio and journal the job BEFORE transcription.
+    let job = null;
     try {
-      const wavBuf = encodePcmToWav(fullPcm, 16000);
-      writePromise = fs.promises.writeFile(audioPath, wavBuf)
-        .then(() => { savedAudioPath = audioPath; })
-        .catch((writeErr) => {
-          console.warn('Failed to save audio file:', writeErr.message);
-        });
-    } catch (encErr) {
-      console.warn('Failed to encode WAV:', encErr.message);
+      if (isStreaming) {
+        if (pcm && pcm.length) session.writer.append(pcm);
+        session.writer.finalize();
+        job = session.job;
+      } else {
+        job = pipeline.saveRecording(pcm, { source: 'dictation', meta: { targetApp: clickPasteTargetApp, contextApp: recCtx?.ctx?.app || null } });
+      }
+    } catch (err) {
+      console.warn('Failed to save audio file — transcribing from memory only:', err.message);
     }
 
+    const transcribeOpts = transcribeOptsFor(recCtx);
     try {
       let rawText;
-
       if (isStreaming) {
-        // Transcribe the final tail (audio recorded since the last chunk flush)
-        if (pcm && pcm.length > 0) {
-          const finalPromise = transcribeRaw(pcm).catch((err) => {
-            console.warn('Streaming final chunk transcription failed:', err.message);
-            return '';
-          });
-          session.chunkPromises.push(finalPromise);
-        }
-
-        // Wait for all chunk transcriptions to complete and merge in order
+        if (pcm && pcm.length) session.chunkPromises.push(pipeline.transcribePcm(pcm, transcribeOpts));
         const results = await Promise.all(session.chunkPromises);
-        rawText = results.filter(t => t.length > 0).join(' ');
-        console.log(`Streaming transcription complete — ${results.length} chunks merged (${(fullPcm.length / 16000).toFixed(0)}s total)`);
+        rawText = results.filter((t) => t && t.length > 0).join(' ');
+        console.log(`Streaming transcription complete — ${results.length} chunks merged`);
+      }
+
+      let text;
+      if (job) {
+        ({ text } = await pipeline.runJob(job.id, { pcm: isStreaming ? undefined : pcm, rawText, transcribeOpts, context: recCtx }));
       } else {
-        // Short recording — transcribe in one shot (original path)
-        rawText = await transcribeRaw(pcm);
+        const raw = rawText ?? await pipeline.transcribePcm(pcm, transcribeOpts);
+        text = raw ? await postProcessTranscript(raw, { context: recCtx }) : '';
       }
-
-      // Make sure the async WAV write completed before any downstream branch
-      // either persists `savedAudioPath` in history or attempts to unlink it.
-      await writePromise;
-      if (!rawText) {
-        clickPasteTargetApp = null;
-        hideToast();
-        broadcastStatus('Ready');
-        if (savedAudioPath) {
-          fs.promises.unlink(savedAudioPath).catch(() => {});
-        }
-        if (playgroundMode) {
-          const win = getOnboardingWindow();
-          if (win && !win.isDestroyed()) {
-            win.webContents.send('playground-text', '');
-          } else {
-            playgroundMode = false; // window gone — clear stale flag
-          }
-        }
-        return;
-      }
-      rawText = applyDictionary(rawText);
-
-      if (config.getGrammarEnabled() && grammar.isModelAvailable()) {
-        broadcastStatus('Formatting...');
-        try {
-          rawText = await grammar.correctGrammar(rawText, config.getGrammarTone());
-        } catch (err) {
-          console.warn('Grammar formatting failed, using raw text:', err.message);
-        }
-      }
-
-      let text = formatTranscription(rawText);
-      text = snippets.applySnippets(text);
-
-      hideToast();
-
-      // In playground (onboarding dry-run) mode: send the result back to the
-      // onboarding window and skip paste, history, and notifications.
-      // playgroundMode stays true so repeated dictations work without re-enabling it.
-      if (playgroundMode) {
-        const win = getOnboardingWindow();
-        if (win && !win.isDestroyed()) {
-          clickPasteTargetApp = null;
-          broadcastStatus('Ready');
-          if (savedAudioPath) { fs.promises.unlink(savedAudioPath).catch(() => {}); }
-          // Always send (even empty text) so the renderer can reset its recording state.
-          // Re-focus the onboarding window so subsequent hotkey presses are captured.
-          win.webContents.send('playground-text', text || '');
-          win.focus();
-          return;
-        }
-        // Onboarding window is gone (e.g. user closed it while playground was active).
-        // Auto-clear the stale flag so this and future transcriptions paste normally.
-        playgroundMode = false;
-      }
-
-      if (text && text.length > 0) {
-        history.addEntry(text, savedAudioPath);
-        const entries = history.getEntries();
-        sendToMainWindow('history-update', entries);
-
-        const recordedTarget = clickPasteTargetApp;
-        clickPasteTargetApp = null;
-
-        // recordedTarget was captured synchronously at key-press time (before any
-        // Electron window creation could corrupt the query). Use it directly.
-        // As a bonus, if the user deliberately switched to a different real app
-        // during transcription, honour that switch by pasting there instead.
-        const currentFrontmost = await getFrontmostApp();
-        const pasteTarget = (!isOwnApp(currentFrontmost) && currentFrontmost !== recordedTarget)
-          ? currentFrontmost
-          : recordedTarget;
-        pasteText(text, pasteTarget);
-      } else {
-        clickPasteTargetApp = null;
-      }
+      await deliverTranscript(text, { job });
     } catch (err) {
       console.error('Transcription failed:', err);
       clickPasteTargetApp = null;
       hideToast();
-
-      // Keep the audio file — save as a failed entry so the user can retry.
-      try { await writePromise; } catch (_) {}
-      if (savedAudioPath) {
-        history.addEntry('[Transcription failed]', savedAudioPath);
-        sendToMainWindow('history-update', history.getEntries());
+      if (job) {
+        // runJob already marked it; streaming chunk failures reach here first.
+        if (journal.get(job.id)?.status !== 'failed') pipeline.failJob(job.id, err);
+        broadcastFailedJobs();
       }
+      sendPlaygroundText('');
 
       const isModelMissing = err.message && err.message.includes('not found');
+      const crashed = err instanceof WorkerCrashError;
       new Notification({
         title: isModelMissing ? 'Tellaflow — Model Not Found' : 'Transcription Failed',
         body: isModelMissing
           ? `${err.message} Go to Settings → Models to download one.`
-          : 'Audio saved — you can retry from your transcripts.',
+          : job
+            ? `${crashed ? 'The speech engine crashed and was restarted. ' : ''}Audio saved — retry from Transcripts → Needs attention.`
+            : err.message,
       }).show();
 
-      if (isModelMissing) broadcastStatus('No model downloaded');
+      if (isModelMissing) { broadcastStatus('No model downloaded'); return; }
     }
 
     broadcastStatus('Ready');
@@ -1658,7 +2011,6 @@ function registerIPC() {
 }
 
 async function processWavFile(filePath) {
-  const fs = require('fs');
   try {
     showToast('transcribing');
     broadcastStatus('Transcribing file...');
@@ -1707,33 +2059,14 @@ async function processWavFile(filePath) {
 
     console.log(`WAV loaded: ${sampleRate}Hz -> 16kHz, ${mono16k.length} samples`);
 
-    let pcm = trimSilence(mono16k);
-    pcm = normalizeVolume(pcm);
-    let rawText;
-    if (config.getTranscriptionEngine() === 'parakeet' && parakeet.isAvailable()) {
-      rawText = await parakeet.transcribe(pcm);
-    } else {
-      rawText = await whisper.transcribe(pcm);
-      rawText = stripWhisperArtifacts(rawText);
-    }
+    // Long files are split into ~30 s windows by the pipeline.
+    const rawText = await pipeline.transcribePcm(mono16k);
     if (!rawText) {
       hideToast();
       broadcastStatus('Ready');
       return;
     }
-    rawText = applyDictionary(rawText);
-
-    if (config.getGrammarEnabled() && grammar.isModelAvailable()) {
-      broadcastStatus('Formatting...');
-      try {
-        rawText = await grammar.correctGrammar(rawText, config.getGrammarTone());
-      } catch (err) {
-        console.warn('Grammar formatting failed, using raw text:', err.message);
-      }
-    }
-
-    let text = formatTranscription(rawText);
-    text = snippets.applySnippets(text);
+    const text = await postProcessTranscript(rawText);
 
     hideToast();
 

@@ -72,6 +72,7 @@ export function DictionaryPage() {
             <h2 className="text-xl font-bold tracking-tight">Dictionary</h2>
             <p className="text-sm text-muted-foreground mt-1">
               Add word replacements for commonly misheard words due to accent or pronunciation.
+              Words you correct right after dictating are learned automatically.
             </p>
           </div>
           <div className="[-webkit-app-region:no-drag] shrink-0 mt-0.5">
@@ -213,7 +214,15 @@ function DictionaryRow({
   return (
     <WellItem>
       <div className="flex items-center gap-2">
-        {entry.packId ? (
+        {entry.packId === 'auto-learned' ? (
+          <Badge
+            variant="outline"
+            className="shrink-0 text-[10px] px-1.5 py-0 border-primary/40 text-primary"
+            title="Learned from a correction you made after dictating. Delete it and Tellaflow won't learn it again."
+          >
+            learned
+          </Badge>
+        ) : entry.packId ? (
           <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0" title="From preset pack">
             pack
           </Badge>

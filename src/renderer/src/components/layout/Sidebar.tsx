@@ -65,6 +65,17 @@ function DashboardIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+function AssistantIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" fill="none" {...props}>
+      <rect x="2.25" y="4.5" width="13.5" height="10" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M9 4.5V2.25" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="6.5" cy="9.5" r="1.1" fill="currentColor" />
+      <circle cx="11.5" cy="9.5" r="1.1" fill="currentColor" />
+    </svg>
+  );
+}
+
 function SettingsIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" fill="none" {...props}>
@@ -104,6 +115,7 @@ const navItems = [
   { id: 'transcripts', label: 'Transcripts', icon: HomeIcon },
   { id: 'snippets', label: 'Snippets', icon: SnippetsIcon },
   { id: 'dictionary', label: 'Dictionary', icon: DictionaryIcon },
+  { id: 'assistant', label: 'Assistant', icon: AssistantIcon },
   { id: 'models', label: 'Models', icon: ModelsIcon },
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
 ];

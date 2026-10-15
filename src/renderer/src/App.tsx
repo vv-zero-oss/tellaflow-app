@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RotateCcw, Power } from 'lucide-react';
 import { Sidebar } from '@/components/layout/Sidebar';
@@ -8,6 +8,8 @@ import { SnippetsPage } from '@/components/snippets/SnippetsPage';
 import { DictionaryPage } from '@/components/dictionary/DictionaryPage';
 import { SettingsPage } from '@/components/settings/SettingsPage';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
+import { AssistantPage } from '@/components/assistant/AssistantPage';
+import { ipc } from '@/lib/ipc';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useHistory } from '@/hooks/use-history';
 import { useStatus } from '@/hooks/use-status';
@@ -26,6 +28,9 @@ export default function App() {
   const { status, isError, isLoading } = useStatus();
   const appConfig = useConfig();
   const { mic, accessibility, needsRestart, restartApp } = usePermissions();
+
+  // Main process can switch pages (voice assistant, tray "Needs attention").
+  useEffect(() => ipc?.onNavigate?.((p) => setPage(p)), []);
 
   return (
     <div className="flex h-screen">
@@ -120,6 +125,19 @@ export default function App() {
               className="flex flex-col flex-1 overflow-hidden"
             >
               <DictionaryPage />
+            </motion.div>
+          )}
+          {page === 'assistant' && (
+            <motion.div
+              key="assistant"
+              variants={pageVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+              className="flex flex-col flex-1 overflow-hidden"
+            >
+              <AssistantPage onOpenSettings={() => setPage('settings')} />
             </motion.div>
           )}
           {page === 'settings' && !appConfig.loading && (

@@ -119,3 +119,48 @@ describe('encodePcmToWav', () => {
     expect(dataSize).toBe(numSamples * 2);
   });
 });
+
+// ─── createWavWriter / decodeWavToPcm (crash-durable recordings) ─────────────
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { createWavWriter, decodeWavToPcm } from '../../src/main/audio-utils.js';
+
+describe('createWavWriter', () => {
+  const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tf-wav-')), 'r.wav');
+
+  it('appends chunks and finalizes a valid WAV header', () => {
+    const file = tmp();
+    const w = createWavWriter(file);
+    w.append(new Float32Array([0.5, -0.5]));
+    w.append(new Float32Array([0.25]));
+    w.finalize();
+    const buf = fs.readFileSync(file);
+    expect(buf.readUInt32LE(40)).toBe(6);
+    expect(buf.readUInt32LE(4)).toBe(36 + 6);
+    const pcm = decodeWavToPcm(file);
+    expect(pcm.length).toBe(3);
+    expect(pcm[0]).toBeCloseTo(0.5, 3);
+    expect(pcm[2]).toBeCloseTo(0.25, 3);
+    expect(w.durationSec).toBeCloseTo(3 / 16000);
+  });
+
+  it('a recording cut off by a crash (never finalized) still decodes', () => {
+    const file = tmp();
+    const w = createWavWriter(file);
+    w.append(new Float32Array(1000).fill(0.1));
+    // no finalize(): header still says 0 bytes of data
+    const pcm = decodeWavToPcm(file);
+    expect(pcm.length).toBe(1000);
+  });
+
+  it('encodePcmToWav round-trips through decodeWavToPcm', () => {
+    const file = tmp();
+    const src = new Float32Array([0, 1, -1, 0.123]);
+    fs.writeFileSync(file, encodePcmToWav(src));
+    const out = decodeWavToPcm(file);
+    expect(out[1]).toBeCloseTo(1, 3);
+    expect(out[2]).toBeCloseTo(-1, 3);
+    expect(out[3]).toBeCloseTo(0.123, 3);
+  });
+});

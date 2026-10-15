@@ -3,7 +3,7 @@ const path = require('path');
 
 let mainWindow = null;
 
-function createMainWindow() {
+function createMainWindow({ showOnReady = true } = {}) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.show();
     mainWindow.focus();
@@ -34,7 +34,17 @@ function createMainWindow() {
   }
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
+    if (showOnReady) mainWindow.show();
+  });
+
+  // Anti-crash: if the renderer dies (OOM, GPU reset), reload it instead of
+  // leaving a blank window.
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[main-window] renderer gone:', details.reason);
+    if (details.reason === 'clean-exit') return;
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload();
+    }, 500);
   });
 
   mainWindow.on('close', (e) => {

@@ -9,6 +9,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import type { HistoryEntry, HotkeyConfig } from '@/lib/ipc';
 import { ipc } from '@/lib/ipc';
+import { NeedsAttention } from './NeedsAttention';
+import { MeetingBanner } from './MeetingBanner';
 import {
   AudioPlayerProvider,
   AudioPlayerProgress,
@@ -195,6 +197,28 @@ function PermissionBanner({
   );
 }
 
+// Playback decodes a whole WAV into a Blob; keep only the most recent few so
+// browsing a long history doesn't pin hundreds of MB of audio in the renderer.
+const MAX_CACHED_BLOB_URLS = 8;
+
+// Integer-like object keys don't keep insertion order, so recency is tracked
+// separately per cache object.
+const blobOrder = new WeakMap<object, number[]>();
+
+function rememberBlobUrl(cache: Record<number, string>, id: number, url: string) {
+  cache[id] = url;
+  const order = blobOrder.get(cache) || [];
+  blobOrder.set(cache, order);
+  order.push(id);
+  while (order.length > MAX_CACHED_BLOB_URLS) {
+    const old = order.shift()!;
+    if (old !== id && cache[old]) {
+      URL.revokeObjectURL(cache[old]);
+      delete cache[old];
+    }
+  }
+}
+
 // ─── Per-entry audio controls (needs to be inside AudioPlayerProvider) ────────
 
 interface AudioEntryItemProps {
@@ -228,7 +252,7 @@ function AudioEntryItem({ entry, blobUrlsRef, searchQuery, onCopy, onDelete, onR
         if (!data) return;
         const blob = new Blob([data], { type: 'audio/wav' });
         src = URL.createObjectURL(blob);
-        blobUrlsRef.current[entry.id] = src;
+        rememberBlobUrl(blobUrlsRef.current, entry.id, src);
       } catch {
         return;
       } finally {
@@ -250,6 +274,12 @@ function AudioEntryItem({ entry, blobUrlsRef, searchQuery, onCopy, onDelete, onR
           'flex-1 min-w-0 text-sm leading-relaxed whitespace-pre-wrap break-words',
           isFailed && 'italic text-muted-foreground'
         )}>
+          {entry.kind === 'meeting' && (
+            <span className="not-italic mr-1.5 inline-block rounded px-1.5 py-px text-[10px] font-medium uppercase tracking-wide bg-red-500/10 text-red-500 align-middle">Meeting</span>
+          )}
+          {entry.kind === 'assistant' && (
+            <span className="not-italic mr-1.5 inline-block rounded px-1.5 py-px text-[10px] font-medium uppercase tracking-wide bg-primary/10 text-primary align-middle">Assistant</span>
+          )}
           {isFailed ? 'Transcription failed — audio saved' : highlight(entry.text, searchQuery)}
         </p>
         <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -633,6 +663,7 @@ export function HomePage({ entries, totalWords, onCopy, onDelete, onRetry, hotke
         missingAccessibility={missingAccessibility}
         onGoToSettings={onGoToSettings}
       />
+      <MeetingBanner />
       {/* Header */}
       <div className="px-7 pt-12 pb-2 [-webkit-app-region:drag]">
         <p className="text-[11px] text-muted-foreground font-medium tracking-wide uppercase mb-1">
@@ -718,6 +749,10 @@ export function HomePage({ entries, totalWords, onCopy, onDelete, onRetry, hotke
             </motion.div>
           )}
         </AnimatePresence>
+      </div>
+
+      <div className="px-7 pt-3 max-h-[40vh] overflow-auto [-webkit-app-region:no-drag] empty:hidden">
+        <NeedsAttention />
       </div>
 
       {entries.length === 0 ? (

@@ -58,6 +58,13 @@ function getDb() {
     if (!err.message?.includes('duplicate column name')) throw err;
   }
 
+  // kind: 'dictation' (default), 'meeting' (auto meeting notes), 'assistant'
+  try {
+    db.exec(`ALTER TABLE history ADD COLUMN kind TEXT`);
+  } catch (err) {
+    if (!err.message?.includes('duplicate column name')) throw err;
+  }
+
   migrateFromJson(app.getPath('userData'));
   seedDefaults();
 

@@ -17,7 +17,20 @@ const DEFAULTS = {
   transcriptionEngine: 'parakeet',
   microphoneDeviceId: 'auto',
   hotkeyActivationDelay: 0,
+  autoLearnEnabled: true,
+  autoLearnBlocklist: [],
+  contextAwarenessEnabled: true,
+  meetingNotesEnabled: false,
+  meetingBrowserDetection: true,
+  audioRetentionDays: 30,
+  assistantProvider: 'auto',
+  assistantAutoApprove: false,
+  assistantVoiceTrigger: false,
+  assistantWakeWord: 'hey tella',
+  ollamaModel: '',
 };
+
+const AUTO_LEARN_PACK_ID = 'auto-learned';
 
 // Map from uiohook scan codes to keyspy key names (for migrating old configs)
 const UIOHOOK_TO_KEYSPY = {
@@ -118,6 +131,73 @@ function getHotkeyActivationDelay() {
 }
 function setHotkeyActivationDelay(ms) { setSetting('hotkeyActivationDelay', ms); }
 
+function getBool(key) { const v = getSetting(key); return typeof v === 'boolean' ? v : DEFAULTS[key]; }
+
+function getAutoLearnEnabled() { return getBool('autoLearnEnabled'); }
+function setAutoLearnEnabled(v) { setSetting('autoLearnEnabled', !!v); }
+function getContextAwarenessEnabled() { return getBool('contextAwarenessEnabled'); }
+function setContextAwarenessEnabled(v) { setSetting('contextAwarenessEnabled', !!v); }
+function getMeetingNotesEnabled() { return getBool('meetingNotesEnabled'); }
+function setMeetingNotesEnabled(v) { setSetting('meetingNotesEnabled', !!v); }
+function getMeetingBrowserDetection() { return getBool('meetingBrowserDetection'); }
+function setMeetingBrowserDetection(v) { setSetting('meetingBrowserDetection', !!v); }
+
+function getAudioRetentionDays() {
+  const v = getSetting('audioRetentionDays');
+  // 0 = keep forever
+  return typeof v === 'number' && isFinite(v) && v >= 0 ? Math.min(Math.round(v), 3650) : DEFAULTS.audioRetentionDays;
+}
+function setAudioRetentionDays(days) { setSetting('audioRetentionDays', Number(days)); }
+
+const ASSISTANT_PROVIDERS = ['auto', 'claude', 'codex', 'gemini', 'ollama'];
+function getAssistantSettings() {
+  const provider = getSetting('assistantProvider');
+  const wake = getSetting('assistantWakeWord');
+  return {
+    provider: ASSISTANT_PROVIDERS.includes(provider) ? provider : 'auto',
+    autoApprove: getBool('assistantAutoApprove'),
+    voiceTrigger: getBool('assistantVoiceTrigger'),
+    wakeWord: typeof wake === 'string' && wake.trim() ? wake.trim().slice(0, 40) : DEFAULTS.assistantWakeWord,
+    ollamaModel: typeof getSetting('ollamaModel') === 'string' ? getSetting('ollamaModel') : '',
+  };
+}
+function setAssistantSettings(patch = {}) {
+  if (patch.provider !== undefined && ASSISTANT_PROVIDERS.includes(patch.provider)) setSetting('assistantProvider', patch.provider);
+  if (patch.autoApprove !== undefined) setSetting('assistantAutoApprove', !!patch.autoApprove);
+  if (patch.voiceTrigger !== undefined) setSetting('assistantVoiceTrigger', !!patch.voiceTrigger);
+  if (typeof patch.wakeWord === 'string') setSetting('assistantWakeWord', patch.wakeWord.trim().slice(0, 40));
+  if (typeof patch.ollamaModel === 'string') setSetting('ollamaModel', patch.ollamaModel.trim().slice(0, 100));
+  return getAssistantSettings();
+}
+
+function blockKey(from, to) { return `${String(from).toLowerCase()}\u2192${to}`; }
+
+function getAutoLearnBlocklist() {
+  const v = getSetting('autoLearnBlocklist');
+  return Array.isArray(v) ? v : [];
+}
+
+/**
+ * Add corrections learned from the user's edits. Skips anything already in
+ * the dictionary and anything the user previously deleted (blocklist).
+ * Returns the entries actually added.
+ */
+function addLearnedEntries(corrections) {
+  const blocked = new Set(getAutoLearnBlocklist());
+  const findExisting = getDb().prepare('SELECT id, pack_id FROM dictionary WHERE lower(from_word) = lower(?)');
+  const insert = getDb().prepare('INSERT INTO dictionary (from_word, to_word, pack_id) VALUES (?, ?, ?)');
+  const added = [];
+  for (const c of corrections || []) {
+    const from = String(c.from || '').trim();
+    const to = String(c.to || '').trim();
+    if (!from || !to || blocked.has(blockKey(from, to))) continue;
+    if (findExisting.get(from)) continue;
+    insert.run(from, to, AUTO_LEARN_PACK_ID);
+    added.push({ from, to });
+  }
+  return added;
+}
+
 function getDictionary() {
   const rows = getDb()
     .prepare('SELECT id, from_word, to_word, pack_id FROM dictionary ORDER BY id')
@@ -152,6 +232,13 @@ function addDictionaryEntry(from, to) {
 }
 
 function removeDictionaryEntry(id) {
+  // Deleting an auto-learned word means "stop learning this" — remember it.
+  const row = getDb().prepare('SELECT from_word, to_word, pack_id FROM dictionary WHERE id = ?').get(id);
+  if (row && row.pack_id === AUTO_LEARN_PACK_ID) {
+    const list = getAutoLearnBlocklist();
+    const k = blockKey(row.from_word, row.to_word);
+    if (!list.includes(k)) setSetting('autoLearnBlocklist', [...list, k].slice(-500));
+  }
   getDb().prepare('DELETE FROM dictionary WHERE id = ?').run(id);
   return getDictionary();
 }
@@ -220,6 +307,21 @@ function uninstallDictionaryPack(packId) {
 }
 
 module.exports = {
+  AUTO_LEARN_PACK_ID,
+  getAutoLearnEnabled,
+  setAutoLearnEnabled,
+  getContextAwarenessEnabled,
+  setContextAwarenessEnabled,
+  getMeetingNotesEnabled,
+  setMeetingNotesEnabled,
+  getMeetingBrowserDetection,
+  setMeetingBrowserDetection,
+  getAudioRetentionDays,
+  setAudioRetentionDays,
+  getAssistantSettings,
+  setAssistantSettings,
+  getAutoLearnBlocklist,
+  addLearnedEntries,
   getHotkey,
   setHotkey,
   getModel,

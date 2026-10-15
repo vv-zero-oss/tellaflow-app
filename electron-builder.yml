@@ -22,6 +22,7 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: "Tellaflow needs microphone access to transcribe your speech."
     NSAccessibilityUsageDescription: "Tellaflow needs accessibility access to detect your hotkey and paste transcribed text."
+    NSAppleEventsUsageDescription: "Tellaflow uses Apple Events to paste text, detect meetings in your browser, and carry out actions you ask the Assistant to do (open apps, create reminders, control music)."
 dmg:
   title: Tellaflow Installer
   background: build/background.png

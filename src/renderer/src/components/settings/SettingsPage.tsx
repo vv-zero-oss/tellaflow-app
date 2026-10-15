@@ -13,6 +13,8 @@ import {
 import { GeneralSettings } from './GeneralSettings';
 import { PermissionsSettings } from './PermissionsSettings';
 import { SystemSettings } from './SystemSettings';
+import { SmartFeaturesSettings } from './SmartFeaturesSettings';
+import { AssistantSettings } from './AssistantSettings';
 import { UpdateRow } from './UpdateRow';
 import { usePermissions } from '@/hooks/use-permissions';
 import type { AppConfig, Theme } from '@/lib/ipc';
@@ -226,6 +228,11 @@ export function SettingsPage({
             config={config}
             refreshConfig={refreshConfig}
           />
+          <SmartFeaturesSettings
+            config={config}
+            refreshConfig={refreshConfig}
+          />
+          <AssistantSettings />
          
 
          
