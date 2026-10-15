@@ -116,23 +116,60 @@ function cliError(name, r) {
   return new Error(`${name} exited with code ${r.code}${msg ? `: ${msg.slice(0, 300)}` : ''}`);
 }
 
-function createClaudeProvider({ run = runCommand, resolve = resolveCli, model } = {}) {
+/** Base64 + media type for an image file (screenshots are JPEG or PNG). */
+function readImage(file, readFile = fs.readFileSync) {
+  const mediaType = /\.png$/i.test(file) ? 'image/png' : 'image/jpeg';
+  return { mediaType, data: readFile(file).toString('base64') };
+}
+
+/** Parse `--output-format stream-json` output: the last "result" line. */
+function parseStreamResult(stdout) {
+  const lines = String(stdout || '').split('\n').filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const msg = JSON.parse(lines[i]);
+      if (msg.type === 'result') return msg;
+    } catch {}
+  }
+  return null;
+}
+
+function createClaudeProvider({ run = runCommand, resolve = resolveCli, model, readFile } = {}) {
   return {
     id: 'claude',
     label: PROVIDER_LABELS.claude,
+    // Images (screenshots) go in as content blocks via --input-format stream-json.
+    vision: true,
     async detect() {
       const p = await resolve('claude', { run });
       return p ? { available: true, path: p } : { available: false, detail: 'Install Claude Code: npm i -g @anthropic-ai/claude-code, then run `claude` once to sign in.' };
     },
-    async complete(prompt, { signal } = {}) {
+    async complete(prompt, { signal, images = [] } = {}) {
       const bin = await resolve('claude', { run });
       if (!bin) throw new Error('Claude Code CLI not found.');
-      const args = ['-p', '--tools', '', '--output-format', 'json', '--no-session-persistence', '--strict-mcp-config'];
+      const args = ['-p', '--tools', '', '--no-session-persistence', '--strict-mcp-config'];
       if (model) args.push('--model', model);
-      const r = await run(bin, args, { input: prompt, env: childEnv(bin), signal, timeout: 180_000 });
+      let input = prompt;
+      if (images.length) {
+        args.push('--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose');
+        const content = [{ type: 'text', text: prompt }];
+        for (const file of images) {
+          const { mediaType, data } = readImage(file, readFile);
+          content.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
+        }
+        input = `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`;
+      } else {
+        args.push('--output-format', 'json');
+      }
+      const r = await run(bin, args, { input, env: childEnv(bin), signal, timeout: 180_000 });
       if (r.code !== 0) throw cliError('claude', r);
       let out;
-      try { out = JSON.parse(r.stdout); } catch { return r.stdout; }
+      if (images.length) {
+        out = parseStreamResult(r.stdout);
+        if (!out) return r.stdout;
+      } else {
+        try { out = JSON.parse(r.stdout); } catch { return r.stdout; }
+      }
       if (out.is_error) throw new Error(`Claude: ${out.result || out.subtype || 'error'}`);
       return out.result ?? '';
     },
@@ -143,17 +180,19 @@ function createCodexProvider({ run = runCommand, resolve = resolveCli, model } =
   return {
     id: 'codex',
     label: PROVIDER_LABELS.codex,
+    vision: true,
     async detect() {
       const p = await resolve('codex', { run });
       return p ? { available: true, path: p } : { available: false, detail: 'Install Codex CLI: npm i -g @openai/codex, then run `codex` once and sign in with ChatGPT.' };
     },
-    async complete(prompt, { signal } = {}) {
+    async complete(prompt, { signal, images = [] } = {}) {
       const bin = await resolve('codex', { run });
       if (!bin) throw new Error('Codex CLI not found.');
       const outFile = path.join(os.tmpdir(), `tellaflow-codex-${process.pid}-${Date.now()}.txt`);
       // Read-only sandbox + "-" (prompt on stdin). We only want the final message.
       const args = ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--color', 'never', '--output-last-message', outFile];
       if (model) args.push('--model', model);
+      for (const file of images) args.push('--image', file);
       args.push('-');
       try {
         const r = await run(bin, args, { input: prompt, env: childEnv(bin), signal, timeout: 180_000 });
@@ -170,6 +209,7 @@ function createGeminiProvider({ run = runCommand, resolve = resolveCli, model } 
   return {
     id: 'gemini',
     label: PROVIDER_LABELS.gemini,
+    vision: false,
     async detect() {
       const p = await resolve('gemini', { run });
       return p ? { available: true, path: p } : { available: false, detail: 'Install Gemini CLI: npm i -g @google/gemini-cli, then run `gemini` once to sign in with Google.' };
@@ -208,7 +248,7 @@ async function httpJson(url, { method = 'GET', body, timeout = 120_000, signal }
   }
 }
 
-function createOllamaProvider({ http = httpJson, host = 'http://127.0.0.1:11434', getModel = () => '' } = {}) {
+function createOllamaProvider({ http = httpJson, host = 'http://127.0.0.1:11434', getModel = () => '', readFile } = {}) {
   async function pickModel() {
     const configured = getModel();
     if (configured) return configured;
@@ -220,6 +260,8 @@ function createOllamaProvider({ http = httpJson, host = 'http://127.0.0.1:11434'
   return {
     id: 'ollama',
     label: PROVIDER_LABELS.ollama,
+    // Only vision models (llava, llama3.2-vision, …) use the image; others ignore it.
+    vision: true,
     async detect() {
       try {
         const tags = await http(`${host}/api/tags`, { timeout: 1500 });
@@ -231,12 +273,14 @@ function createOllamaProvider({ http = httpJson, host = 'http://127.0.0.1:11434'
         return { available: false, detail: 'Ollama is not running. Install it from ollama.com and start it.' };
       }
     },
-    async complete(prompt, { signal } = {}) {
+    async complete(prompt, { signal, images = [] } = {}) {
       const model = await pickModel();
+      const message = { role: 'user', content: prompt };
+      if (images.length) message.images = images.map((f) => readImage(f, readFile).data);
       const out = await http(`${host}/api/chat`, {
         method: 'POST',
         signal,
-        body: { model, stream: false, format: 'json', options: { temperature: 0 }, messages: [{ role: 'user', content: prompt }] },
+        body: { model, stream: false, format: 'json', options: { temperature: 0 }, messages: [message] },
       });
       return out?.message?.content || '';
     },

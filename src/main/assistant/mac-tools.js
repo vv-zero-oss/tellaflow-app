@@ -6,8 +6,11 @@
  *     (`item n of argv`) — never spliced into script source.
  *   - App names for Music/Spotify control come from a fixed allow-list.
  *   - There is no shell tool. `open` / `say` are invoked with execFile argv.
- *   - run_applescript is the one escape hatch: it always requires approval and
- *     the UI shows the full script before it runs.
+ *   - run_applescript is the escape hatch for anything else. With Full access
+ *     (the default) it runs like any other tool; otherwise the user approves
+ *     it after seeing the script.
+ *   - look_at_screen returns `{ text, image }`: the agent attaches the image to
+ *     the AI's next turn (for AIs that can see images).
  *
  * OS access is injected (`deps`) so tools are unit-testable on any platform.
  */
@@ -89,6 +92,24 @@ function createMacTools(overrides = {}) {
       run: async () => {
         const d = deps.now();
         return `${d.toString()} (ISO ${d.toISOString()})`;
+      },
+    },
+    {
+      name: 'look_at_screen',
+      description: 'Take a screenshot of the screen and look at it. Use whenever you need to see what the user sees ("this", "here", a page, a button, an error).',
+      args: {},
+      readOnly: true,
+      run: async () => {
+        const file = path.join(os.tmpdir(), `tellaflow-screen-${process.pid}-${Date.now()}.jpg`);
+        if (deps.captureScreen) {
+          // The app captures it itself (Electron desktopCapturer).
+          await deps.captureScreen(file);
+        } else {
+          // -x: no shutter sound. Shrink so it fits the AI's image limits.
+          await deps.exec('screencapture', ['-x', '-t', 'jpg', file], { timeout: 10_000 });
+          try { await deps.exec('sips', ['-Z', '1600', file], { timeout: 10_000 }); } catch {}
+        }
+        return { text: 'Screenshot taken. It is attached to this message as an image.', image: file };
       },
     },
     {
@@ -297,9 +318,8 @@ function createMacTools(overrides = {}) {
     },
     {
       name: 'run_applescript',
-      description: 'Run a custom AppleScript for anything the other tools cannot do. The user always reviews the script first.',
+      description: 'Run a custom AppleScript for anything the other tools cannot do (clicking, typing, menus, any app).',
       args: { script: 'string, AppleScript source' },
-      alwaysAsk: true,
       preview: ({ script }) => String(script || ''),
       run: async ({ script }) => {
         const out = await deps.rawAppleScript(str(script, 'script', { max: 20_000 }), { timeout: 30_000 });

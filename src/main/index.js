@@ -36,6 +36,7 @@ const { createMeetingDetector } = require('./meeting-detector');
 const { createMeetingNotes } = require('./meeting-notes');
 const macAutomation = require('./mac-automation');
 const { createAssistantService } = require('./assistant');
+const { createMacTools } = require('./assistant/mac-tools');
 const { formatTranscription } = require('./formatter');
 const grammar = require('./grammar');
 const { applyDictionary } = require('./dictionary');
@@ -375,6 +376,23 @@ function startMeetingNotes(info = {}) {
   try { refreshAppMenu(); } catch {}
 }
 
+/** Save a JPEG of the display under the cursor (longest side ≤ 1600 px). */
+async function captureScreenTo(file) {
+  const { desktopCapturer, screen } = require('electron');
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const { width, height } = display.size;
+  const scale = Math.min(1, 1600 / Math.max(width, height));
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: Math.round(width * scale), height: Math.round(height * scale) },
+  });
+  const source = sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
+  if (!source || source.thumbnail.isEmpty()) {
+    throw new Error('Could not capture the screen. Allow Screen Recording for Tellaflow in System Settings.');
+  }
+  fs.writeFileSync(file, source.thumbnail.toJPEG(80));
+}
+
 /** Opens Terminal running the AI's own sign-in (it opens the browser). */
 function openProviderSignIn(providerId) {
   const COMMANDS = { claude: 'claude', codex: 'codex login', gemini: 'gemini' };
@@ -569,6 +587,9 @@ function initCoreServices() {
 
   assistant = createAssistantService({
     getSettings: () => config.getAssistantSettings(),
+    // look_at_screen: the display under the cursor, captured by the app
+    // (needs Screen Recording), sized to fit the AI's image limits.
+    tools: createMacTools({ captureScreen: captureScreenTo }),
     send: (channel, data) => {
       sendToMainWindow(channel, data);
       try { islandAssistant?.handle(channel, data); } catch (err) { console.error('[island] assistant event failed:', err); }

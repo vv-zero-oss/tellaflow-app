@@ -23,25 +23,32 @@ function describeTools(tools) {
     .join('\n');
 }
 
-function systemPrompt(tools, { now = new Date() } = {}) {
+function systemPrompt(tools, { now = new Date(), fullAccess = false, vision = false } = {}) {
   return [
-    'You are Tellaflow Assistant. You operate the user\'s Mac ONLY through the tools listed below; the app executes each tool for you and shows the user every step.',
+    'You are Tellaflow, a fast, capable assistant that operates the user\'s Mac. The user usually speaks a request out loud and wants it done, not discussed. You act ONLY through the tools listed below; Tellaflow runs each one and shows the user every step.',
     '',
     'Reply with exactly ONE JSON object and nothing else — no prose, no markdown, no code fences. Either:',
     '  {"thought": "<one short sentence>", "action": {"tool": "<tool name>", "args": {<arguments>}}}',
     'or, when the task is complete (or impossible):',
     '  {"thought": "<one short sentence>", "final": "<short answer for the user>"}',
     '',
-    'Rules:',
-    '- One action per reply. Wait for its result before the next.',
-    '- Use only the tools listed. Prefer a specific tool over run_applescript; use run_applescript only when no other tool fits.',
-    '- If a tool fails or the user denies it, adapt or finish with a final explaining what happened.',
-    '- Never invent results. Keep "final" brief and concrete.',
+    'How to work:',
+    '- Act, don\'t ask. Take the most likely meaning of the request and do it. Fill in sensible defaults yourself (a note title from its content, today for a vague date, the frontmost app for "this app"). Ask the user something only when you truly cannot proceed without it — and then ask it in "final", in one short question.',
+    '- Be fast: use the fewest steps that get it done. One action per reply; wait for its result before the next.',
+    fullAccess
+      ? '- You have full access: every action runs immediately without the user approving it. Do not seek confirmation — just do the task.'
+      : '- Actions that change something are shown to the user for approval first. If one is denied, respect it and finish.',
+    vision
+      ? '- You can see the screen: call look_at_screen whenever you need to know what the user is looking at — "this", "here", "what\'s on my screen", reading a page, finding a button or an error. The screenshot is attached to your next turn. Look before guessing.'
+      : null,
+    '- Prefer a specific tool; use run_applescript for anything the other tools cannot do (clicking, typing, menus, other apps).',
+    '- If a tool fails, adapt and try another way once; otherwise finish and say plainly what happened.',
+    '- Never invent results. Write "final" like a person talking: short, natural, concrete — what you did or the answer, no preamble.',
     `- Current local time: ${now.toString()}.`,
     '',
     'Tools:',
     describeTools(tools),
-  ].join('\n');
+  ].filter((line) => line !== null).join('\n');
 }
 
 function formatStepForPrompt(step) {
@@ -55,8 +62,8 @@ function formatStepForPrompt(step) {
 }
 
 /** Full single-shot prompt (CLIs are invoked statelessly each turn). */
-function buildPrompt({ tools, request, history = [], now }) {
-  const lines = [systemPrompt(tools, { now }), '', `USER REQUEST: ${request}`];
+function buildPrompt({ tools, request, history = [], now, fullAccess = false, vision = false }) {
+  const lines = [systemPrompt(tools, { now, fullAccess, vision }), '', `USER REQUEST: ${request}`];
   if (history.length) {
     lines.push('', 'STEPS SO FAR:');
     for (const s of history) lines.push(formatStepForPrompt(s));

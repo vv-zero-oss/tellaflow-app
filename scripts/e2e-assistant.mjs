@@ -35,6 +35,7 @@ async function waitFor(fn, { timeout = 60_000, every = 200, label = 'condition' 
 
 // Each case: the request, and what to press if it asks for approval.
 const CASES = [
+  { id: 'screen', request: "What's on my screen right now?" },
   { id: 'time', request: 'What time is it?' },
   { id: 'math', request: 'What is 15 percent of 240?' },
   { id: 'note', request: 'Create a note called Groceries with eggs and milk', onApproval: 'approve' },
@@ -108,7 +109,7 @@ try {
   await main.screenshot({ path: path.join(OUT, 'assistant-page.png') });
   await T(() => globalThis.__tellaflowTest.navigate('settings'));
   await sleep(800);
-  await main.locator('text=Run actions without asking').scrollIntoViewIfNeeded();
+  await main.locator('text=Full access').first().scrollIntoViewIfNeeded();
   await sleep(400);
   await main.screenshot({ path: path.join(OUT, 'settings-assistant.png') });
 } catch (err) {

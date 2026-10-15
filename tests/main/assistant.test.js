@@ -87,10 +87,12 @@ describe('agent loop', () => {
   it('read-only tools never ask; auto-approve skips asking for normal tools', async () => {
     const tools = fakeTools([]);
     const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
-    expect(needsApproval(byName.get_date_time, { autoApprove: false })).toBe(false);
-    expect(needsApproval(byName.open_app, { autoApprove: false })).toBe(true);
-    expect(needsApproval(byName.open_app, { autoApprove: true })).toBe(false);
-    expect(needsApproval(byName.run_applescript, { autoApprove: true })).toBe(true);
+    expect(needsApproval(byName.get_date_time, { fullAccess: false })).toBe(false);
+    expect(needsApproval(byName.open_app, { fullAccess: false })).toBe(true);
+    expect(needsApproval(byName.run_applescript, { fullAccess: false })).toBe(true);
+    // Full access: nothing asks, scripts included.
+    expect(needsApproval(byName.open_app, { fullAccess: true })).toBe(false);
+    expect(needsApproval(byName.run_applescript, { fullAccess: true })).toBe(false);
   });
 
   it('a denied action is not executed and the model is told', async () => {
@@ -99,7 +101,7 @@ describe('agent loop', () => {
       { action: { tool: 'run_applescript', args: { script: 'beep' } } },
       { final: 'Okay, I did not run it.' },
     ]);
-    const res = await runAgent({ request: 'beep', complete: m.complete, tools: fakeTools(log), approve: async () => false, autoApprove: true });
+    const res = await runAgent({ request: 'beep', complete: m.complete, tools: fakeTools(log), approve: async () => false, fullAccess: false });
     expect(log).toEqual([]);
     expect(res.final).toBe('Okay, I did not run it.');
     expect(m.prompts[1]).toContain('The user denied this action.');
@@ -108,7 +110,7 @@ describe('agent loop', () => {
   it('feeds tool errors back so the model can adapt', async () => {
     const m = scripted([{ action: { tool: 'flaky', args: {} } }, { final: 'Could not do it: Safari is not installed.' }]);
     const steps = [];
-    await runAgent({ request: 'x', complete: m.complete, tools: fakeTools([]), approve: async () => true, autoApprove: true, onStep: (s) => steps.push(s) });
+    await runAgent({ request: 'x', complete: m.complete, tools: fakeTools([]), approve: async () => true, fullAccess: true, onStep: (s) => steps.push(s) });
     expect(steps.find((s) => s.type === 'result')).toMatchObject({ ok: false, error: 'Safari is not installed' });
     expect(m.prompts[1]).toContain('Safari is not installed');
   });
@@ -209,9 +211,9 @@ describe('mac tools', () => {
     expect(() => dateParts('next tuesday', 'start')).toThrow(/ISO/);
   });
 
-  it('run_applescript always asks and previews the script', () => {
+  it('run_applescript asks (with Full access off) and previews the script', () => {
     const { t } = recorder();
-    expect(t.run_applescript.alwaysAsk).toBe(true);
+    expect(needsApproval(t.run_applescript, { fullAccess: false })).toBe(true);
     expect(t.run_applescript.preview({ script: 'beep 2' })).toBe('beep 2');
   });
 
@@ -290,7 +292,7 @@ describe('assistant service', () => {
     ];
     const provider = { id: 'claude', label: 'Claude', detect: async () => ({ available: true }), complete: async () => JSON.stringify(replies.shift()) };
     const svc = createAssistantService({
-      getSettings: () => ({ provider: 'auto', autoApprove: false }),
+      getSettings: () => ({ provider: 'auto', fullAccess: false }),
       send: (ch, d) => sent.push([ch, d]),
       saveToHistory: (t) => saved.push(t),
       providers: { claude: provider, codex: provider, gemini: provider, ollama: provider },

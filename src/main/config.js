@@ -30,7 +30,8 @@ const DEFAULTS = {
   meetingBrowserDetection: true,
   audioRetentionDays: 30,
   assistantProvider: 'auto',
-  assistantAutoApprove: false,
+  // Full access: the assistant runs every action without asking first.
+  assistantFullAccess: true,
   ollamaModel: '',
   automationGranted: false,
 };
@@ -202,13 +203,13 @@ function getAssistantSettings() {
   const provider = getSetting('assistantProvider');
   return {
     provider: ASSISTANT_PROVIDERS.includes(provider) ? provider : 'auto',
-    autoApprove: getBool('assistantAutoApprove'),
+    fullAccess: getBool('assistantFullAccess'),
     ollamaModel: typeof getSetting('ollamaModel') === 'string' ? getSetting('ollamaModel') : '',
   };
 }
 function setAssistantSettings(patch = {}) {
   if (patch.provider !== undefined && ASSISTANT_PROVIDERS.includes(patch.provider)) setSetting('assistantProvider', patch.provider);
-  if (patch.autoApprove !== undefined) setSetting('assistantAutoApprove', !!patch.autoApprove);
+  if (patch.fullAccess !== undefined) setSetting('assistantFullAccess', !!patch.fullAccess);
   if (typeof patch.ollamaModel === 'string') setSetting('ollamaModel', patch.ollamaModel.trim().slice(0, 100));
   return getAssistantSettings();
 }

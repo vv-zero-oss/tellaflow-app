@@ -83,10 +83,10 @@ export function AssistantSettings() {
         <WellItem>
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
-              <span className="text-sm">Run actions without asking</span>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">Read-only steps never ask. Custom AppleScript always asks and shows you the script.</p>
+              <span className="text-sm">Full access</span>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">The assistant runs every action without asking, scripts included. Turn off to approve each change first.</p>
             </div>
-            <Switch checked={settings.autoApprove} onCheckedChange={(v) => updateSettings({ autoApprove: v })} />
+            <Switch checked={settings.fullAccess} onCheckedChange={(v) => updateSettings({ fullAccess: v })} />
           </div>
         </WellItem>
       </WellCard>

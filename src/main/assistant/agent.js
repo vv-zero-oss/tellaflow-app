@@ -5,20 +5,19 @@
  * Every step is reported through `onStep` so the UI can render the chain:
  *   thought → action → (approval) → result → … → final
  *
- * Approval policy:
- *   - read-only tools run without asking
- *   - other tools ask, unless the user enabled auto-approve
- *   - run_applescript ALWAYS asks and the UI shows the script
+ * Approval policy (the user's "Full access" setting, on by default):
+ *   - full access: nothing asks — every action, scripts included, just runs
+ *   - otherwise: read-only tools run, everything else asks first
  */
 
+const fs = require('fs');
 const { buildPrompt, parseStep } = require('./protocol');
 
 const MAX_RESULT_CHARS = 4000;
 
-function needsApproval(tool, { autoApprove }) {
-  if (tool.alwaysAsk) return true;
-  if (tool.readOnly) return false;
-  return !autoApprove;
+function needsApproval(tool, { fullAccess }) {
+  if (fullAccess) return false;
+  return !tool.readOnly;
 }
 
 function truncate(v) {
@@ -34,12 +33,24 @@ function truncate(v) {
  * @param {Array} p.tools                    tool definitions (see mac-tools.js)
  * @param {(step) => Promise<boolean>} p.approve
  * @param {(step) => void} [p.onStep]
- * @param {boolean} [p.autoApprove]
+ * @param {boolean} [p.fullAccess]
+ * @param {boolean} [p.vision]           the AI can see images (screenshots)
  * @param {number} [p.maxSteps]
  * @param {AbortSignal} [p.signal]
  * @returns {Promise<{ final: string|null, steps: object[], status: 'done'|'error'|'cancelled'|'max-steps' }>}
  */
-async function runAgent({ request, complete, tools, approve, onStep = () => {}, autoApprove = false, maxSteps = 10, signal, toolContext = {}, now }) {
+async function runAgent({ request, complete, tools: allTools, approve, onStep = () => {}, fullAccess = false, vision = false, maxSteps = 10, signal, toolContext = {}, now, removeFile = (f) => fs.rmSync(f, { force: true }) }) {
+  // Only offer the screen to an AI that can look at images.
+  const tools = vision ? allTools : allTools.filter((t) => t.name !== 'look_at_screen');
+  // The latest screenshot rides along with every later turn of this run.
+  let screenImage = null;
+  try {
+    return await loop();
+  } finally {
+    if (screenImage) { try { removeFile(screenImage); } catch {} }
+  }
+
+  async function loop() {
   const byName = new Map(tools.map((t) => [t.name, t]));
   const toolNames = [...byName.keys()];
   const history = [];
@@ -61,7 +72,10 @@ async function runAgent({ request, complete, tools, approve, onStep = () => {}, 
 
     let reply;
     try {
-      reply = await complete(buildPrompt({ tools, request, history, now: now ? now() : new Date() }), { signal });
+      reply = await complete(
+        buildPrompt({ tools, request, history, now: now ? now() : new Date(), fullAccess, vision }),
+        { signal, images: screenImage ? [screenImage] : [] },
+      );
     } catch (err) {
       if (cancelled()) { emit({ type: 'error', text: 'Cancelled.' }); return { final: null, steps, status: 'cancelled' }; }
       emit({ type: 'error', text: `AI provider error: ${err.message}` });
@@ -91,7 +105,7 @@ async function runAgent({ request, complete, tools, approve, onStep = () => {}, 
 
     const { tool: name, args } = parsed.action;
     const tool = byName.get(name);
-    const ask = needsApproval(tool, { autoApprove });
+    const ask = needsApproval(tool, { fullAccess });
     const preview = tool.preview ? tool.preview(args) : null;
     const actionStep = emit({ type: 'action', tool: name, args, readOnly: !!tool.readOnly, needsApproval: ask, preview });
 
@@ -108,7 +122,12 @@ async function runAgent({ request, complete, tools, approve, onStep = () => {}, 
     if (!result) {
       try {
         if (tool.validate) tool.validate(args);
-        const output = await tool.run(args, toolContext);
+        let output = await tool.run(args, toolContext);
+        if (output && typeof output === 'object' && output.image) {
+          if (screenImage) { try { removeFile(screenImage); } catch {} }
+          screenImage = output.image;
+          output = output.text;
+        }
         result = { ok: true, output: truncate(output ?? 'done') };
       } catch (err) {
         result = { ok: false, error: err.message || String(err) };
@@ -120,6 +139,7 @@ async function runAgent({ request, complete, tools, approve, onStep = () => {}, 
 
   emit({ type: 'error', text: `Stopped after ${maxSteps} steps without finishing.` });
   return { final: null, steps, status: 'max-steps' };
+  }
 }
 
 module.exports = { runAgent, needsApproval };
