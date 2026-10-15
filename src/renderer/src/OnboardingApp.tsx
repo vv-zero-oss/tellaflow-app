@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Power, RotateCcw, X, Check, AlertCircle, Send, Smile, Paperclip, Bold, Hash } from 'lucide-react';
+import { Power, RotateCcw, X, Check, AlertCircle, Send, Smile, Paperclip, Bold, Hash, MonitorSmartphone, AppWindow } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ipc, type HotkeyConfig } from '@/lib/ipc';
 
@@ -30,13 +30,15 @@ function Chip({ bg, fg, children }: { bg: string; fg: string; children: React.Re
 // ─── Single permission row ────────────────────────────────────────────────────
 function PermissionRow({
   imgSrc,
+  icon,
   label,
   description,
   granted,
   waiting,
   onGrant,
 }: {
-  imgSrc: string;
+  imgSrc?: string;
+  icon?: React.ReactNode;
   label: string;
   description: string;
   granted: boolean;
@@ -50,7 +52,7 @@ function PermissionRow({
       onClick={!granted ? onGrant : undefined}
     >
       <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 overflow-hidden">
-        <img src={imgSrc} alt={label} className="w-8 h-8 object-contain" />
+        {icon ?? <img src={imgSrc} alt={label} className="w-8 h-8 object-contain" />}
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-[13px] font-semibold" style={{ color: '#111111' }}>{label}</div>
@@ -100,6 +102,10 @@ function WelcomePermissionsStep({
 }) {
   const [micGranted, setMicGranted] = useState(false);
   const [accGranted, setAccGranted] = useState(false);
+  const [screenGranted, setScreenGranted] = useState(false);
+  const [screenWaiting, setScreenWaiting] = useState(false);
+  const [automationGranted, setAutomationGranted] = useState(false);
+  const [automationWaiting, setAutomationWaiting] = useState(false);
   const [showInstructions, setShowInstructions] = useState(false);
   const [needsRestart, setNeedsRestart] = useState(false);
   const accPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -136,6 +142,8 @@ function WelcomePermissionsStep({
           }
         }
       }
+      try { if (ipc?.checkScreenPermission) setScreenGranted(await ipc.checkScreenPermission()); } catch { /* ignore */ }
+      try { if (ipc?.checkAutomationPermission) setAutomationGranted(await ipc.checkAutomationPermission()); } catch { /* ignore */ }
       pollAccess();
     })();
     return () => { if (accPollRef.current) clearInterval(accPollRef.current); };
@@ -149,6 +157,29 @@ function WelcomePermissionsStep({
         if (granted) setMicGranted(true);
       }
     } catch { /* ignore */ }
+  };
+
+  const grantScreen = async () => {
+    if (screenGranted || !ipc?.requestScreenPermission) return;
+    setScreenWaiting(true);
+    try {
+      if (await ipc.requestScreenPermission()) { setScreenGranted(true); setScreenWaiting(false); return; }
+      // The user flips the switch in System Settings — watch for it.
+      const t = setInterval(async () => {
+        if (await ipc.checkScreenPermission()) { setScreenGranted(true); setScreenWaiting(false); clearInterval(t); }
+      }, 1500);
+      setTimeout(() => clearInterval(t), 120_000);
+    } catch { setScreenWaiting(false); }
+  };
+
+  const grantAutomation = async () => {
+    if (automationGranted || !ipc?.requestAutomationPermission) return;
+    setAutomationWaiting(true);
+    try {
+      const { granted } = await ipc.requestAutomationPermission();
+      setAutomationGranted(granted);
+    } catch { /* ignore */ }
+    setAutomationWaiting(false);
   };
 
   const grantAccessibility = () => {
@@ -245,7 +276,7 @@ function WelcomePermissionsStep({
         {/* Well header label */}
         <div style={{ padding: '8px 14px 6px' }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: '#aaaaaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Two quick things before takeoff 🚀
+            A few quick things before takeoff 🚀
           </span>
         </div>
         {/* Well card */}
@@ -262,7 +293,7 @@ function WelcomePermissionsStep({
             />
           </div>
           {/* Row 2 */}
-          <div style={{ padding: '11px 14px' }}>
+          <div style={{ padding: '11px 14px', borderBottom: '1px dashed rgba(0,0,0,0.08)' }}>
             <PermissionRow
               imgSrc={`${import.meta.env.BASE_URL}permission-accessibility.png`}
               label="Accessibility"
@@ -276,6 +307,28 @@ function WelcomePermissionsStep({
               granted={accGranted}
               waiting={showInstructions && !accGranted}
               onGrant={grantAccessibility}
+            />
+          </div>
+          {/* Row 3 */}
+          <div style={{ padding: '11px 14px', borderBottom: '1px dashed rgba(0,0,0,0.08)' }}>
+            <PermissionRow
+              icon={<span className="w-8 h-8 rounded-lg grid place-items-center" style={{ background: '#5856d6' }}><MonitorSmartphone className="w-4.5 h-4.5 text-white" strokeWidth={2} /></span>}
+              label="Screen Recording"
+              description={screenGranted ? 'Access granted' : screenWaiting ? 'Waiting — turn on Tellaflow in System Settings' : 'So AI commands can see your screen'}
+              granted={screenGranted}
+              waiting={screenWaiting && !screenGranted}
+              onGrant={grantScreen}
+            />
+          </div>
+          {/* Row 4 */}
+          <div style={{ padding: '11px 14px' }}>
+            <PermissionRow
+              icon={<span className="w-8 h-8 rounded-lg grid place-items-center" style={{ background: '#ff9500' }}><AppWindow className="w-4.5 h-4.5 text-white" strokeWidth={2} /></span>}
+              label="Control apps"
+              description={automationGranted ? 'Access granted' : automationWaiting ? 'Click OK on each macOS prompt' : 'Notes, Reminders, Calendar, Music, Finder — once, now'}
+              granted={automationGranted}
+              waiting={automationWaiting && !automationGranted}
+              onGrant={grantAutomation}
             />
           </div>
         </div>

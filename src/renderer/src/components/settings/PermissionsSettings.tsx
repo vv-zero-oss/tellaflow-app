@@ -6,9 +6,13 @@ import { cn } from '@/lib/utils';
 interface PermissionsSettingsProps {
   mic: boolean;
   accessibility: boolean;
+  screen: boolean;
+  automation: boolean;
   needsRestart: boolean;
   onGrantMic: () => void;
   onGrantAccessibility: () => void;
+  onGrantScreen: () => void;
+  onGrantAutomation: () => void;
   onRecheck: () => void;
   onRestart: () => void;
 }
@@ -16,9 +20,13 @@ interface PermissionsSettingsProps {
 export function PermissionsSettings({
   mic,
   accessibility,
+  screen,
+  automation,
   needsRestart,
   onGrantMic,
   onGrantAccessibility,
+  onGrantScreen,
+  onGrantAutomation,
   onRecheck,
   onRestart,
 }: PermissionsSettingsProps) {
@@ -55,6 +63,43 @@ export function PermissionsSettings({
                 <Button variant="outline" size="sm" onClick={onGrantAccessibility}>Open Settings</Button>
                 <Button variant="outline" size="sm" onClick={onRecheck}>Recheck</Button>
               </div>
+            )}
+          </div>
+        </WellItem>
+
+        <WellItem>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className={cn('w-2 h-2 rounded-full shrink-0', screen ? 'bg-success' : 'bg-muted-foreground/40')} />
+              <div>
+                <span className="text-sm">Screen Recording</span>
+                <p className="text-xs text-muted-foreground/60">Lets the assistant see and capture your screen</p>
+              </div>
+            </div>
+            {screen ? (
+              <span className="text-sm text-success">Granted</span>
+            ) : (
+              <div className="flex gap-1.5">
+                <Button variant="outline" size="sm" onClick={onGrantScreen}>Grant Access</Button>
+                <Button variant="outline" size="sm" onClick={onRecheck}>Recheck</Button>
+              </div>
+            )}
+          </div>
+        </WellItem>
+
+        <WellItem>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className={cn('w-2 h-2 rounded-full shrink-0', automation ? 'bg-success' : 'bg-muted-foreground/40')} />
+              <div>
+                <span className="text-sm">Control apps</span>
+                <p className="text-xs text-muted-foreground/60">Notes, Reminders, Calendar, Music, Finder — asked once, here</p>
+              </div>
+            </div>
+            {automation ? (
+              <span className="text-sm text-success">Granted</span>
+            ) : (
+              <Button variant="outline" size="sm" onClick={onGrantAutomation}>Grant Access</Button>
             )}
           </div>
         </WellItem>

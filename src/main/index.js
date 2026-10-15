@@ -1062,6 +1062,17 @@ function registerIPC() {
     permissions.openAccessibilityPrefs();
   });
 
+  ipcMain.handle('check-screen-permission', () => permissions.isScreenRecordingGranted());
+  ipcMain.handle('request-screen-permission', () => permissions.requestScreenRecording());
+
+  ipcMain.handle('check-automation-permission', () => config.getAutomationGranted());
+  ipcMain.handle('request-automation-permission', async () => {
+    const { granted, results } = await permissions.requestAutomation();
+    config.setAutomationGranted(granted);
+    if (!granted) permissions.openAutomationPrefs();
+    return { granted, results };
+  });
+
   ipcMain.on('complete-onboarding', async () => {
     // Clear playground mode immediately — the onboarding window is about to be
     // destroyed and its renderer can no longer send 'playground-mode-off', so

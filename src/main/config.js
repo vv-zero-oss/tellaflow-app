@@ -28,6 +28,7 @@ const DEFAULTS = {
   assistantVoiceTrigger: false,
   assistantWakeWord: 'hey tella',
   ollamaModel: '',
+  automationGranted: false,
 };
 
 const AUTO_LEARN_PACK_ID = 'auto-learned';
@@ -94,6 +95,8 @@ function setGrammarTone(tone) { setSetting('grammarTone', tone); }
 function isOnboardingComplete() { return getSetting('onboardingComplete'); }
 function setOnboardingComplete(complete) { setSetting('onboardingComplete', complete); }
 
+function getAutomationGranted() { return getBool('automationGranted'); }
+function setAutomationGranted(v) { setSetting('automationGranted', !!v); }
 function getAccessibilityGrantedOnce() { return getSetting('accessibilityGrantedOnce'); }
 function setAccessibilityGrantedOnce(value) { setSetting('accessibilityGrantedOnce', value); }
 
@@ -338,6 +341,8 @@ module.exports = {
   setOnboardingComplete,
   getAccessibilityGrantedOnce,
   setAccessibilityGrantedOnce,
+  getAutomationGranted,
+  setAutomationGranted,
   getTheme,
   setTheme,
   getFloatingBarEnabled,
