@@ -97,7 +97,6 @@ export default function App() {
               <ModelsPage
                 config={appConfig.config}
                 setModel={appConfig.setModel}
-                setGrammarEnabled={appConfig.setGrammarEnabled}
                 setTranslationEnabled={appConfig.setTranslationEnabled}
                 setTranslationLanguage={appConfig.setTranslationLanguage}
                 setTranscriptionEngine={appConfig.setTranscriptionEngine}

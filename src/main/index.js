@@ -35,14 +35,16 @@ const { createAutoLearnWatcher, extractCorrections } = require('./auto-learn');
 const { createMeetingDetector } = require('./meeting-detector');
 const { createMeetingNotes } = require('./meeting-notes');
 const macAutomation = require('./mac-automation');
-const { createAssistantService } = require('./assistant');
-const { createMacTools } = require('./assistant/mac-tools');
+const { createJarvis } = require('./jarvis');
+const osActions = require('./jarvis/desktop/os-actions');
+const { setPeekabooDownloadRoot, resolvePeekaboo } = require('./jarvis/desktop/peekaboo');
+const { installPeekaboo } = require('./jarvis/desktop/peekaboo-install');
+const { currentBbServer } = require('./jarvis/bb/supervisor');
+const { buildBbChromeScript } = require('./jarvis/bb/bb-chrome');
 const { formatTranscription } = require('./formatter');
-const grammar = require('./grammar');
 const { applyDictionary } = require('./dictionary');
 const snippets = require('./snippets');
 const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState, setToastInteractive, getIslandView, showIsland, restIsland, setRestOverride, isResting, refreshPlacement, onIslandRest } = require('./toast');
-const { createIslandAssistant } = require('./island-assistant');
 const { showMainWindow, sendToMainWindow, destroyMainWindow, createMainWindow } = require('./main-window');
 const history = require('./history');
 const { closeDb } = require('./db');
@@ -119,7 +121,6 @@ let lastPaste = null;         // { app } — for Undo on the "done" pill
 let islandErrorAction = null; // what "Try again" on a dictation error does
 let pendingMeeting = null;    // detector info while we ask "Transcribe meeting?"
 let pendingLearn = null;      // correction we're offering to the dictionary
-let islandAssistant = null;
 
 function island(owner, state, opts) {
   if (owner !== 'learn') commitUnansweredLearn();
@@ -185,6 +186,7 @@ let meetingNotes = null;
 let meetingDetector = null;
 let meetingCaptureWindow = null;
 let assistant = null;
+let pendingChatUrl = null;   // a chat the island asked the Assistant page to show
 let autoLearn = null;
 let modelLoading = false;
 const modelLoad = createModelLoadProgress({
@@ -228,7 +230,7 @@ function spawnTranscriptionWorker({ onMessage, onExit }) {
 }
 
 // raw transcript → artifacts stripped → context vocabulary → dictionary →
-// grammar LLM → formatting → snippets.
+// formatting → snippets.
 async function postProcessTranscript(raw, { context } = {}) {
   let text = raw;
   if (getActiveEngine() === 'whisper') text = stripWhisperArtifacts(text);
@@ -237,14 +239,6 @@ async function postProcessTranscript(raw, { context } = {}) {
     text = applyContextVocabulary(text, context.vocab);
   }
   text = applyDictionary(text);
-  if (config.getGrammarEnabled() && grammar.isModelAvailable()) {
-    broadcastStatus('Formatting...');
-    try {
-      text = await grammar.correctGrammar(text, config.getGrammarTone());
-    } catch (err) {
-      console.warn('Grammar formatting failed, using raw text:', err.message);
-    }
-  }
   text = formatTranscription(text);
   return snippets.applySnippets(text);
 }
@@ -259,9 +253,9 @@ function transcribeOptsFor(recCtx) {
 /** Called the moment a recording starts: warm the engine, read app context. */
 function beginRecording() {
   try { transcriptionService?.prewarm(); } catch {}
-  if (config.getGrammarEnabled() && grammar.isModelAvailable() && !grammar.isLoaded()) {
-    grammar.warmup().catch(() => {});
-  }
+  // The command key: start bb and the assistant's thread while the user is
+  // still talking — a cold thread is ~14 s to its first word, a warm one ~1.5 s.
+  if (recordingPurpose === 'command') assistant?.warm().catch(() => {});
   autoLearn?.stop(true); // a new dictation ends any pending correction watch
   if (process.platform === 'darwin' && config.getContextAwarenessEnabled()) {
     recordingContextPromise = macAutomation.getFrontmostContext()
@@ -372,8 +366,7 @@ function pruneOldRecordings() {
 // lists them.
 function startAssistantFromVoice(request) {
   islandOwner = 'assistant';
-  islandAssistant.expect(request);
-  assistant.start(request, { source: 'voice' })
+  assistant.ask(request, { source: 'voice' })
     .catch((err) => {
       console.error('[assistant] start failed:', err);
       island('error', 'error', { content: { notice: { title: 'Couldn’t start the assistant', body: String(err.message || err), primary: null, secondary: 'Dismiss' } } });
@@ -422,32 +415,6 @@ function startMeetingNotes(info = {}) {
   try { refreshAppMenu(); } catch {}
 }
 
-/** Save a JPEG of the display under the cursor (longest side ≤ 1600 px). */
-async function captureScreenTo(file) {
-  const { desktopCapturer, screen } = require('electron');
-  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-  const { width, height } = display.size;
-  const scale = Math.min(1, 1600 / Math.max(width, height));
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: Math.round(width * scale), height: Math.round(height * scale) },
-  });
-  const source = sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
-  if (!source || source.thumbnail.isEmpty()) {
-    throw new Error('Could not capture the screen. Allow Screen Recording for Tellaflow in System Settings.');
-  }
-  fs.writeFileSync(file, source.thumbnail.toJPEG(80));
-}
-
-/** Opens Terminal running the AI's own sign-in (it opens the browser). */
-function openProviderSignIn(providerId) {
-  const COMMANDS = { claude: 'claude', codex: 'codex login', gemini: 'gemini' };
-  const cmd = COMMANDS[providerId];
-  if (!cmd || process.platform !== 'darwin') { showMainWindow(); sendToMainWindow('navigate', 'settings'); return; }
-  macAutomation.runAppleScript('tell application "Terminal"\nactivate\ndo script (item 1 of argv)\nend tell', [cmd])
-    .catch((err) => console.error('[assistant] could not open Terminal for sign-in:', err.message));
-}
-
 /** No microphone access: say so on the island instead of recording silence. */
 function micBlocked() {
   if (process.platform !== 'darwin' || permissions.getMicrophoneStatus() === 'granted') return false;
@@ -458,7 +425,7 @@ function micBlocked() {
 /** Every island button lands here, routed by who owns the island. */
 function handleIslandAction(action) {
   if (islandOwner === 'assistant') {
-    const r = islandAssistant.action(action);
+    const r = assistant.action(action);
     if (r && r.retry) { startAssistantFromVoice(r.retry); return; }
     if (r) return;
   }
@@ -625,30 +592,66 @@ function initCoreServices() {
     onLearn: (corrections, { app: appName }) => offerLearnedCorrections(corrections, appName),
   });
 
-  assistant = createAssistantService({
-    getSettings: () => config.getAssistantSettings(),
-    // look_at_screen: the display under the cursor, captured by the app
-    // (needs Screen Recording), sized to fit the AI's image limits.
-    tools: createMacTools({ captureScreen: captureScreenTo }),
-    send: (channel, data) => {
-      sendToMainWindow(channel, data);
-      try { islandAssistant?.handle(channel, data); } catch (err) { console.error('[island] assistant event failed:', err); }
-    },
-    saveToHistory: (text) => {
-      history.addEntry(text, null, { kind: 'assistant' });
-      sendToMainWindow('history-update', history.getEntries());
-    },
-  });
-
-  islandAssistant = createIslandAssistant({
+  setPeekabooDownloadRoot(path.join(userData, 'tools', 'peekaboo'));
+  assistant = createJarvis({
     island: {
       show: (state, opts) => island('assistant', state, opts),
       rest: () => { if (islandOwner === 'assistant') islandRest(); },
     },
-    assistant,
-    openAssistantPage: () => { showMainWindow(); sendToMainWindow('navigate', 'assistant'); },
+    getSettings: () => config.getAssistantSettings(),
+    // Where the user was when they pressed the key (read at key-down, before
+    // the island or anything of ours could come to the front).
+    getContext: async () => {
+      const c = await peekRecordingContext();
+      return c?.ctx ? { app: c.ctx.app, windowTitle: c.ctx.windowTitle } : null;
+    },
+    // e2e on Linux: a pretend desktop (scripts/e2e-fake-desktop.js), since
+    // Peekaboo is macOS-only. Never set outside the test run.
+    os: process.env.TELLAFLOW_E2E === '1' && process.env.TELLAFLOW_E2E_DESKTOP === 'fake'
+      ? require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js'))
+      : osActions,
+    workspaceDir: path.join(userData, 'assistant', 'workspace'),
+    record: (entry) => {
+      if (entry.role !== 'mascot' || !entry.text) return;
+      sendToMainWindow('assistant-transcript', entry);
+    },
+    onStatus: (status) => sendToMainWindow('assistant-status', status),
+    // The page may not be mounted yet: it takes this on its first load
+    // (assistant-workspace-url), and the event covers a page already open.
+    openChat: (url) => { pendingChatUrl = { url, at: Date.now() }; showMainWindow(); sendToMainWindow('navigate', 'assistant'); sendToMainWindow('assistant-open-chat', url); },
+    openAccessibility: () => { osActions.requestAccessibility().catch(() => {}); },
     openSettings: () => { showMainWindow(); sendToMainWindow('navigate', 'settings'); },
-    startSignIn: (providerId) => openProviderSignIn(providerId),
+    // Insert: the answer typed into the app the user was in when they pressed
+    // the key — the same paste dictation uses, with the same Undo pill.
+    insertText: async (text) => {
+      const c = await peekRecordingContext();
+      const target = c?.ctx?.app && !isOwnApp(c.ctx.app) ? c.ctx.app : null;
+      pasteText(text, target);
+      lastPaste = { app: target };
+      const words = text.split(/\s+/).filter(Boolean).length;
+      island('dictation', 'done', { content: { doneText: `Inserted ${words} word${words === 1 ? '' : 's'}`, canUndo: true }, autoRestMs: 3500 });
+    },
+    copyText: (text) => clipboard.writeText(text),
+    // Answers live with the transcripts, as the assistant's always have.
+    saveAnswer: ({ request, text }) => {
+      config.setAssistantUsed(true);
+      history.addEntry(`Assistant: ${request}\n\n${text}`, null, { kind: 'assistant' });
+      sendToMainWindow('history-update', history.getEntries());
+    },
+    // Sign in: the AI's own login in Terminal (it opens the browser).
+    signIn: async () => {
+      let cmd = 'claude';
+      try {
+        const list = await assistant.providers();
+        const pick = config.getAssistantSettings().provider;
+        const p = list.find((x) => x.id === pick) || list.find((x) => x.status === 'unauthenticated' || x.status === 'expired');
+        if (p?.loginCommand) cmd = p.loginCommand;
+      } catch {}
+      if (process.platform !== 'darwin') { showMainWindow(); sendToMainWindow('navigate', 'settings'); return; }
+      macAutomation.runAppleScript('tell application "Terminal"\nactivate\ndo script (item 1 of argv)\nend tell', [cmd])
+        .catch((err) => console.error('[assistant] could not open Terminal for sign-in:', err.message));
+    },
+    installHelper: (onProgress) => installPeekaboo(onProgress),
   });
 
   meetingDetector = createMeetingDetector({
@@ -693,6 +696,10 @@ function initCoreServices() {
         return pid || null;
       },
       navigate: (page) => sendToMainWindow('navigate', page),
+      // What reached the pretend desktop (TELLAFLOW_E2E_DESKTOP=fake).
+      fakeDesktop: () => (process.env.TELLAFLOW_E2E_DESKTOP === 'fake'
+        ? (({ front, doc, acts }) => ({ front, doc, acts }))(require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js')).state)
+        : null),
       learn: (corrections) => {
         const added = config.addLearnedEntries(corrections);
         sendToMainWindow('dictionary-changed', config.getDictionary());
@@ -709,6 +716,8 @@ function initCoreServices() {
         startClickRecording: () => startClickRecording(),
         askMeeting: (info) => askToTranscribeMeeting(info),
         command: (request) => startAssistantFromVoice(request),
+        // Any assistant view, for the island gallery (scripts/e2e-island-assistant.mjs).
+        show: (state, opts) => island('assistant', state, opts),
         // Same path as a real edit the watcher saw in another app.
         learnFromEdit: (pasted, before, after) => {
           const corrections = extractCorrections(pasted, before, after);
@@ -783,7 +792,7 @@ function performCleanup() {
   try { if (meetingCaptureWindow && !meetingCaptureWindow.isDestroyed()) meetingCaptureWindow.destroy(); } catch {}
   try { transcriptionService?.dispose(); } catch (e) { console.error('transcriptionService.dispose error:', e); }
   try { hotkey.stop(); } catch (e) { console.error('hotkey.stop error:', e); }
-  try { grammar.dispose(); } catch (e) { console.error('grammar.dispose error:', e); }
+  try { assistant?.dispose(); } catch (e) { console.error('assistant.dispose error:', e); }
   try { destroyToast(); } catch (e) { console.error('destroyToast error:', e); }
   try { destroyAudioCaptureWindow(); } catch (e) { console.error('destroyAudioCaptureWindow error:', e); }
   try { closeOnboarding(); } catch (e) { console.error('closeOnboarding error:', e); }
@@ -1016,11 +1025,12 @@ async function startApp() {
     });
   }
 
-  // Pre-load the grammar model in the background so the first correction
-  // doesn't stall waiting for the worker to fork and mmap the GGUF file.
-  if (config.getGrammarEnabled() && grammar.isModelAvailable()) {
-    grammar.warmup().catch(err => console.warn('Grammar warmup failed:', err.message));
-  }
+  // Bring bb up and warm the assistant's thread in the background, so the
+  // first command answers in seconds rather than after a cold start — but
+  // only for someone who uses the assistant: a warm is a (tiny) model call,
+  // and nobody who only dictates should pay for one on every launch. Their
+  // first command warms it on key-down (beginRecording) instead.
+  if (config.getAssistantUsed()) setTimeout(() => { assistant?.warm().catch(() => {}); }, 8000).unref?.();
 
   startHotkeyListener();
   initFloatingBar();
@@ -1150,7 +1160,7 @@ function startHotkeyListener() {
         sounds.playStart();
         sounds.muteMusic();
         broadcastStatus(recordingPurpose === 'command' ? 'Listening for a command...' : 'Recording...');
-        island('dictation', 'listening');
+        island('dictation', recordingPurpose === 'command' ? 'asking' : 'listening');
         createAudioCaptureWindow();
         beginRecording();
       },
@@ -1323,14 +1333,6 @@ function registerIPC() {
   ipcMain.handle('check-screen-permission', () => permissions.isScreenRecordingGranted());
   ipcMain.handle('request-screen-permission', () => permissions.requestScreenRecording());
 
-  ipcMain.handle('check-automation-permission', () => config.getAutomationGranted());
-  ipcMain.handle('request-automation-permission', async () => {
-    const { granted, results } = await permissions.requestAutomation();
-    config.setAutomationGranted(granted);
-    if (!granted) permissions.openAutomationPrefs();
-    return { granted, results };
-  });
-
   ipcMain.on('complete-onboarding', async () => {
     // Clear playground mode immediately — the onboarding window is about to be
     // destroyed and its renderer can no longer send 'playground-mode-off', so
@@ -1410,10 +1412,6 @@ function registerIPC() {
       hotkey: config.getHotkey(),
       model: config.getModel(),
       programmingMode: config.getProgrammingMode(),
-      grammarEnabled: config.getGrammarEnabled(),
-      grammarModel: config.getGrammarModel(),
-      grammarTone: config.getGrammarTone(),
-      grammarModelAvailable: grammar.isModelAvailable(),
       theme: config.getTheme(),
       floatingBarEnabled: config.getFloatingBarEnabled(),
       soundsEnabled: config.getSoundsEnabled(),
@@ -1555,13 +1553,6 @@ function registerIPC() {
     config.setProgrammingMode(enabled);
   });
 
-  ipcMain.on('set-grammar-enabled', (_, enabled) => {
-    config.setGrammarEnabled(enabled);
-    if (enabled && grammar.isModelAvailable()) {
-      grammar.warmup();
-    }
-  });
-
   ipcMain.on('set-theme', (_, theme) => {
     config.setTheme(theme);
   });
@@ -1648,66 +1639,6 @@ function registerIPC() {
   ipcMain.on('delete-model', (_, modelKey) => {
     models.deleteModel(modelKey);
     sendToMainWindow('models-changed', models.getModelsStatus());
-  });
-
-  // Grammar model management (multi-model)
-  ipcMain.handle('get-grammar-models-status', () => {
-    return grammar.getGrammarModelsStatus();
-  });
-
-  ipcMain.on('start-grammar-download', (_, modelKey) => {
-    grammar.startGrammarDownload(modelKey, {
-      onProgress: throttleProgress((p) => {
-        sendToMainWindow('grammar-model-progress', p);
-      }),
-      onComplete: () => {
-        console.log(`Grammar model ${modelKey} downloaded successfully`);
-        sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
-      },
-      onError: (err) => {
-        console.error(`Grammar model ${modelKey} download failed:`, err.message);
-        sendToMainWindow('grammar-model-error', { modelKey, error: err.message });
-        sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
-      },
-    });
-  });
-
-  ipcMain.on('pause-grammar-download', (_, modelKey) => {
-    grammar.pauseGrammarDownload(modelKey);
-    sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
-  });
-
-  ipcMain.on('cancel-grammar-download', (_, modelKey) => {
-    grammar.cancelGrammarDownload(modelKey);
-    sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
-  });
-
-  ipcMain.on('delete-grammar-model', (_, modelKey) => {
-    grammar.deleteGrammarModel(modelKey);
-    // If we deleted the active model, auto-disable grammar
-    if (config.getGrammarModel() === modelKey && !grammar.isModelAvailable()) {
-      config.setGrammarEnabled(false);
-    }
-    sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
-  });
-
-  ipcMain.on('set-grammar-model', async (_, modelKey) => {
-    config.setGrammarModel(modelKey);
-    // Restart the worker so it loads the newly-selected model
-    await grammar.restartWorker();
-    sendToMainWindow('grammar-model-changed', grammar.getGrammarModelsStatus());
-    // Eagerly warm up so the model is in memory before the next transcription.
-    // Awaited so the worker is fully ready before this handler exits.
-    if (config.getGrammarEnabled() && grammar.isModelAvailable()) {
-      await grammar.warmup();
-    }
-  });
-
-  // Grammar tone
-  ipcMain.handle('get-grammar-tone', () => config.getGrammarTone());
-
-  ipcMain.on('set-grammar-tone', (_, tone) => {
-    config.setGrammarTone(tone);
   });
 
   // Permission grant actions
@@ -1927,14 +1858,59 @@ function registerIPC() {
   });
 
   // ── Assistant ─────────────────────────────────────────────────────────────
-  ipcMain.handle('assistant-start', (_, request) => assistant.start(String(request || ''), { source: 'typed' }));
-  ipcMain.handle('assistant-approve', (_, runId, actionId, approved) => assistant.respondApproval(runId, actionId, !!approved));
-  ipcMain.handle('assistant-cancel', (_, runId) => assistant.cancel(runId));
-  ipcMain.handle('assistant-list-runs', () => assistant.listRuns());
-  ipcMain.handle('assistant-detect', () => assistant.detect());
-  ipcMain.handle('assistant-tools', () => assistant.toolList());
+  // The island conversation runs in main; the Assistant page frames bb itself.
+  const errorOf = (err) => ({ ok: false, error: String(err?.message || err) });
+  ipcMain.handle('assistant-ask', (_, request) => { islandOwner = 'assistant'; assistant.ask(String(request || ''), { source: 'typed' }); return true; });
+  ipcMain.handle('assistant-stop', () => assistant.stop());
+  ipcMain.handle('assistant-status', () => assistant.status());
+  ipcMain.handle('assistant-providers', () => assistant.providers().catch(() => []));
+  ipcMain.handle('assistant-workspace-url', (_, threadId) => {
+    // The chat the island's "Open chat" just asked for wins over the list for
+    // a few seconds — not once: the page can mount twice in a row (React's dev
+    // double mount, a second navigate), and the second must not lose it.
+    if (pendingChatUrl && Date.now() - pendingChatUrl.at > 15_000) pendingChatUrl = null;
+    if (pendingChatUrl && (threadId === undefined || threadId === null)) {
+      const { url } = pendingChatUrl;
+      return { ok: true, url, origin: new URL(url).origin };
+    }
+    if (threadId === '') pendingChatUrl = null; // the Chats button asked for the list
+    return assistant.workspaceUrl(typeof threadId === 'string' ? threadId : undefined).then((r) => ({ ok: true, ...r }), errorOf);
+  });
+  ipcMain.handle('assistant-transcript', () => assistant.transcript());
+  // bb's framed app in Tellaflow's theme (src/main/jarvis/bb/bb-chrome.js).
+  // Only ever into a frame of the window that asked, served by OUR bb.
+  ipcMain.handle('assistant-style-frame', async (event, options) => {
+    const server = currentBbServer();
+    if (!server) return { ok: false, error: 'the assistant is not running' };
+    const origin = server.client.origin;
+    const frames = event.sender.mainFrame.framesInSubtree.filter((f) => {
+      try { return new URL(f.url).origin === origin; } catch { return false; }
+    });
+    const script = buildBbChromeScript({
+      theme: options?.theme === 'dark' ? 'dark' : 'light',
+      tokens: options?.tokens && typeof options.tokens === 'object' ? options.tokens : {},
+    });
+    let applied = 0;
+    for (const frame of frames) {
+      try { await frame.executeJavaScript(script); applied++; } catch (err) { console.warn('[assistant] could not style bb:', err.message); }
+    }
+    return { ok: applied > 0, applied };
+  });
+  ipcMain.handle('assistant-reset', () => assistant.reset());
   ipcMain.handle('assistant-get-settings', () => config.getAssistantSettings());
   ipcMain.handle('assistant-set-settings', (_, patch) => config.setAssistantSettings(patch || {}));
+  // The desktop helper (Peekaboo), downloaded on request — pinned and checksummed.
+  ipcMain.handle('assistant-install-helper', async () => {
+    try {
+      await installPeekaboo((received, total) => sendToMainWindow('assistant-helper-progress', { received, total }));
+      return { ok: true };
+    } catch (err) { return errorOf(err); }
+  });
+  ipcMain.handle('assistant-request-accessibility', () => osActions.requestAccessibility());
+  ipcMain.handle('assistant-desktop-status', async () => {
+    const [status, helper] = await Promise.all([osActions.getOsStatus().catch(() => null), resolvePeekaboo(true).catch(() => null)]);
+    return { status, helper };
+  });
 
   ipcMain.handle('get-audio-data', async (_, filePath) => {
     const fsp = require('fs').promises;

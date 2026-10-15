@@ -28,14 +28,13 @@ interface SettingsPageProps {
   onClearHistory: () => void;
 }
 
-type ResetKey = 'transcripts' | 'whisperModels' | 'snippets' | 'dictionary' | 'grammarModels' | 'permissions';
+type ResetKey = 'transcripts' | 'whisperModels' | 'snippets' | 'dictionary' | 'permissions';
 
 const RESET_OPTIONS: { key: ResetKey; label: string; description: string }[] = [
   { key: 'transcripts', label: 'Transcripts', description: 'All recorded transcription history' },
   { key: 'whisperModels', label: 'Whisper Models', description: 'All downloaded speech recognition models' },
   { key: 'snippets', label: 'Snippets', description: 'All custom text expansion snippets' },
   { key: 'dictionary', label: 'Dictionary', description: 'All custom word replacements' },
-  { key: 'grammarModels', label: 'AI Grammar Models', description: 'All downloaded grammar correction models' },
   { key: 'permissions', label: 'Permissions', description: 'Reset permission grants and onboarding state' },
 ];
 
@@ -89,7 +88,7 @@ export function SettingsPage({
   refreshConfig,
   onClearHistory,
 }: SettingsPageProps) {
-  const { mic, accessibility, screen, automation, needsRestart, grantMic, grantAccessibility, grantScreen, grantAutomation, retryHotkey, restartApp, startPolling, stopPolling, refresh: refreshPerms } = usePermissions();
+  const { mic, accessibility, screen, needsRestart, grantMic, grantAccessibility, grantScreen, retryHotkey, restartApp, startPolling, stopPolling, refresh: refreshPerms } = usePermissions();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetSelections, setResetSelections] = useState<Record<ResetKey, boolean>>({
@@ -97,7 +96,6 @@ export function SettingsPage({
     whisperModels: false,
     snippets: false,
     dictionary: false,
-    grammarModels: false,
     permissions: false,
   });
   const [resetting, setResetting] = useState(false);
@@ -139,7 +137,6 @@ export function SettingsPage({
       whisperModels: next,
       snippets: next,
       dictionary: next,
-      grammarModels: next,
       permissions: next,
     });
   };
@@ -154,8 +151,7 @@ export function SettingsPage({
       whisperModels: false,
       snippets: false,
       dictionary: false,
-      grammarModels: false,
-      permissions: false,
+        permissions: false,
     });
     setResetOpen(true);
   };
@@ -182,14 +178,6 @@ export function SettingsPage({
       if (resetSelections.dictionary) {
         await window.tellaflow.clearDictionary();
       }
-      if (resetSelections.grammarModels) {
-        const grammarModels = await window.tellaflow.getGrammarModelsStatus();
-        for (const [key, info] of Object.entries(grammarModels)) {
-          if (info.status === 'downloaded') {
-            window.tellaflow.deleteGrammarModel(key);
-          }
-        }
-      }
       if (resetSelections.permissions) {
         await window.tellaflow.resetPermissions();
       }
@@ -214,12 +202,10 @@ export function SettingsPage({
             mic={mic}
             accessibility={accessibility}
             screen={screen}
-            automation={automation}
             needsRestart={needsRestart}
             onGrantMic={grantMic}
             onGrantAccessibility={grantAccessibility}
             onGrantScreen={grantScreen}
-            onGrantAutomation={grantAutomation}
             onRecheck={handleRecheck}
             onRestart={restartApp}
           />

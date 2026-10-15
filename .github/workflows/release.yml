@@ -41,7 +41,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
 
       - name: Cache Parakeet model
@@ -52,6 +52,9 @@ jobs:
 
       - name: Download Parakeet model (if not cached)
         run: npm run download-parakeet
+
+      - name: Download the bundled Node runtime (pinned, checksummed)
+        run: bash scripts/download-node.sh darwin-arm64
 
       - name: Install dependencies
         run: npm ci

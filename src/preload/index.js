@@ -35,8 +35,6 @@ contextBridge.exposeInMainWorld('tellaflow', {
   openAccessibilitySettings: () => ipcRenderer.send('open-accessibility-settings'),
   checkScreenPermission: () => ipcRenderer.invoke('check-screen-permission'),
   requestScreenPermission: () => ipcRenderer.invoke('request-screen-permission'),
-  checkAutomationPermission: () => ipcRenderer.invoke('check-automation-permission'),
-  requestAutomationPermission: () => ipcRenderer.invoke('request-automation-permission'),
   completeOnboarding: () => ipcRenderer.send('complete-onboarding'),
   dismissOnboarding: () => ipcRenderer.send('dismiss-onboarding'),
   warmUpModel: () => ipcRenderer.send('warm-up-model'),
@@ -48,7 +46,6 @@ contextBridge.exposeInMainWorld('tellaflow', {
   // Settings IPC
   getConfig: () => ipcRenderer.invoke('get-config'),
   setModel: (model) => ipcRenderer.send('set-model', model),
-  setGrammarEnabled: (enabled) => ipcRenderer.send('set-grammar-enabled', enabled),
   setTheme: (theme) => ipcRenderer.send('set-theme', theme),
 
   // System settings
@@ -147,16 +144,23 @@ contextBridge.exposeInMainWorld('tellaflow', {
   onMeetingState: (cb) => { const h = (_, st) => cb(st); ipcRenderer.on('meeting-state', h); return () => ipcRenderer.removeListener('meeting-state', h); },
 
   // Assistant
-  assistantStart: (request) => ipcRenderer.invoke('assistant-start', request),
-  assistantApprove: (runId, actionId, approved) => ipcRenderer.invoke('assistant-approve', runId, actionId, approved),
-  assistantCancel: (runId) => ipcRenderer.invoke('assistant-cancel', runId),
-  assistantListRuns: () => ipcRenderer.invoke('assistant-list-runs'),
-  assistantDetect: () => ipcRenderer.invoke('assistant-detect'),
-  assistantTools: () => ipcRenderer.invoke('assistant-tools'),
+  assistantAsk: (request) => ipcRenderer.invoke('assistant-ask', request),
+  assistantStop: () => ipcRenderer.invoke('assistant-stop'),
+  assistantStatus: () => ipcRenderer.invoke('assistant-status'),
+  assistantProviders: () => ipcRenderer.invoke('assistant-providers'),
+  assistantWorkspaceUrl: (threadId) => ipcRenderer.invoke('assistant-workspace-url', threadId),
+  assistantTranscript: () => ipcRenderer.invoke('assistant-transcript'),
+  assistantReset: () => ipcRenderer.invoke('assistant-reset'),
+  assistantStyleFrame: (options) => ipcRenderer.invoke('assistant-style-frame', options),
   assistantGetSettings: () => ipcRenderer.invoke('assistant-get-settings'),
   assistantSetSettings: (patch) => ipcRenderer.invoke('assistant-set-settings', patch),
-  onAssistantRun: (cb) => { const h = (_, run) => cb(run); ipcRenderer.on('assistant-run', h); return () => ipcRenderer.removeListener('assistant-run', h); },
-  onAssistantStep: (cb) => { const h = (_, ev) => cb(ev); ipcRenderer.on('assistant-step', h); return () => ipcRenderer.removeListener('assistant-step', h); },
+  assistantInstallHelper: () => ipcRenderer.invoke('assistant-install-helper'),
+  assistantRequestAccessibility: () => ipcRenderer.invoke('assistant-request-accessibility'),
+  assistantDesktopStatus: () => ipcRenderer.invoke('assistant-desktop-status'),
+  onAssistantStatus: (cb) => { const h = (_, s) => cb(s); ipcRenderer.on('assistant-status', h); return () => ipcRenderer.removeListener('assistant-status', h); },
+  onAssistantTranscript: (cb) => { const h = (_, e) => cb(e); ipcRenderer.on('assistant-transcript', h); return () => ipcRenderer.removeListener('assistant-transcript', h); },
+  onAssistantOpenChat: (cb) => { const h = (_, u) => cb(u); ipcRenderer.on('assistant-open-chat', h); return () => ipcRenderer.removeListener('assistant-open-chat', h); },
+  onAssistantHelperProgress: (cb) => { const h = (_, p) => cb(p); ipcRenderer.on('assistant-helper-progress', h); return () => ipcRenderer.removeListener('assistant-helper-progress', h); },
   onNavigate: (cb) => { const h = (_, page) => cb(page); ipcRenderer.on('navigate', h); return () => ipcRenderer.removeListener('navigate', h); },
 
   // Status updates
@@ -166,18 +170,6 @@ contextBridge.exposeInMainWorld('tellaflow', {
   onShowRestartBanner: (callback) => { const h = () => callback(); ipcRenderer.on('show-restart-banner', h); return () => ipcRenderer.removeListener('show-restart-banner', h); },
   onAccessibilityGranted: (callback) => { const h = () => callback(); ipcRenderer.on('accessibility-granted', h); return () => ipcRenderer.removeListener('accessibility-granted', h); },
 
-  // Grammar model management
-  getGrammarModelsStatus: () => ipcRenderer.invoke('get-grammar-models-status'),
-  startGrammarDownload: (modelKey) => ipcRenderer.send('start-grammar-download', modelKey),
-  pauseGrammarDownload: (modelKey) => ipcRenderer.send('pause-grammar-download', modelKey),
-  cancelGrammarDownload: (modelKey) => ipcRenderer.send('cancel-grammar-download', modelKey),
-  deleteGrammarModel: (modelKey) => ipcRenderer.send('delete-grammar-model', modelKey),
-  setGrammarModel: (modelKey) => ipcRenderer.send('set-grammar-model', modelKey),
-  getGrammarTone: () => ipcRenderer.invoke('get-grammar-tone'),
-  setGrammarTone: (tone) => ipcRenderer.send('set-grammar-tone', tone),
-  onGrammarModelProgress: (cb) => { const h = (_, p) => cb(p); ipcRenderer.on('grammar-model-progress', h); return () => ipcRenderer.removeListener('grammar-model-progress', h); },
-  onGrammarModelChanged: (cb) => { const h = (_, s) => cb(s); ipcRenderer.on('grammar-model-changed', h); return () => ipcRenderer.removeListener('grammar-model-changed', h); },
-  onGrammarModelError: (cb) => { const h = (_, e) => cb(e); ipcRenderer.on('grammar-model-error', h); return () => ipcRenderer.removeListener('grammar-model-error', h); },
 
   // Bulk data reset
   clearSnippets: () => ipcRenderer.invoke('clear-snippets'),

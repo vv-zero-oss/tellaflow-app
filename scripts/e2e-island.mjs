@@ -124,8 +124,8 @@ try {
   await shot('08-meeting-saved');
 
   // ── Command key → assistant on the island ────────────────────────────────
-  // Whatever AI this machine has decides the path: an answer if one is signed
-  // in, the setup card if not. Screenshot every assistant state we pass.
+  // Whatever AI this machine has decides the path: a streamed reply if one is
+  // signed in, an error card if not. Screenshot every assistant state we pass.
   await expectState('idle', 'back to rest after the meeting', 10_000);
   await T(() => globalThis.__tellaflowTest.island.setRecordingPurpose('command'));
   await T((_, p) => globalThis.__tellaflowTest.dictateWav(p), path.resolve(shortWav));
@@ -135,15 +135,16 @@ try {
     const st = await islandState();
     if (seen[seen.length - 1] !== st) {
       seen.push(st);
-      if (['thinking', 'plan', 'approval', 'answer', 'setup', 'error'].includes(st)) await shot(`09-command-${seen.length}-${st}`, { settle: st === 'answer' ? 2500 : 300 });
+      if (['reply', 'ask', 'approval', 'setup', 'error'].includes(st)) await shot(`09-command-${seen.length}-${st}`, { settle: 300 });
     }
-    if (['answer', 'setup', 'error'].includes(st) || Date.now() - t0 > 180_000) break;
+    const view = await T(() => globalThis.__tellaflowTest.island.view());
+    const settled = (st === 'reply' && view?.content?.reply && !view.content.reply.working) || ['setup', 'error'].includes(st);
+    if (settled || Date.now() - t0 > 180_000) break;
     await sleep(200);
   }
-  check('a command-key request runs on the island', seen.includes('thinking') && ['answer', 'setup', 'error'].includes(seen[seen.length - 1]), seen.join(' → '));
-  const runs = await main.evaluate(() => window.tellaflow.assistantListRuns());
-  check('the spoken command went to the assistant, not into a text field', runs.length > 0 && runs[0].source === 'voice', runs[0]?.request);
-  console.log('assistant run:', JSON.stringify(runs[0]?.steps?.map((x) => ({ type: x.type, text: x.text?.slice?.(0, 120), tool: x.tool }))));
+  check('a command-key request runs on the island', seen.includes('reply') && ['reply', 'setup', 'error'].includes(seen[seen.length - 1]), seen.join(' → '));
+  const transcript = await main.evaluate(() => window.tellaflow.assistantTranscript());
+  check('the spoken command went to the assistant, not into a text field', transcript.some((e) => e.role === 'user'), transcript[0]?.text);
   await act('dismiss');
 
   // ── Side placement: upright pill ─────────────────────────────────────────

@@ -210,7 +210,7 @@ function quitAndInstall() {
 
   // Run the cleanup hook (passed in by index.js — calls performCleanup).
   // We do this synchronously here so native addons (keyspy's MacKeyServer,
-  // llama-cpp grammar worker, parakeet) release the event loop and stop
+  // the assistant's bb backend, parakeet) release the event loop and stop
   // holding file handles before Squirrel swaps the .app bundle on disk.
   if (typeof beforeQuitForUpdateHook === 'function') {
     try { beforeQuitForUpdateHook(); } catch (err) {

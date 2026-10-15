@@ -21,10 +21,6 @@ export type TranscriptionEngine = 'whisper' | 'parakeet';
 export interface AppConfig {
   hotkey?: HotkeyConfig;
   model?: string;
-  grammarEnabled?: boolean;
-  grammarModel?: string;
-  grammarTone?: string;
-  grammarModelAvailable?: boolean;
   theme?: Theme;
   floatingBarEnabled?: boolean;
   soundsEnabled?: boolean;
@@ -77,47 +73,55 @@ export interface MeetingState {
   historyId: number | null;
 }
 
-export type AssistantProviderId = 'claude' | 'codex' | 'gemini' | 'ollama';
+/** The theme tokens the Assistant page hands bb's frame — the names both
+ *  apps share; main re-checks them (src/main/jarvis/bb/bb-chrome.js). */
+export const THEME_TOKENS_FOR_BB = [
+  'background', 'foreground', 'card', 'card-foreground', 'popover', 'popover-foreground',
+  'primary', 'primary-foreground', 'secondary', 'secondary-foreground',
+  'muted', 'muted-foreground', 'accent', 'accent-foreground',
+  'destructive', 'border', 'input', 'ring',
+  'sidebar', 'sidebar-foreground', 'sidebar-primary', 'sidebar-primary-foreground',
+  'sidebar-accent', 'sidebar-accent-foreground', 'sidebar-border', 'sidebar-ring',
+  'radius',
+] as const;
 
 export interface AssistantSettings {
-  provider: 'auto' | AssistantProviderId;
+  /** One of bb's provider ids ("claude-code", "codex", …), or 'auto'. */
+  provider: string;
+  /** Plain desktop steps run without a confirmation. */
   fullAccess: boolean;
-  ollamaModel: string;
+  /** The assistant may click and type in other apps. */
+  desktopActions: boolean;
+  /** A picture of the screen goes with each request. */
+  screenVision: boolean;
 }
 
-export interface AssistantProviderStatus {
-  id: AssistantProviderId;
-  label: string;
-  available: boolean;
-  detail?: string;
-  path?: string;
-  models?: string[];
-}
-
-export type AssistantStep =
-  | { id: number; at: number; type: 'thought'; text: string }
-  | { id: number; at: number; type: 'action'; tool: string; args: Record<string, unknown>; readOnly: boolean; needsApproval: boolean; preview: string | null }
-  | { id: number; at: number; type: 'approval'; actionId: number; status: 'pending' | 'approved' | 'denied'; tool: string; args?: Record<string, unknown>; preview?: string | null }
-  | { id: number; at: number; type: 'result'; actionId: number; tool: string; ok: boolean; output?: unknown; error?: string }
-  | { id: number; at: number; type: 'final'; text: string }
-  | { id: number; at: number; type: 'error'; text: string };
-
-export interface AssistantRun {
+/** One of bb's providers and whether it can run here. */
+export interface AssistantProvider {
   id: string;
-  request: string;
-  steps: AssistantStep[];
-  status: 'running' | 'done' | 'error' | 'cancelled' | 'max-steps';
-  final: string | null;
-  provider: AssistantProviderId | null;
-  startedAt: number;
-  source: 'typed' | 'voice';
+  label: string;
+  status: 'ready' | 'not_installed' | 'unauthenticated' | 'expired' | 'unsupported_version' | 'unknown' | string;
+  /** What to run once in Terminal to sign in, as bb says it. */
+  loginCommand: string | null;
+  accountEmail: string | null;
 }
 
-export interface AssistantToolInfo {
-  name: string;
-  description: string;
-  readOnly: boolean;
-  alwaysAsk: boolean;
+export interface AssistantBackendStatus {
+  state: 'idle' | 'starting' | 'ready' | 'error';
+  error: string | null;
+  origin?: string;
+}
+
+export interface AssistantDesktopStatus {
+  status: { supported: boolean; screenRecording: boolean; accessibility: boolean; peekaboo: { ok: boolean; version: string | null; error?: string } } | null;
+  helper: { ok: boolean; version: string | null; source: string | null; error?: string } | null;
+}
+
+export interface AssistantTranscriptEntry {
+  role: 'user' | 'mascot';
+  text: string;
+  actions?: string[];
+  at?: number;
 }
 
 export type ParakeetVariant = 'v2' | 'unified';
@@ -195,26 +199,6 @@ export interface SnippetEntry {
 
 export type Models = Record<string, ModelInfo>;
 
-export interface GrammarModelInfo {
-  name: string;
-  filename: string;
-  size: string;
-  bytes: number;
-  quality: string;
-  context: string;
-  description: string;
-  url: string;
-  available: boolean;
-  status: 'downloaded' | 'not_downloaded' | 'downloading' | 'paused';
-  downloaded: number;
-  total: number;
-}
-
-export type GrammarModels = Record<string, GrammarModelInfo>;
-
-/** @deprecated use GrammarModels */
-export type GrammarModelStatus = GrammarModelInfo;
-
 interface TellaflowAPI {
   onStartRecording: (cb: (data?: { deviceId?: string }) => void) => void;
   onStopRecording: (cb: () => void) => void;
@@ -247,8 +231,6 @@ interface TellaflowAPI {
   openAccessibilitySettings: () => void;
   checkScreenPermission: () => Promise<boolean>;
   requestScreenPermission: () => Promise<boolean>;
-  checkAutomationPermission: () => Promise<boolean>;
-  requestAutomationPermission: () => Promise<{ granted: boolean; results: { app: string; ok: boolean; error?: string }[] }>;
   completeOnboarding: () => void;
   dismissOnboarding: () => void;
   warmUpModel: () => void;
@@ -259,7 +241,6 @@ interface TellaflowAPI {
 
   getConfig: () => Promise<AppConfig>;
   setModel: (model: string) => void;
-  setGrammarEnabled: (enabled: boolean) => void;
   setTheme: (theme: Theme) => void;
 
   getFloatingBarEnabled: () => Promise<boolean>;
@@ -329,17 +310,6 @@ interface TellaflowAPI {
   pasteText: (text: string) => void;
   onHistoryUpdate: (cb: (entries: HistoryEntry[]) => void) => () => void;
 
-  getGrammarModelsStatus: () => Promise<GrammarModels>;
-  startGrammarDownload: (modelKey: string) => void;
-  pauseGrammarDownload: (modelKey: string) => void;
-  cancelGrammarDownload: (modelKey: string) => void;
-  deleteGrammarModel: (modelKey: string) => void;
-  setGrammarModel: (modelKey: string) => void;
-  getGrammarTone: () => Promise<string>;
-  setGrammarTone: (tone: string) => void;
-  onGrammarModelProgress: (cb: (p: { modelKey: string; downloaded: number; total: number; percent: number }) => void) => () => void;
-  onGrammarModelChanged: (cb: (s: GrammarModels) => void) => () => void;
-  onGrammarModelError: (cb: (e: { modelKey: string; error: string }) => void) => () => void;
 
   clearSnippets: () => Promise<SnippetEntry[]>;
   clearDictionary: () => Promise<DictionaryEntry[]>;
@@ -375,16 +345,23 @@ interface TellaflowAPI {
   stopMeetingNotes: () => Promise<MeetingState>;
   onMeetingState: (cb: (s: MeetingState) => void) => () => void;
 
-  assistantStart: (request: string) => Promise<string>;
-  assistantApprove: (runId: string, actionId: number, approved: boolean) => Promise<boolean>;
-  assistantCancel: (runId: string) => Promise<boolean>;
-  assistantListRuns: () => Promise<AssistantRun[]>;
-  assistantDetect: () => Promise<AssistantProviderStatus[]>;
-  assistantTools: () => Promise<AssistantToolInfo[]>;
+  assistantAsk: (request: string) => Promise<boolean>;
+  assistantStop: () => Promise<void>;
+  assistantStatus: () => Promise<{ backend: AssistantBackendStatus; desktop: AssistantDesktopStatus['status'] }>;
+  assistantProviders: () => Promise<AssistantProvider[]>;
+  assistantWorkspaceUrl: (threadId?: string) => Promise<{ ok: true; url: string; origin: string; projectId: string; threadId?: string } | { ok: false; error: string }>;
+  assistantTranscript: () => Promise<AssistantTranscriptEntry[]>;
+  assistantReset: () => Promise<void>;
+  assistantStyleFrame: (options: { theme: 'light' | 'dark'; tokens: Record<string, string> }) => Promise<{ ok: boolean; applied?: number; error?: string }>;
   assistantGetSettings: () => Promise<AssistantSettings>;
   assistantSetSettings: (patch: Partial<AssistantSettings>) => Promise<AssistantSettings>;
-  onAssistantRun: (cb: (run: AssistantRun) => void) => () => void;
-  onAssistantStep: (cb: (e: { runId: string; step: AssistantStep }) => void) => () => void;
+  assistantInstallHelper: () => Promise<{ ok: boolean; error?: string }>;
+  assistantRequestAccessibility: () => Promise<{ granted: boolean }>;
+  assistantDesktopStatus: () => Promise<AssistantDesktopStatus>;
+  onAssistantStatus: (cb: (s: AssistantBackendStatus) => void) => () => void;
+  onAssistantTranscript: (cb: (e: AssistantTranscriptEntry) => void) => () => void;
+  onAssistantOpenChat: (cb: (url: string) => void) => () => void;
+  onAssistantHelperProgress: (cb: (p: { received: number; total: number | null }) => void) => () => void;
   onNavigate: (cb: (page: string) => void) => () => void;
 }
 

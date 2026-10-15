@@ -1,242 +1,130 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowUp, Brain, Check, CircleAlert, Hand, Loader2, Square, Wrench, X, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Loader2, SquarePen, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Well, WellCard } from '@/components/ui/well';
-import { useAssistant } from '@/hooks/use-assistant';
-import { ipc, type AssistantRun, type AssistantStep } from '@/lib/ipc';
-import { cn } from '@/lib/utils';
+import { THEME_TOKENS_FOR_BB, ipc } from '@/lib/ipc';
 
-const EXAMPLES = [
-  'Open Safari and go to news.ycombinator.com',
-  'Turn on dark mode and set volume to 30',
-  'Remind me to call Sam tomorrow at 10am',
-  'What is playing in Spotify?',
-];
-
-const PROVIDER_NAMES: Record<string, string> = { claude: 'Claude', codex: 'ChatGPT (Codex)', gemini: 'Gemini', ollama: 'Ollama' };
-
-function formatArgs(args: Record<string, unknown>) {
-  const entries = Object.entries(args || {});
-  if (!entries.length) return '';
-  return entries.map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' · ');
+/** This page's theme, read live: the mode and the shadcn tokens bb shares. */
+function currentTheme() {
+  const root = document.documentElement;
+  const style = getComputedStyle(root);
+  const tokens: Record<string, string> = {};
+  for (const name of THEME_TOKENS_FOR_BB) {
+    const v = style.getPropertyValue(`--${name}`).trim();
+    if (v) tokens[name] = v;
+  }
+  return { theme: root.classList.contains('dark') ? ('dark' as const) : ('light' as const), tokens };
 }
 
-function formatOutput(v: unknown) {
-  if (v == null) return '';
-  return typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+/** Dress bb's frame as part of the app (main runs it inside the frame). */
+function styleBb() {
+  return ipc.assistantStyleFrame(currentTheme()).catch(() => ({ ok: false }));
 }
 
-function StepRow({ step, run, onApprove }: { step: AssistantStep; run: AssistantRun; onApprove: (actionId: number, ok: boolean) => void }) {
-  if (step.type === 'thought') {
-    return (
-      <div className="flex gap-2.5 text-[13px] text-muted-foreground">
-        <Brain className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-        <p className="italic">{step.text}</p>
-      </div>
-    );
-  }
-  if (step.type === 'action') {
-    return (
-      <div className="flex gap-2.5 text-[13px]">
-        <Wrench className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary" />
-        <div className="min-w-0">
-          <p>
-            <code className="font-mono text-[12px] rounded bg-accent/60 px-1 py-px">{step.tool}</code>
-            {step.readOnly && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">read-only</span>}
-          </p>
-          {formatArgs(step.args) && !step.preview && <p className="text-xs text-muted-foreground mt-0.5 break-words">{formatArgs(step.args)}</p>}
-          {step.preview && (
-            <pre className="mt-1.5 max-h-48 overflow-auto rounded-md border border-border/60 bg-background/70 p-2 text-[11px] font-mono whitespace-pre-wrap">{step.preview}</pre>
-          )}
-        </div>
-      </div>
-    );
-  }
-  if (step.type === 'approval') {
-    if (step.status !== 'pending') {
-      return (
-        <div className={cn('flex gap-2.5 text-xs', step.status === 'approved' ? 'text-muted-foreground' : 'text-destructive')}>
-          <Hand className="w-3.5 h-3.5 shrink-0" />
-          <p>{step.status === 'approved' ? 'You approved this action.' : 'You denied this action.'}</p>
-        </div>
-      );
-    }
-    // Hide the prompt once a later approval record resolved it.
-    const resolved = run.steps.some((s) => s.type === 'approval' && s.actionId === step.actionId && s.status !== 'pending');
-    if (resolved) return null;
-    return (
-      <div className="flex items-center gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-[13px]">
-        <Hand className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-        <p className="flex-1">
-          Allow <code className="font-mono text-[12px]">{step.tool}</code>?
-          {step.tool === 'run_applescript' && <span className="text-muted-foreground"> Review the script above first.</span>}
-        </p>
-        {run.status === 'running' && (
-          <>
-            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onApprove(step.actionId, false)}>
-              <X className="w-3 h-3 mr-1" /> Deny
-            </Button>
-            <Button size="sm" className="h-7 text-xs" onClick={() => onApprove(step.actionId, true)}>
-              <Check className="w-3 h-3 mr-1" /> Allow
-            </Button>
-          </>
-        )}
-      </div>
-    );
-  }
-  if (step.type === 'result') {
-    return (
-      <div className={cn('flex gap-2.5 text-xs', step.ok ? 'text-muted-foreground' : 'text-destructive')}>
-        {step.ok ? <Check className="w-3.5 h-3.5 shrink-0 text-emerald-500" /> : <CircleAlert className="w-3.5 h-3.5 shrink-0" />}
-        <pre className="whitespace-pre-wrap break-words font-sans max-h-32 overflow-auto">{step.ok ? formatOutput(step.output) : step.error}</pre>
-      </div>
-    );
-  }
-  if (step.type === 'final') {
-    return (
-      <div className="flex gap-2.5 text-sm">
-        <Sparkles className="w-3.5 h-3.5 mt-1 shrink-0 text-primary" />
-        <p className="whitespace-pre-wrap">{step.text}</p>
-      </div>
-    );
-  }
-  return (
-    <div className="flex gap-2.5 text-[13px] text-destructive">
-      <CircleAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-      <p>{step.text}</p>
-    </div>
-  );
-}
-
-function RunCard({ run, onApprove, onCancel }: { run: AssistantRun; onApprove: (runId: string, actionId: number, ok: boolean) => void; onCancel: (runId: string) => void }) {
-  return (
-    <Well>
-      <WellCard className="p-4">
-        <div className="flex items-start gap-3">
-          <p className="flex-1 text-sm font-medium">{run.request}</p>
-          <span className="text-[11px] text-muted-foreground shrink-0">
-            {run.source === 'voice' ? 'voice · ' : ''}
-            {run.provider ? PROVIDER_NAMES[run.provider] : ''}
-          </span>
-          {run.status === 'running' && (
-            <Button size="icon" variant="ghost" className="h-6 w-6" title="Stop" onClick={() => onCancel(run.id)}>
-              <Square className="w-3 h-3" />
-            </Button>
-          )}
-        </div>
-        <div className="mt-3 space-y-2.5 border-l border-dashed border-border pl-3">
-          {run.steps.map((s) => (
-            <StepRow key={s.id} step={s} run={run} onApprove={(actionId, ok) => onApprove(run.id, actionId, ok)} />
-          ))}
-          {run.status === 'running' && !run.steps.some((s) => s.type === 'approval' && s.status === 'pending' && !run.steps.some((x) => x.type === 'approval' && x.actionId === s.actionId && x.status !== 'pending')) && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Thinking…
-            </div>
-          )}
-        </div>
-      </WellCard>
-    </Well>
-  );
-}
-
+/**
+ * The assistant's chats — bb's own app, framed.
+ *
+ * What the command key starts runs on the island; bigger jobs it hands to a
+ * chat, and those chats (and any the user starts here) live in bb. Framing
+ * bb's real app rather than drawing a chat of our own means the composer,
+ * the timeline, tool output, Stop and the model picker are bb's and cannot
+ * drift from it (canvas's Agent panel does the same). bb serves no
+ * X-Frame-Options, and it is on another origin (127.0.0.1:<port>), so the
+ * frame cannot reach this page or its bridge.
+ */
 export function AssistantPage({ onOpenSettings }: { onOpenSettings?: () => void }) {
-  const { runs, providers, settings, refreshProviders, start, approve, cancel } = useAssistant();
-  // The key that sends speech to the assistant (Settings → General → Command key).
   const [commandKey, setCommandKey] = useState('Right ⌥');
+  const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [frameKey, setFrameKey] = useState(0);
+
   useEffect(() => {
     ipc?.getConfig?.().then((c) => { if (c.commandHotkey?.label) setCommandKey(c.commandHotkey.label); }).catch(() => {});
   }, []);
-  const [input, setInput] = useState('');
-  const [error, setError] = useState('');
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => { refreshProviders(); }, [refreshProviders]);
-
-  const available = providers?.filter((p) => p.available) || [];
-  const active = settings?.provider && settings.provider !== 'auto'
-    ? providers?.find((p) => p.id === settings.provider)
-    : available[0];
-
-  const submit = async () => {
-    const text = input.trim();
-    if (!text) return;
-    setError('');
-    try {
-      await start(text);
-      setInput('');
-    } catch (err) {
-      setError((err as Error).message);
+  const open = useCallback(async (opts?: { list?: boolean }) => {
+    setLoading(true);
+    setError(null);
+    // No argument: whatever main has for us (a chat the island just opened, or
+    // the list). The Chats button asks for the list itself ('').
+    const r = await ipc.assistantWorkspaceUrl(opts?.list ? '' : undefined).catch((err: Error) => ({ ok: false as const, error: err.message }));
+    if (r.ok) {
+      setSrc(r.url);
+      setFrameKey((k) => k + 1);
+    } else {
+      setError(r.error);
+      setLoading(false);
     }
-  };
+  }, []);
 
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      submit();
-    }
-  };
+  // Tellaflow's theme changes (Settings, or the system's) restyle bb live.
+  useEffect(() => {
+    const observer = new MutationObserver(() => { styleBb(); });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    open();
+    // The island's "Open chat": show the chat the work just went into.
+    // Already open: take the chat from main the same way.
+    return ipc.onAssistantOpenChat(() => { open(); });
+  }, [open]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <div className="px-7 pt-12 pb-3 [-webkit-app-region:drag]">
-        <h2 className="text-xl font-bold tracking-tight">Assistant</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Type below, or hold <kbd className="font-mono text-foreground">{commandKey}</kbd> anywhere and speak.
-          Your signed-in AI plans each step and can look at your screen; Tellaflow runs it on this Mac
-          {settings && !settings.fullAccess ? ', asking before it changes anything.' : ' right away — Full access is on.'}
-        </p>
-      </div>
-
-      <div className="px-7 [-webkit-app-region:no-drag]">
-        <div className="rounded-xl border border-border/70 bg-card focus-within:border-primary/60 transition-colors">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-            rows={2}
-            placeholder="What should I do? e.g. “Create a note called Groceries with eggs and milk”"
-            className="w-full resize-none bg-transparent px-3.5 pt-3 text-sm outline-none placeholder:text-muted-foreground/60"
-          />
-          <div className="flex items-center justify-between px-3 pb-2.5">
-            <span className="text-[11px] text-muted-foreground">
-              {providers === null
-                ? 'Checking for signed-in AI…'
-                : active?.available
-                  ? <>Using <strong className="text-foreground">{PROVIDER_NAMES[active.id]}</strong> · no API key needed</>
-                  : <>No AI found — <button className="underline" onClick={onOpenSettings}>set one up</button></>}
-            </span>
-            <Button size="icon" className="h-7 w-7 rounded-full" disabled={!input.trim()} onClick={submit} title="Run">
-              <ArrowUp className="w-3.5 h-3.5" />
-            </Button>
-          </div>
+      <div className="px-7 pt-12 pb-3 flex items-end justify-between gap-4 [-webkit-app-region:drag]">
+        <div className="min-w-0">
+          <h2 className="text-xl font-bold tracking-tight">Assistant</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Hold <kbd className="font-mono text-foreground">{commandKey}</kbd> anywhere and speak — the answer appears on the island.
+            Bigger jobs land in a chat here, where you can keep talking to it.
+          </p>
         </div>
-        {error && <p className="text-xs text-destructive mt-2">{error}</p>}
+        <div className="flex gap-1.5 shrink-0 [-webkit-app-region:no-drag]">
+          <Button variant="outline" size="sm" onClick={() => open({ list: true })} title="Start a new chat — your chats are listed beside it">
+            <SquarePen className="w-3.5 h-3.5" />
+            New chat
+          </Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setFrameKey((k) => k + 1)} title="Reload">
+            <RotateCw className="w-3.5 h-3.5" />
+          </Button>
+        </div>
       </div>
 
-      <ScrollArea className="flex-1 mt-4">
-        <div className="px-7 pb-6 space-y-4 [-webkit-app-region:no-drag]">
-          {runs.length === 0 ? (
-            <div className="pt-6 text-center">
-              <p className="text-xs text-muted-foreground mb-3">Try</p>
-              <div className="flex flex-wrap justify-center gap-2">
-                {EXAMPLES.map((ex) => (
-                  <button
-                    key={ex}
-                    onClick={() => { setInput(ex); inputRef.current?.focus(); }}
-                    className="rounded-full border border-border/60 px-3 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
-                  >
-                    {ex}
-                  </button>
-                ))}
+      <div className="relative flex-1 mx-7 mb-6 rounded-xl border border-border/70 bg-card overflow-hidden [-webkit-app-region:no-drag]">
+        {src && !error && (
+          <iframe
+            key={frameKey}
+            src={src}
+            title="Assistant chats"
+            data-assistant-frame=""
+            className="absolute inset-0 w-full h-full border-0"
+            // Covered until it wears the app's theme, so bb's own never flashes.
+            onLoad={() => { styleBb().finally(() => setLoading(false)); }}
+          />
+        )}
+        {loading && !error && (
+          <div className="absolute inset-0 grid place-items-center bg-card">
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Starting the assistant…
+            </p>
+          </div>
+        )}
+        {error && (
+          <div className="absolute inset-0 grid place-items-center bg-card p-8">
+            <div className="max-w-md text-center space-y-3">
+              <p className="text-sm">The assistant couldn't start.</p>
+              <p className="text-xs text-muted-foreground break-words">{error}</p>
+              <div className="flex justify-center gap-2">
+                <Button size="sm" onClick={() => open({ list: true })}>Try again</Button>
+                {onOpenSettings && <Button size="sm" variant="outline" onClick={onOpenSettings}>Settings</Button>}
               </div>
             </div>
-          ) : (
-            runs.map((run) => <RunCard key={run.id} run={run} onApprove={approve} onCancel={cancel} />)
-          )}
-        </div>
-      </ScrollArea>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
