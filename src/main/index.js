@@ -132,6 +132,7 @@ function toFloat32(pcmArray) {
 
 // Transcription runs in an Electron utility process so a native Whisper /
 // Parakeet crash or OOM can't take the app down (see transcription-service.js).
+let currentWorkerChild = null;
 function spawnTranscriptionWorker({ onMessage, onExit }) {
   const child = utilityProcess.fork(path.join(__dirname, 'transcription-worker.js'), [], {
     serviceName: 'Tellaflow Transcription',
@@ -141,6 +142,7 @@ function spawnTranscriptionWorker({ onMessage, onExit }) {
   child.stderr?.on('data', (d) => process.stderr.write(`[worker] ${d}`));
   child.on('message', onMessage);
   child.on('exit', onExit);
+  currentWorkerChild = child;
   return {
     send: (msg) => child.postMessage(msg),
     kill: () => child.kill(),
@@ -439,6 +441,35 @@ function initCoreServices() {
   setInterval(pruneOldRecordings, PRUNE_INTERVAL_MS).unref?.();
 
   if (process.platform === 'darwin' && config.getMeetingNotesEnabled()) meetingDetector.start();
+
+  // End-to-end test hook (scripts/e2e-electron.mjs). Lets an automated run
+  // drive the real dictation pipeline from a WAV file — no microphone — and
+  // reach internals for assertions. Never enabled in normal use.
+  if (process.env.TELLAFLOW_E2E === '1') {
+    globalThis.__tellaflowTest = {
+      // Same path as a real recording: renderer → 'audio-captured' IPC.
+      dictateWav: (wavPath) => ipcMain.emit('audio-captured', { sender: null }, decodeWavToPcm(wavPath)),
+      meetingChunkFromWav: (wavPath) => meetingNotes.addChunk(decodeWavToPcm(wavPath)),
+      startMeeting: (appName) => { meetingNotes.start({ app: appName }); sendToMainWindow('meeting-state', getMeetingState()); },
+      history: () => history.getEntries(),
+      failedJobs: () => failedJobsSummary(),
+      journal,
+      stats: () => transcriptionService.getStats(),
+      // Hard-kill the worker like a native crash would.
+      killWorker: () => {
+        const pid = currentWorkerChild && currentWorkerChild.pid;
+        if (pid) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+        return pid || null;
+      },
+      navigate: (page) => sendToMainWindow('navigate', page),
+      learn: (corrections) => {
+        const added = config.addLearnedEntries(corrections);
+        sendToMainWindow('dictionary-changed', config.getDictionary());
+        return added;
+      },
+      broadcastFailedJobs,
+    };
+  }
 }
 
 // Returns the name of the current frontmost application asynchronously.
