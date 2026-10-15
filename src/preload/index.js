@@ -164,6 +164,8 @@ contextBridge.exposeInMainWorld('tellaflow', {
   onNavigate: (cb) => { const h = (_, page) => cb(page); ipcRenderer.on('navigate', h); return () => ipcRenderer.removeListener('navigate', h); },
 
   // Status updates
+  getModelLoadState: () => ipcRenderer.invoke('get-model-load-state'),
+  onModelLoadState: (cb) => { const h = (_, s) => cb(s); ipcRenderer.on('model-load-state', h); return () => ipcRenderer.removeListener('model-load-state', h); },
   onStatusChange: (callback) => { const h = (_, status) => callback(status); ipcRenderer.on('status-change', h); return () => ipcRenderer.removeListener('status-change', h); },
   onShowRestartBanner: (callback) => { const h = () => callback(); ipcRenderer.on('show-restart-banner', h); return () => ipcRenderer.removeListener('show-restart-banner', h); },
   onAccessibilityGranted: (callback) => { const h = () => callback(); ipcRenderer.on('accessibility-granted', h); return () => ipcRenderer.removeListener('accessibility-granted', h); },

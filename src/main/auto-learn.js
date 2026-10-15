@@ -8,11 +8,14 @@
  *
  * Wispr Flow documents this behaviour but not its mechanism; this is our own
  * design:
- *   1. ~0.7 s after paste, snapshot the focused field's value (baseline).
+ *   1. ~0.7 s after paste, snapshot the focused field's value (baseline). The
+ *      paste lands asynchronously, so retry for a few seconds before deciding
+ *      this isn't our field.
  *   2. Poll the same field for up to 45 s while the same app stays frontmost,
  *      remembering the latest value that still contains most of the pasted text
- *      (chat apps clear the field when you hit Enter — that last good value is
- *      the corrected one).
+ *      or that holds a learnable fix of it (a short dictation can be mostly
+ *      replaced by its correction). Chat apps clear the field when you hit
+ *      Enter — that last good value is the corrected one.
  *   3. Word-diff baseline vs. corrected value, restricted to the pasted span.
  *      Each small substitution (≤3 words → ≤3 words) that sounds like the
  *      original and isn't an everyday word / number / URL / path / code is a
@@ -157,7 +160,8 @@ function createAutoLearnWatcher({
   isEnabled = () => true,
   timers = { setTimeout, clearTimeout },
   baselineDelayMs = 700,
-  pollMs = 2000,
+  baselineAttempts = 5,
+  pollMs = 1500,
   windowMs = 45_000,
   log = console,
 }) {
@@ -170,9 +174,17 @@ function createAutoLearnWatcher({
     if (s.timer) timers.clearTimeout(s.timer);
     if (!evaluate || !s.baseline || !s.lastGood || s.lastGood === s.baseline) return;
     const corrections = extractCorrections(s.pasted, s.baseline, s.lastGood);
-    if (corrections.length) {
-      try { onLearn(corrections, { app: s.app }); } catch (err) { log.warn?.('[auto-learn] onLearn failed:', err.message); }
+    if (!corrections.length) {
+      log.log?.(`[auto-learn] field in ${s.app} was edited, but no misheard-word fix found`);
+      return;
     }
+    try { onLearn(corrections, { app: s.app }); } catch (err) { log.warn?.('[auto-learn] onLearn failed:', err.message); }
+  }
+
+  function isGoodValue(s, value) {
+    if (!value) return false;
+    if (overlap(s.pasted, value) >= 0.5) return true;
+    return extractCorrections(s.pasted, s.baseline, value).length > 0;
   }
 
   async function tick(s) {
@@ -180,13 +192,25 @@ function createAutoLearnWatcher({
     let snap = null;
     try { snap = await readFocused(); } catch { snap = null; }
     if (session !== s) return;
-    if (!snap || (s.app && snap.app !== s.app)) { stop(true); return; }
+    const sameApp = !!snap && (!s.app || snap.app === s.app);
+    if (s.baseline != null && !sameApp) { stop(true); return; }
     if (s.baseline == null) {
-      if (!snap.value || overlap(s.pasted, snap.value) < 0.8) { stop(false); return; } // not our field
+      if (!sameApp || !snap.value || overlap(s.pasted, snap.value) < 0.8) {
+        // The paste may not have landed yet (app activation, slow field).
+        if (++s.baselineTries < baselineAttempts) {
+          s.timer = timers.setTimeout(() => tick(s), baselineDelayMs);
+          return;
+        }
+        log.log?.(!sameApp || snap.value
+          ? `[auto-learn] focused field in ${snap?.app || 'the frontmost app'} doesn't contain the dictation; not watching`
+          : `[auto-learn] can't read the focused text field in ${snap.app}; not watching`);
+        stop(false);
+        return;
+      }
       s.baseline = snap.value;
       s.lastGood = snap.value;
       s.app = snap.app;
-    } else if (snap.value && overlap(s.pasted, snap.value) >= 0.5) {
+    } else if (isGoodValue(s, snap.value)) {
       s.lastGood = snap.value;
     }
     if (Date.now() - s.startedAt >= windowMs) { stop(true); return; }
@@ -197,7 +221,7 @@ function createAutoLearnWatcher({
   function watch(pastedText, { app = null } = {}) {
     stop(true);
     if (!isEnabled() || !pastedText || pastedText.length < 3) return;
-    const s = { pasted: pastedText, app, baseline: null, lastGood: null, startedAt: Date.now(), timer: null };
+    const s = { pasted: pastedText, app, baseline: null, baselineTries: 0, lastGood: null, startedAt: Date.now(), timer: null };
     session = s;
     s.timer = timers.setTimeout(() => tick(s), baselineDelayMs);
   }

@@ -10,6 +10,7 @@ import { ModelCards } from './ModelCards';
 import { ParakeetModelCard, type ParakeetCardMeta } from './ParakeetModelCard';
 import { useModels } from '@/hooks/use-models';
 import { useParakeet } from '@/hooks/use-parakeet';
+import { useModelLoad } from '@/hooks/use-model-load';
 import { ipc, type AppConfig, type TranscriptionEngine } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
 import { Badge } from '../ui/badge';
@@ -212,6 +213,7 @@ export function ModelsPage({ config, setModel, setTranslationEnabled, setTransla
   const { models, startDownload, pauseDownload, cancelDownload, deleteModel } = useModels();
   const parakeet = useParakeet('v2');
   const parakeetUnified = useParakeet('unified');
+  const modelLoad = useModelLoad();
   const parakeetVariant = config.parakeetVariant ?? 'v2';
 
   const whisperAvailable = Object.entries(models).filter(([, info]) => info.available);
@@ -311,6 +313,7 @@ export function ModelsPage({ config, setModel, setTranslationEnabled, setTransla
               <ModelCards
                 models={models}
                 activeModel={engine === 'parakeet' ? '' : (config.model || 'small')}
+                loadProgress={modelLoad.loading && modelLoad.engine === 'whisper' ? modelLoad.progress : null}
                 onDownload={startDownload}
                 onPause={pauseDownload}
                 onCancel={cancelDownload}
@@ -322,6 +325,7 @@ export function ModelsPage({ config, setModel, setTranslationEnabled, setTransla
                 status={parakeetUnified.status}
                 meta={PARAKEET_UNIFIED_META}
                 isActive={engine === 'parakeet' && parakeetVariant === 'unified'}
+                loadProgress={modelLoad.loading && modelLoad.engine === 'parakeet' ? modelLoad.progress : null}
                 onDownload={parakeetUnified.startDownload}
                 onCancel={parakeetUnified.cancelDownload}
                 onDelete={parakeetUnified.deleteModel}
@@ -329,6 +333,7 @@ export function ModelsPage({ config, setModel, setTranslationEnabled, setTransla
               <ParakeetModelCard
                 status={parakeet.status}
                 isActive={engine === 'parakeet' && parakeetVariant !== 'unified'}
+                loadProgress={modelLoad.loading && modelLoad.engine === 'parakeet' ? modelLoad.progress : null}
                 onDownload={parakeet.startDownload}
                 onCancel={parakeet.cancelDownload}
                 onDelete={parakeet.deleteModel}

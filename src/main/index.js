@@ -29,8 +29,9 @@ const { createTranscriptionService, WorkerCrashError } = require('./transcriptio
 const { createJobJournal } = require('./job-journal');
 const { createPipeline } = require('./transcription-pipeline');
 const { buildEngineSpec, getActiveEngine, isEngineAvailable } = require('./engine-spec');
+const { createModelLoadProgress } = require('./model-load-progress');
 const { extractContextVocabulary, buildWhisperPrompt, applyContextVocabulary, isEmptyVocab } = require('./app-context');
-const { createAutoLearnWatcher } = require('./auto-learn');
+const { createAutoLearnWatcher, extractCorrections } = require('./auto-learn');
 const { createMeetingDetector } = require('./meeting-detector');
 const { createMeetingNotes } = require('./meeting-notes');
 const macAutomation = require('./mac-automation');
@@ -43,7 +44,7 @@ const { buildBbChromeScript } = require('./jarvis/bb/bb-chrome');
 const { formatTranscription } = require('./formatter');
 const { applyDictionary } = require('./dictionary');
 const snippets = require('./snippets');
-const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState, setToastInteractive, getIslandView, showIsland, restIsland, setRestOverride, isResting, refreshPlacement } = require('./toast');
+const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState, setToastInteractive, getIslandView, showIsland, restIsland, setRestOverride, isResting, refreshPlacement, onIslandRest } = require('./toast');
 const { showMainWindow, sendToMainWindow, destroyMainWindow, createMainWindow } = require('./main-window');
 const history = require('./history');
 const { closeDb } = require('./db');
@@ -122,8 +123,54 @@ let pendingMeeting = null;    // detector info while we ask "Transcribe meeting?
 let pendingLearn = null;      // correction we're offering to the dictionary
 
 function island(owner, state, opts) {
+  if (owner !== 'learn') commitUnansweredLearn();
   islandOwner = owner;
   showIsland(state, opts);
+}
+
+/** Add learned corrections to the dictionary and tell the user. */
+function learnCorrections(corrections, appName) {
+  const added = config.addLearnedEntries(corrections);
+  if (!added.length) {
+    console.log('[auto-learn] corrections already in the dictionary or previously removed — nothing added');
+    return added;
+  }
+  console.log(`[auto-learn] learned ${added.map((a) => `"${a.from}" → "${a.to}"`).join(', ')}${appName ? ` from ${appName}` : ''}`);
+  sendToMainWindow('dictionary-changed', config.getDictionary());
+  try {
+    new Notification({
+      title: 'Tellaflow learned a word',
+      body: added.map((a) => `${a.from} → ${a.to}`).join(', ') + '. Remove it in Dictionary if it is wrong.',
+    }).show();
+  } catch (err) { console.warn('[auto-learn] notification failed:', err.message); }
+  return added;
+}
+
+/** Corrections found in the user's edit: ask on the island, or learn quietly. */
+function offerLearnedCorrections(corrections, appName) {
+  // Only offer what isn't already in the dictionary / blocked.
+  const fresh = config.filterNewLearnedEntries(corrections);
+  if (!fresh.length) {
+    console.log('[auto-learn] corrections already in the dictionary or previously removed — nothing to offer');
+    return;
+  }
+  // Ask on the island when it's free; otherwise learn quietly.
+  if (isResting()) {
+    console.log(`[auto-learn] offering ${fresh.map((a) => `"${a.from}" → "${a.to}"`).join(', ')} from ${appName}`);
+    pendingLearn = { corrections: fresh, app: appName };
+    island('learn', 'dictionary', { correctedWord: fresh[0].to, autoRestMs: 12_000 });
+    return;
+  }
+  learnCorrections(fresh, appName);
+}
+
+// The "Add to dictionary?" prompt timed out or was replaced without an answer:
+// learn the word anyway (as when the island is busy) rather than dropping it.
+// Saying No, or deleting it from Dictionary later, blocks it.
+function commitUnansweredLearn() {
+  const learn = pendingLearn;
+  pendingLearn = null;
+  if (learn) learnCorrections(learn.corrections, learn.app);
 }
 
 function islandRest() {
@@ -142,6 +189,12 @@ let assistant = null;
 let pendingChatUrl = null;   // a chat the island asked the Assistant page to show
 let autoLearn = null;
 let modelLoading = false;
+const modelLoad = createModelLoadProgress({
+  getSpec: () => buildEngineSpec(),
+  getTimes: () => config.getModelLoadTimes(),
+  setTime: (id, ms) => config.setModelLoadTime(id, ms),
+  broadcast: (state) => sendToMainWindow('model-load-state', state),
+});
 // App context (frontmost app, window title, focused text) captured when a
 // recording starts; resolves to { ctx, vocab } or null.
 let recordingContextPromise = null;
@@ -399,8 +452,14 @@ function handleIslandAction(action) {
       const learn = pendingLearn;
       pendingLearn = null;
       if (learn && action === 'dictionary-yes') {
-        const added = config.addLearnedEntries(learn.corrections);
-        if (added.length) sendToMainWindow('dictionary-changed', config.getDictionary());
+        const added = learnCorrections(learn.corrections, learn.app);
+        if (added.length) {
+          island('dictation', 'done', {
+            content: { doneText: `Added “${added[0].to}”${added.length > 1 ? ` +${added.length - 1}` : ''} to dictionary`, canUndo: false },
+            autoRestMs: 2500,
+          });
+          break;
+        }
       } else if (learn) {
         config.blockLearnedEntries(learn.corrections);
       }
@@ -494,10 +553,12 @@ function initCoreServices() {
     if (e.type === 'recycle') console.log(`[transcription] worker recycled (${e.reason}, ${e.jobs} jobs, ${(e.rss / 1048576).toFixed(0)} MB)`);
     if (e.type === 'loaded') {
       console.log(`[transcription] ${e.engine} model ready in ${e.ms} ms`);
+      modelLoad.finish(true, e.ms);
       if (modelLoading) { modelLoading = false; broadcastStatus('Ready'); }
     }
     if (e.type === 'load-error') {
       console.error('[transcription] model load failed:', e.error);
+      modelLoad.finish(false);
       if (modelLoading) { modelLoading = false; broadcastStatus('Model load failed'); }
     }
   });
@@ -521,26 +582,14 @@ function initCoreServices() {
     },
   });
 
+  // The island going back to rest while asking "Add to dictionary?" means the
+  // question went unanswered — keep the word instead of losing it.
+  onIslandRest(() => commitUnansweredLearn());
+
   autoLearn = createAutoLearnWatcher({
     readFocused: macAutomation.readFocusedField,
     isEnabled: () => process.platform === 'darwin' && config.getAutoLearnEnabled(),
-    onLearn: (corrections, { app: appName }) => {
-      // Ask on the island when it's free; otherwise learn quietly as before.
-      if (isResting() && corrections.length) {
-        pendingLearn = { corrections, app: appName };
-        const word = corrections[0].to;
-        island('learn', 'dictionary', { correctedWord: word, autoRestMs: 12_000 });
-        return;
-      }
-      const added = config.addLearnedEntries(corrections);
-      if (!added.length) return;
-      console.log(`[auto-learn] learned ${added.map((a) => `"${a.from}" → "${a.to}"`).join(', ')} from ${appName}`);
-      sendToMainWindow('dictionary-changed', config.getDictionary());
-      new Notification({
-        title: 'Tellaflow learned a word',
-        body: added.map((a) => `${a.from} → ${a.to}`).join(', ') + '. Remove it in Dictionary if it is wrong.',
-      }).show();
-    },
+    onLearn: (corrections, { app: appName }) => offerLearnedCorrections(corrections, appName),
   });
 
   setPeekabooDownloadRoot(path.join(userData, 'tools', 'peekaboo'));
@@ -669,6 +718,12 @@ function initCoreServices() {
         command: (request) => startAssistantFromVoice(request),
         // Any assistant view, for the island gallery (scripts/e2e-island-assistant.mjs).
         show: (state, opts) => island('assistant', state, opts),
+        // Same path as a real edit the watcher saw in another app.
+        learnFromEdit: (pasted, before, after) => {
+          const corrections = extractCorrections(pasted, before, after);
+          if (corrections.length) offerLearnedCorrections(corrections, 'e2e');
+          return corrections;
+        },
         offerWord: (corrections) => {
           pendingLearn = { corrections, app: 'e2e' };
           island('learn', 'dictionary', { correctedWord: corrections[0].to });
@@ -952,6 +1007,7 @@ async function startApp() {
     // the service's 'loaded' event.
     modelLoading = true;
     broadcastStatus('Loading model...');
+    modelLoad.start();
     transcriptionService.prewarm();
 
     // Run first-install smoke test in the background — never blocks startup.
@@ -1409,9 +1465,10 @@ function registerIPC() {
 
   function reloadEngine() {
     transcriptionService.reset();
-    if (!isEngineAvailable()) return;
+    if (!isEngineAvailable()) { modelLoad.finish(false); return; }
     modelLoading = true;
     broadcastStatus('Loading model...');
+    modelLoad.start();
     transcriptionService.prewarm();
   }
 
@@ -1894,6 +1951,7 @@ function registerIPC() {
 
   // Auto-update IPC
   ipcMain.handle('get-update-status', () => updater.getStatus());
+  ipcMain.handle('get-model-load-state', () => modelLoad.getState());
   ipcMain.on('check-for-updates', () => {
     updater.checkForUpdates({ silent: false });
   });

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { ModelLoadBar } from './ModelLoadBar';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import {
   Dialog,
@@ -34,6 +35,8 @@ interface ParakeetModelCardProps {
   status: ParakeetModelInfo;
   meta?: ParakeetCardMeta;
   isActive?: boolean;
+  /** Load progress (0–100) when this is the active model, or null. */
+  loadProgress?: number | null;
   onDownload: () => void;
   onCancel: () => void;
   onDelete: () => void;
@@ -45,7 +48,7 @@ function fmtBytes(b: number) {
   return (b / 1e3).toFixed(0) + ' KB';
 }
 
-export function ParakeetModelCard({ status, meta = PARAKEET_V2_META, isActive = false, onDownload, onCancel, onDelete }: ParakeetModelCardProps) {
+export function ParakeetModelCard({ status, meta = PARAKEET_V2_META, isActive = false, loadProgress = null, onDownload, onCancel, onDelete }: ParakeetModelCardProps) {
   const [cancelPending, setCancelPending] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
 
@@ -146,6 +149,10 @@ export function ParakeetModelCard({ status, meta = PARAKEET_V2_META, isActive = 
                     </p>
                   )}
                 </div>
+              )}
+
+              {isActive && loadProgress !== null && status.available && (
+                <div className="-mt-3"><ModelLoadBar progress={loadProgress} /></div>
               )}
 
               <div className="text-xs text-muted-foreground leading-relaxed border-t border-border/40 pt-3">

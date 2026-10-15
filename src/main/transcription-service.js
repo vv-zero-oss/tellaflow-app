@@ -48,6 +48,8 @@ function createTranscriptionService({
   const queue = [];
   let inflight = null;
   let idleTimer = null;
+  let resetPending = false;
+  let prewarmPending = false;
   let backoffTimer = null;
   let disposed = false;
   const crashTimes = [];
@@ -198,6 +200,15 @@ function createTranscriptionService({
   }
 
   function afterJob() {
+    // A model switch that arrived mid-job: apply it once the queue drains so
+    // the new model loads and 'loaded' fires (the UI waits on it).
+    if (!inflight && queue.length === 0 && (resetPending || prewarmPending)) {
+      const doPrewarm = prewarmPending;
+      if (resetPending && worker) retire('config');
+      resetPending = false;
+      prewarmPending = false;
+      if (doPrewarm) { prewarm({ force: true }); return; }
+    }
     if (worker && !inflight) {
       const reason = shouldRecycle(worker);
       if (reason) retire(reason);
@@ -256,23 +267,28 @@ function createTranscriptionService({
   }
 
   /** Start the worker and load the model ahead of the first job. */
-  function prewarm() {
+  function prewarm({ force = false } = {}) {
     if (disposed) return;
+    if (inflight || queue.length > 0) { prewarmPending = true; return; }
     let spec;
     try { spec = getSpec(); } catch { return; }
     const key = specKey(spec);
-    if (worker && worker.loadedKey === key) { armIdle(); return; }
-    const w = worker || spawnWorker();
-    if (!inflight) {
-      w.loadedKey = key;
-      try { w.handle.send({ type: 'load', spec }); } catch {}
+    if (worker && worker.loadedKey === key) {
+      // A deferred prewarm whose model a job already loaded: still report it.
+      if (force) emit({ type: 'loaded', workerId: worker.id, engine: spec.engine });
+      armIdle();
+      return;
     }
+    const w = worker || spawnWorker();
+    w.loadedKey = key;
+    try { w.handle.send({ type: 'load', spec }); } catch {}
     armIdle();
   }
 
   /** Drop the current worker (e.g. after the model or engine changes). */
   function reset() {
-    if (worker && !inflight) retire('config');
+    if (inflight || queue.length > 0) { resetPending = true; return; }
+    if (worker) retire('config');
   }
 
   function dispose() {

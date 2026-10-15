@@ -210,6 +210,40 @@ describe('transcription service', () => {
     expect(spawner.workers[0].sent.filter((m) => m.type === 'load')).toHaveLength(1);
   });
 
+  it('a model switch during a job reloads the new model once the job finishes', async () => {
+    let finishJob;
+    const spawner = createFakeSpawner((msg, w) => {
+      if (msg.type === 'load') return { loaded: true };
+      if (msg.type === 'transcribe') { finishJob = () => w.onMessage({ type: 'result', id: msg.id, text: 'done' }); return 'hang'; }
+      return null;
+    });
+    let modelPath = '/old.bin';
+    const service = createTranscriptionService({
+      spawn: spawner.spawn,
+      getSpec: () => ({ engine: 'whisper', modelPath }),
+      timers,
+      log: quiet,
+      options: { idleMs: 0 },
+    });
+    const events = [];
+    service.onEvent((e) => events.push(e.type));
+
+    const job = service.transcribe(pcm());
+    await flush();
+    modelPath = '/new.bin';
+    service.reset();
+    service.prewarm();
+    await flush();
+    expect(events).not.toContain('loaded');
+
+    finishJob();
+    expect(await job).toBe('done');
+    await flush();
+    expect(spawner.workers[0].alive).toBe(false); // old worker retired
+    expect(spawner.workers[1].sent).toContainEqual({ type: 'load', spec: { engine: 'whisper', modelPath: '/new.bin' } });
+    expect(events).toContain('loaded');
+  });
+
   it('dispose rejects queued and in-flight jobs', async () => {
     const { service } = make((msg) => (msg.type === 'transcribe' ? 'hang' : null));
     const a = service.transcribe(pcm());

@@ -14,10 +14,13 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import type { Models } from '@/lib/ipc';
+import { ModelLoadBar } from './ModelLoadBar';
 
 interface ModelCardsProps {
   models: Models;
   activeModel: string;
+  /** Load progress (0–100) of the active model, or null when not loading. */
+  loadProgress?: number | null;
   onDownload: (key: string) => void;
   onPause: (key: string) => void;
   onCancel: (key: string) => void;
@@ -147,7 +150,7 @@ const MODEL_INFO: Record<string, { params: string; speed: string; description: s
   },
 };
 
-export function ModelCards({ models, activeModel, onDownload, onPause, onCancel, onDelete }: ModelCardsProps) {
+export function ModelCards({ models, activeModel, loadProgress = null, onDownload, onPause, onCancel, onDelete }: ModelCardsProps) {
   const [cancelPending, setCancelPending] = useState<string | null>(null);
   const [deletePending, setDeletePending] = useState<string | null>(null);
 
@@ -299,6 +302,9 @@ export function ModelCards({ models, activeModel, onDownload, onPause, onCancel,
                       <span>{info.status === 'paused' ? 'Paused' : 'Downloading'} · {pct}%</span>
                     </div>
                   </div>
+                )}
+                {isActive && loadProgress !== null && info.status === 'downloaded' && (
+                  <ModelLoadBar progress={loadProgress} />
                 )}
               </WellItem>
             );
