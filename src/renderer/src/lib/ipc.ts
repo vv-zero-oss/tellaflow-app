@@ -223,6 +223,10 @@ interface TellaflowAPI {
   checkMicPermission: () => Promise<boolean>;
   promptAccessibility: () => void;
   openAccessibilitySettings: () => void;
+  checkScreenPermission: () => Promise<boolean>;
+  requestScreenPermission: () => Promise<boolean>;
+  checkAutomationPermission: () => Promise<boolean>;
+  requestAutomationPermission: () => Promise<{ granted: boolean; results: { app: string; ok: boolean; error?: string }[] }>;
   completeOnboarding: () => void;
   dismissOnboarding: () => void;
   warmUpModel: () => void;

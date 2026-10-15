@@ -4,18 +4,24 @@ import { ipc } from '@/lib/ipc';
 export function usePermissions() {
   const [mic, setMic] = useState(false);
   const [accessibility, setAccessibility] = useState(false);
+  const [screen, setScreen] = useState(false);
+  const [automation, setAutomation] = useState(false);
   const [needsRestart, setNeedsRestart] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
-    const [m, a, r] = await Promise.all([
+    const [m, a, r, sc, au] = await Promise.all([
       ipc.checkMicPermission(),
       ipc.checkAccessibility(),
       ipc.checkNeedsRestart(),
+      ipc.checkScreenPermission(),
+      ipc.checkAutomationPermission(),
     ]);
     setMic(m);
     setAccessibility(a);
     setNeedsRestart(r);
+    setScreen(sc);
+    setAutomation(au);
   }, []);
 
   useEffect(() => {
@@ -55,6 +61,18 @@ export function usePermissions() {
     ipc.grantAccessibility();
   }, []);
 
+  const grantScreen = useCallback(async () => {
+    const granted = await ipc.requestScreenPermission();
+    setScreen(granted);
+    return granted;
+  }, []);
+
+  const grantAutomation = useCallback(async () => {
+    const { granted } = await ipc.requestAutomationPermission();
+    setAutomation(granted);
+    return granted;
+  }, []);
+
   const retryHotkey = useCallback(() => {
     ipc.retryHotkey();
   }, []);
@@ -66,12 +84,16 @@ export function usePermissions() {
   return {
     mic,
     accessibility,
+    screen,
+    automation,
     needsRestart,
     refresh,
     startPolling,
     stopPolling,
     grantMic,
     grantAccessibility,
+    grantScreen,
+    grantAutomation,
     retryHotkey,
     restartApp,
   };

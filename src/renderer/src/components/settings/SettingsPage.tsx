@@ -89,7 +89,7 @@ export function SettingsPage({
   refreshConfig,
   onClearHistory,
 }: SettingsPageProps) {
-  const { mic, accessibility, needsRestart, grantMic, grantAccessibility, retryHotkey, restartApp, startPolling, stopPolling, refresh: refreshPerms } = usePermissions();
+  const { mic, accessibility, screen, automation, needsRestart, grantMic, grantAccessibility, grantScreen, grantAutomation, retryHotkey, restartApp, startPolling, stopPolling, refresh: refreshPerms } = usePermissions();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetSelections, setResetSelections] = useState<Record<ResetKey, boolean>>({
@@ -213,9 +213,13 @@ export function SettingsPage({
         <PermissionsSettings
             mic={mic}
             accessibility={accessibility}
+            screen={screen}
+            automation={automation}
             needsRestart={needsRestart}
             onGrantMic={grantMic}
             onGrantAccessibility={grantAccessibility}
+            onGrantScreen={grantScreen}
+            onGrantAutomation={grantAutomation}
             onRecheck={handleRecheck}
             onRestart={restartApp}
           />
