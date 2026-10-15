@@ -7,7 +7,6 @@ import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import { ModelCards } from './ModelCards';
-import { GrammarModelCard } from './GrammarModelCard';
 import { ParakeetModelCard, type ParakeetCardMeta } from './ParakeetModelCard';
 import { useModels } from '@/hooks/use-models';
 import { useParakeet } from '@/hooks/use-parakeet';
@@ -98,12 +97,9 @@ const PARAKEET_UNIFIED_META: ParakeetCardMeta = {
   bullets: ['Lower word-error rate than TDT v2 (5.9 vs 6.0 on the Open ASR leaderboard)', 'Smaller download than v2 (~500 MB)', 'English only — no translation support'],
 };
 
-type Tab = 'models' | 'grammar';
-
 interface ModelsPageProps {
   config: AppConfig;
   setModel: (model: string) => void;
-  setGrammarEnabled: (enabled: boolean) => void;
   setTranslationEnabled: (enabled: boolean) => void;
   setTranslationLanguage: (lang: string) => void;
   setTranscriptionEngine: (engine: TranscriptionEngine) => void;
@@ -212,33 +208,7 @@ function LanguageCombobox({ value, onChange }: LanguageComboboxProps) {
   );
 }
 
-function Tab({ label, active, onClick, badge }: { label: string; active: boolean; onClick: () => void; badge?: string }) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'relative pb-2.5 text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1.5',
-        active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-      )}
-    >
-      {label}
-      {badge && (
-        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wide uppercase bg-amber-400/20 text-amber-600 dark:text-amber-400 border border-amber-400/30 leading-none">
-          {badge}
-        </span>
-      )}
-      {active && (
-        <motion.div
-          layoutId="models-tab-indicator"
-          className="absolute bottom-0 left-0 right-0 h-[2px] bg-foreground rounded-full"
-        />
-      )}
-    </button>
-  );
-}
-
-export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslationEnabled, setTranslationLanguage, setTranscriptionEngine }: ModelsPageProps) {
-  const [activeTab, setActiveTab] = useState<Tab>('models');
+export function ModelsPage({ config, setModel, setTranslationEnabled, setTranslationLanguage, setTranscriptionEngine }: ModelsPageProps) {
   const { models, startDownload, pauseDownload, cancelDownload, deleteModel } = useModels();
   const parakeet = useParakeet('v2');
   const parakeetUnified = useParakeet('unified');
@@ -271,22 +241,13 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
       <div className="px-7 pt-12 pb-1 [-webkit-app-region:drag]">
         <h2 className="text-xl font-bold tracking-tight">Models</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Manage transcription and grammar models.
+          The speech recognition model Tellaflow transcribes with, on this Mac.
         </p>
       </div>
 
-      {/* Tabs */}
-      <div className="px-7 [-webkit-app-region:no-drag]">
-        <div className="flex gap-5 border-b border-border/50 mt-3">
-          <Tab label="Transcription" active={activeTab === 'models'} onClick={() => setActiveTab('models')} />
-          <Tab label="AI Models" active={activeTab === 'grammar'} onClick={() => setActiveTab('grammar')} badge="🐛 Beta" />
-        </div>
-      </div>
 
       <ScrollArea className="flex-1">
         <div className="px-7 py-5 [-webkit-app-region:no-drag]">
-          {activeTab === 'models' && (
-            <>
               {/* Active model selector — unified for Whisper and Parakeet */}
               <Well className="mb-5">
                 <WellHeader>
@@ -417,26 +378,6 @@ export function ModelsPage({ config, setModel, setGrammarEnabled, setTranslation
                   )}
                 </WellCard>
               </Well>
-            </>
-          )}
-
-          {activeTab === 'grammar' && (
-            <>
-              <div className="flex items-start gap-2.5 mb-5 px-3.5 py-3 rounded-lg bg-amber-400/10 border border-amber-400/25">
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wide uppercase bg-amber-400/20 text-amber-600 dark:text-amber-400 border border-amber-400/30 leading-none mt-0.5 shrink-0">
-                  Beta
-                </span>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  AI Grammar correction is in beta. Results may vary — please report any issues or unexpected behaviour so we can keep improving it.
-                </p>
-              </div>
-              <GrammarModelCard
-                grammarEnabled={config.grammarEnabled ?? false}
-                activeGrammarModel={config.grammarModel}
-                onSetGrammarEnabled={setGrammarEnabled}
-              />
-            </>
-          )}
         </div>
       </ScrollArea>
     </div>

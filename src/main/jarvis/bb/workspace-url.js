@@ -239,7 +239,10 @@ async function createThreadAsPicked(client, deps, args) {
         return await client.createThread({ ...args, execution, origin: "app" });
     }
     catch (err) {
-        if (!(err instanceof client_1.BbApiError) || err.status < 400 || err.status >= 500)
+        // By its status rather than `instanceof`: a refusal is any 4xx from
+        // bb, whichever copy of the client class built the error.
+        const status = err?.status;
+        if (typeof status !== "number" || status < 400 || status >= 500)
             throw err;
         return client.createThread(args);
     }

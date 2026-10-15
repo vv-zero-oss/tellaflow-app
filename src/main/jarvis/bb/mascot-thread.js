@@ -264,7 +264,22 @@ function createMascotThreads(deps) {
             if (!record) {
                 if (!pendingWarm)
                     emit(me, { turnId: req.turnId, kind: "waking" });
-                const threadId = await createThread(client, key, `${req.standing}\n\n${req.prompt}`);
+                // A thread this turn is making counts as a warm in flight
+                // (Tellaflow): a warm that lands while it is being made —
+                // the app's startup warm under a first command — waits for it
+                // instead of making a second thread in the same folder, which
+                // bb then refuses ("409: Environment unavailable").
+                const creating = createThread(client, key, `${req.standing}\n\n${req.prompt}`);
+                const marker = creating.then(() => { }, () => { });
+                warming.set(key, marker);
+                let threadId;
+                try {
+                    threadId = await creating;
+                }
+                finally {
+                    if (warming.get(key) === marker)
+                        warming.delete(key);
+                }
                 record = { threadId, usedTokens: 0, ready: Promise.resolve() };
                 threads.set(key, record);
                 me.threadId = threadId;

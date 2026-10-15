@@ -21,8 +21,8 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     NSMicrophoneUsageDescription: "Tellaflow needs microphone access to transcribe your speech."
-    NSAccessibilityUsageDescription: "Tellaflow needs accessibility access to detect your hotkey and paste transcribed text."
-    NSAppleEventsUsageDescription: "Tellaflow uses Apple Events to paste text, detect meetings in your browser, and carry out actions you ask the Assistant to do (open apps, create reminders, control music)."
+    NSAccessibilityUsageDescription: "Tellaflow needs accessibility access to detect your hotkey, paste transcribed text, and click and type in other apps when you ask the Assistant to."
+    NSAppleEventsUsageDescription: "Tellaflow uses Apple Events to paste text and detect meetings in your browser."
 dmg:
   title: Tellaflow Installer
   background: build/background.png
@@ -48,6 +48,10 @@ extraResources:
     filter:
       - "*.onnx"
       - "tokens.txt"
+  # The Node runtime bb runs on (scripts/download-node.sh) — signed with the
+  # app's own entitlements by electron-builder and notarized with the DMG.
+  - from: resources/node/darwin-arm64/
+    to: node/darwin-arm64/
   - from: resources/trayIconTemplate.png
     to: trayIconTemplate.png
   - from: resources/trayIconTemplate@2x.png

@@ -131,30 +131,18 @@ try {
   await sleep(1000);
   await main.screenshot({ path: path.join(OUT, '03-dictionary-learned.png') });
 
-  // ── Assistant with the real signed-in Claude CLI ───────────────────────────
+  // ── Assistant: a typed request through the real bb + signed-in AI ───────
+  // (scripts/e2e-assistant.mjs covers the island, desktop tasks and chats.)
+  await main.evaluate(() => window.tellaflow.assistantSetSettings({ provider: 'claude-code' }));
+  await main.evaluate(() => window.tellaflow.assistantAsk('What is 6 times 7? One short sentence.'));
+  const said = await waitFor(async () => {
+    const t = await main.evaluate(() => window.tellaflow.assistantTranscript());
+    return t.find((e) => e.role === 'mascot')?.text;
+  }, { label: 'the assistant to answer', timeout: 300_000, every: 1000 });
+  check('assistant: real bb + signed-in AI answers', /42|forty-two/i.test(said), said);
   await T(() => globalThis.__tellaflowTest.navigate('assistant'));
-  await sleep(800);
-  await main.locator('textarea').fill('Open the Calculator app, then tell me today\'s date.');
-  await main.locator('button[title="Run"]').click();
-  // Answer every approval until the run ends: allow normal actions, deny
-  // custom AppleScript (exercises both paths). Screenshot the first prompt.
-  let shotApproval = false;
-  await waitFor(async () => {
-    const [run] = await main.evaluate(() => window.tellaflow.assistantListRuns());
-    if (run && run.status !== 'running') return true;
-    const allow = main.getByRole('button', { name: 'Allow' });
-    if (await allow.count()) {
-      if (!shotApproval) { await sleep(400); await main.screenshot({ path: path.join(OUT, '04-assistant-approval.png') }); shotApproval = true; }
-      const isScript = await main.locator('text=Review the script above first').count();
-      await (isScript ? main.getByRole('button', { name: 'Deny' }) : allow).first().click();
-    }
-    return false;
-  }, { label: 'assistant run to finish', timeout: 300_000, every: 1000 });
-  await sleep(800);
-  await main.screenshot({ path: path.join(OUT, '05-assistant-chain.png') });
-  const runs = await main.evaluate(() => window.tellaflow.assistantListRuns());
-  check('assistant: real Claude CLI plans → approval → result → final', runs[0]?.status === 'done',
-    `${runs[0]?.provider} · ${runs[0]?.steps.map((s) => s.type).join(' → ')}`);
+  await sleep(4000);
+  await main.screenshot({ path: path.join(OUT, '05-assistant-page.png') });
 
   // ── Settings: new sections ────────────────────────────────────────────────
   await T(() => globalThis.__tellaflowTest.navigate('settings'));

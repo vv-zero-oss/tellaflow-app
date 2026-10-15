@@ -8,8 +8,6 @@ vi.mock('@/lib/ipc', () => ({
   ipc: {
     getConfig: vi.fn(),
     setModel: vi.fn(),
-    setGrammarEnabled: vi.fn(),
-    setGrammarTone: vi.fn(),
     setTheme: vi.fn(),
     setTranslationEnabled: vi.fn(),
     setTranslationLanguage: vi.fn(),
@@ -28,8 +26,6 @@ import { applyTheme } from '@/lib/theme';
 
 const defaultConfig: AppConfig = {
   model: 'small',
-  grammarEnabled: false,
-  grammarTone: 'casual',
   theme: 'dark',
   translationEnabled: false,
   translationLanguage: 'ja',
@@ -80,26 +76,6 @@ describe('useConfig', () => {
 
     expect(ipc.setModel).toHaveBeenCalledWith('large');
     expect(result.current.config.model).toBe('large');
-  });
-
-  it('setGrammarEnabled updates local config and calls ipc', async () => {
-    const { result } = renderHook(() => useConfig());
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    act(() => result.current.setGrammarEnabled(true));
-
-    expect(ipc.setGrammarEnabled).toHaveBeenCalledWith(true);
-    expect(result.current.config.grammarEnabled).toBe(true);
-  });
-
-  it('setGrammarTone updates local config and calls ipc', async () => {
-    const { result } = renderHook(() => useConfig());
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    act(() => result.current.setGrammarTone('formal'));
-
-    expect(ipc.setGrammarTone).toHaveBeenCalledWith('formal');
-    expect(result.current.config.grammarTone).toBe('formal');
   });
 
   it('setTheme updates local config, calls ipc, and applies theme', async () => {
@@ -155,7 +131,7 @@ describe('useConfig', () => {
     expect(result.current.config.model).toBe('medium');
     expect(result.current.config.theme).toBe('light');
     // unchanged fields preserved
-    expect(result.current.config.grammarEnabled).toBe(false);
+    expect(result.current.config.translationLanguage).toBe('ja');
   });
 
   it('refresh reloads config from ipc', async () => {

@@ -4,6 +4,7 @@
  * The island and every state it shows: none, idle, listening,
  * dictating, thinking, transcribing, recording, done, dictionary,
  * plan, approval, questions, answer (text, image, video, voice),
+ * reply (the assistant's streamed answer), ask (its question),
  * error, setup, meeting. Its colours, sizes, type and motion live
  * in ISLAND_CSS below, scoped to the island itself, with a light
  * and a dark theme and a translucent and an opaque material.
@@ -1068,6 +1069,8 @@ export type IslandState =
   | "approval"
   | "questions"
   | "answer"
+  | "reply"
+  | "ask"
   | "done"
   | "dictionary"
   | "error"
@@ -1127,6 +1130,8 @@ const LABELS: Record<IslandState, string> = {
   approval: "Approval needed",
   questions: "Questions waiting",
   answer: "Answer ready",
+  reply: "Assistant",
+  ask: "Assistant has a question",
   done: "Done",
   dictionary: "Add word to dictionary",
   error: "Something went wrong",
@@ -1162,6 +1167,24 @@ export type IslandContent = {
   followUps?: string[];
   /** recording: epoch ms the recording started, so the timer survives re-renders */
   recordingSince?: number;
+  /** reply: the assistant's answer as it streams, and what it is doing now */
+  reply?: IslandReply;
+  /** ask: the assistant's one question and up to four answers */
+  ask?: { question: string; options: string[] };
+};
+
+export type IslandReply = {
+  /** What the user asked, as the card's heading. */
+  title?: string;
+  /** The answer so far — cumulative, it grows as the model writes. */
+  text?: string;
+  /** "Thinking…", "Opening TextEdit…" — shown while it works. */
+  status?: string | null;
+  working?: boolean;
+  /** A desktop task finished. */
+  done?: boolean;
+  /** The work went to a chat on the Assistant page. */
+  chat?: boolean;
 };
 
 const spring = { type: "spring", bounce: 0.22, duration: 0.55 } as const;
@@ -1358,6 +1381,12 @@ export function VoiceIsland({
                       <IslandButton onClick={act("cancel")}>{notice?.tertiary ?? "Cancel"}</IslandButton>
                     )}
                   </Notice>
+                )}
+                {state === "reply" && (
+                  <Reply reply={content.reply} onStop={act("stop")} onDismiss={act("dismiss")} onOpenChat={act("open-chat")} />
+                )}
+                {state === "ask" && (
+                  <Ask ask={content.ask} onAnswer={(i) => onAction?.(`answer:${i}`)} onDismiss={act("dismiss")} />
                 )}
                 {state === "answer" && (
                   <Answer kind={answerKind} text={content.answerText} followUps={content.followUps} onFollowUp={act("follow-up")} />
@@ -1657,6 +1686,107 @@ function VoicePlayback({ text }: { text: string }) {
         ))}
       </span>
       <span className="text-[length:var(--island-text-button)] text-[var(--island-fg-muted)] tabular-nums">0:06</span>
+    </div>
+  );
+}
+
+/* The assistant's answer, streamed. Text grows in place; the status line
+   says what it is doing while it works (a step of a desktop task, a tool). */
+function Reply({
+  reply,
+  onStop,
+  onDismiss,
+  onOpenChat,
+}: {
+  reply?: IslandReply;
+  onStop: () => void;
+  onDismiss: () => void;
+  onOpenChat: () => void;
+}) {
+  const text = reply?.text ?? "";
+  const scroller = useRef<HTMLDivElement>(null);
+  // Follow the newest words, like a caption.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [text]);
+  return (
+    <div className="flex w-[288px] flex-col gap-3" data-island-reply="">
+      <div className="flex flex-col gap-2 px-2">
+        <div className="flex items-center gap-2">
+          {reply?.working ? (
+            <LoaderCircle className="size-4 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          ) : reply?.done ? (
+            <Check className="size-4 shrink-0 text-[var(--island-success)]" aria-hidden="true" />
+          ) : (
+            <span className="size-2 shrink-0 rounded-full bg-[var(--island-fg)]" aria-hidden="true" />
+          )}
+          <p className="truncate text-[length:var(--island-text-button)] text-[var(--island-fg-muted)]">
+            {reply?.title || "Assistant"}
+          </p>
+        </div>
+        {text && (
+          <div
+            ref={scroller}
+            className="max-h-[168px] overflow-y-auto text-[length:var(--island-text-title)] text-pretty whitespace-pre-wrap"
+          >
+            {text}
+          </div>
+        )}
+        {reply?.status && (
+          <p className="text-[length:var(--island-text-button)] text-[var(--island-fg-muted)]" aria-live="polite">
+            {reply.status}
+          </p>
+        )}
+      </div>
+      <div className="flex gap-2">
+        {reply?.working ? (
+          <IslandButton onClick={onStop}>
+            <Square className="size-3 fill-current" aria-hidden="true" />
+            Stop
+          </IslandButton>
+        ) : (
+          <>
+            {reply?.chat && (
+              <IslandButton tone="accent" onClick={onOpenChat}>
+                Open chat
+              </IslandButton>
+            )}
+            <IslandButton onClick={onDismiss}>Dismiss</IslandButton>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* The assistant's one question: each answer is a button. */
+function Ask({
+  ask,
+  onAnswer,
+  onDismiss,
+}: {
+  ask?: { question: string; options: string[] };
+  onAnswer: (index: number) => void;
+  onDismiss: () => void;
+}) {
+  const options = ask?.options ?? [];
+  return (
+    <div className="flex w-[288px] flex-col gap-3">
+      <div className="flex flex-col gap-2 px-2">
+        <p className="text-[length:var(--island-text-button)] text-[var(--island-fg-muted)]">Question</p>
+        <p className="text-[length:var(--island-text-title)] text-pretty">{ask?.question ?? "Which one?"}</p>
+      </div>
+      <div className="flex flex-col gap-2">
+        {options.map((option, i) => (
+          <IslandButton key={`${i}-${option}`} tone={i === 0 ? "accent" : "neutral"} onClick={() => onAnswer(i)}>
+            {option}
+          </IslandButton>
+        ))}
+        <IslandButton tone="ghost" onClick={onDismiss}>
+          {options.length ? "Never mind" : "Dismiss"}
+        </IslandButton>
+      </div>
     </div>
   );
 }

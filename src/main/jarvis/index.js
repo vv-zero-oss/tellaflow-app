@@ -71,7 +71,7 @@ function clip(s, n) {
  * @param {(threadUrl: string) => void} [deps.openChat]      show a bb chat on the Assistant page
  * @param {() => void} [deps.openAccessibility]              System Settings › Accessibility
  * @param {() => void} [deps.openSettings]                   Tellaflow › Settings › Assistant
- * @param {object} [deps.bb]                                 test seams: { ensureServer, threads, workspace }
+ * @param {object} [deps.bb]                                 test seams: { ensureServer, createThreads(emit), workspace }
  */
 function createJarvis(deps) {
   const log = deps.log || ((...a) => console.log('[assistant]', ...a));
@@ -114,6 +114,7 @@ function createJarvis(deps) {
   let shot = null;          // { path, at }
   let backend = { state: 'idle', error: null };
   let nextTurn = 1;
+  let settleTurn = null;    // resolves the turn in flight's wait
 
   const isLive = (gen) => () => gen === generation;
 
@@ -130,7 +131,8 @@ function createJarvis(deps) {
 
   // ── The brain ────────────────────────────────────────────────────────────
   const listeners = new Map(); // turnId → fn
-  const threads = deps.bb?.threads || createMascotThreads({
+  const emitBrain = (event) => listeners.get(event.turnId)?.(event);
+  const threads = deps.bb?.createThreads ? deps.bb.createThreads(emitBrain) : createMascotThreads({
     client: async () => (await ensureServer()).client,
     resolve: async (cwd) => {
       const server = await ensureServer();
@@ -138,24 +140,28 @@ function createJarvis(deps) {
     },
     modelChoice,
     fallbackCwd: () => workspaceDir(),
-    emit: (event) => listeners.get(event.turnId)?.(event),
+    emit: emitBrain,
     log: (m, d) => log(m, d ?? ''),
   });
 
   /** Start bb and make the thread before the user's first words arrive: a cold
    *  thread is ~14 s to its first token, a warm one ~1.5 s (canvas measured). */
   async function warm() {
+    // The thread's warm is registered at once, before bb is even up: a command
+    // that arrives while bb starts then waits for this thread instead of making
+    // a second one beside it — bb fails both ("Provisioning thread failed",
+    // measured here exactly as canvas measured it).
+    const warming = threads.warm(workspaceDir(), buildMascotStanding(transcript));
     try {
       setBackend('starting');
       await ensureServer();
       setBackend('ready');
-      const r = await threads.warm(workspaceDir(), buildMascotStanding(transcript));
-      if (!r.ok) log('warm failed:', r.error);
-      return r;
     } catch (err) {
       setBackend('error', String(err?.message || err));
-      return { ok: false, error: String(err?.message || err) };
     }
+    const r = await warming;
+    if (!r.ok) log('warm failed:', r.error);
+    return r;
   }
 
   // ── The island ───────────────────────────────────────────────────────────
@@ -365,6 +371,9 @@ function createJarvis(deps) {
     const turnId = `t${nextTurn++}`;
     active.turnId = turnId;
     const finished = new Promise((resolve) => {
+      // Stop settles the wait too: a stopped turn's brain goes silent, and a
+      // promise left waiting on it would hold this request open forever.
+      settleTurn = resolve;
       listeners.set(turnId, (event) => {
         if (!live()) return;
         switch (event.kind) {
@@ -373,6 +382,7 @@ function createJarvis(deps) {
             showReply(gen);
             break;
           case 'text': {
+            if (active.fresh) { active.fresh = false; active.said = []; }
             active.prose = splitMascotReply(event.text).prose;
             active.status = null;
             showReply(gen);
@@ -401,6 +411,8 @@ function createJarvis(deps) {
     });
     const outcome = await finished;
     listeners.delete(turnId);
+    if (settleTurn === null || !live()) return;
+    settleTurn = null;
     if (!live()) return;
 
     if (!outcome.ok) {
@@ -452,15 +464,15 @@ function createJarvis(deps) {
     pushTranscript({ role: 'mascot', text: prose, actions: notes, at: Date.now() });
     if (!live()) return;
 
+    // The last step's words stay on the island until the next step's arrive,
+    // so the card never blanks between steps.
     if (answer) {
-      active.prose = '';
-      active.said = [];
+      active.fresh = true;
       await runTurn(answer, { answer: true });
       return;
     }
     if (next) {
-      active.prose = '';
-      active.said = [];
+      active.fresh = true;
       active.latch = false;
       await runTurn(next, { step: true });
       return;
@@ -542,8 +554,17 @@ function createJarvis(deps) {
   async function ask(request, { source = 'voice' } = {}) {
     const text = String(request || '').trim();
     if (!text) return;
+    // Spoken while the island holds a question: that is the answer (a question
+    // with no options has no other way to be answered from the island).
+    if (pending?.kind === 'ask' && active) {
+      settlePending(text);
+      return;
+    }
     const gen = ++generation;
     settlePending();
+    const settle = settleTurn;
+    settleTurn = null;
+    settle?.({ ok: false, message: 'superseded' });
     await threads.stop().catch(() => {});
     if (gen !== generation) return;
     // A new request while a task runs is handled inside runTurn as a redirect;
@@ -563,6 +584,9 @@ function createJarvis(deps) {
     generation++;
     loop = null;
     settlePending();
+    const settle = settleTurn;
+    settleTurn = null;
+    settle?.({ ok: false, message: 'stopped' });
     active = null;
     await threads.stop().catch(() => {});
   }
@@ -617,13 +641,22 @@ function createJarvis(deps) {
       server.client.providers().catch(() => []),
       server.client.providerStates().catch(() => null),
     ]);
-    const statusById = new Map();
+    const stateById = new Map();
     for (const row of Array.isArray(state?.providers) ? state.providers : []) {
-      if (row && typeof row.providerId === 'string') statusById.set(row.providerId, String(row.status || 'unknown'));
+      if (row && typeof row.providerId === 'string') stateById.set(row.providerId, row);
     }
     return (Array.isArray(list) ? list : [])
       .filter((p) => p && typeof p.id === 'string')
-      .map((p) => ({ id: p.id, label: typeof p.displayName === 'string' && p.displayName ? p.displayName : p.id, status: statusById.get(p.id) || 'unknown' }));
+      .map((p) => {
+        const row = stateById.get(p.id) || {};
+        return {
+          id: p.id,
+          label: typeof p.displayName === 'string' && p.displayName ? p.displayName : p.id,
+          status: typeof row.status === 'string' ? row.status : 'unknown',
+          loginCommand: typeof row.loginCommand === 'string' ? row.loginCommand : null,
+          accountEmail: typeof row.accountEmail === 'string' ? row.accountEmail : null,
+        };
+      });
   }
 
   async function status() {

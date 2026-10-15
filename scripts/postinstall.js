@@ -62,14 +62,16 @@ try {
   console.warn('better-sqlite3 rebuild failed:', err.message);
 }
 
-// bb (the assistant's agent backend) runs under plain Node, never inside
-// Electron, and keeps its own better-sqlite3 (bb-app pins a different version,
-// so npm nests it). Put back the Node build in case the Electron rebuild above
-// reached the nested copy too — an Electron-ABI binary there stops bb starting.
+// bb (the assistant's agent backend) runs on the Node bundled with the app
+// (scripts/download-node.sh), never inside Electron, and keeps its own
+// better-sqlite3 (bb-app pins a different version, so npm nests it). Build that
+// copy for the BUNDLED Node's ABI — not this machine's node (CI runs another
+// version) and not Electron's (the rebuild above may reach the nested copy).
 const bbSqlite = path.join(__dirname, '..', 'node_modules', 'bb-app', 'node_modules', 'better-sqlite3');
-if (fs.existsSync(bbSqlite)) {
+const bundledNodeVersion = (/^VERSION="v([^"]+)"/m.exec(fs.readFileSync(path.join(__dirname, 'download-node.sh'), 'utf8')) || [])[1];
+if (fs.existsSync(bbSqlite) && bundledNodeVersion) {
   try {
-    execSync('npx --yes prebuild-install --runtime node', { stdio: 'inherit', cwd: bbSqlite });
+    execSync(`npx --yes prebuild-install --runtime node --target ${bundledNodeVersion}`, { stdio: 'inherit', cwd: bbSqlite });
     console.log('bb better-sqlite3 (Node ABI) restored.');
   } catch (err) {
     console.warn('bb better-sqlite3 restore failed:', err.message);

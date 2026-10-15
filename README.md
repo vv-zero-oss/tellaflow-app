@@ -7,7 +7,6 @@ Offline speech-to-text for macOS. Hold a hotkey, speak, release — your words a
 - **Push-to-talk transcription** — hold your hotkey (default: Option ⌥), speak, release. Text is pasted into the focused app.
 - **Fully offline** — all processing happens on-device. No data leaves your machine.
 - **Multiple Whisper models** — ships with `small` (465 MB). Download `tiny`, `base`, `medium`, or `large-v3` from the app with pause/resume support.
-- **Grammar correction** — optional on-device grammar cleanup via [SmolLM2-135M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct) (GGUF, ~105 MB). Disabled by default; enable in Settings.
 - **Snippets** — define trigger phrases that expand into longer text (e.g. "my email" → `you@example.com`).
 - **Custom dictionary** — map misheard words to correct ones based on your accent or domain vocabulary.
 - **Transcription history** — browse, copy, and delete past transcriptions grouped by date.
@@ -18,7 +17,7 @@ Offline speech-to-text for macOS. Hold a hotkey, speak, release — your words a
 - **Learns from your corrections** (0.9) — fix a misheard word right after dictating and it's added to your Dictionary automatically.
 - **App-aware vocabulary** (0.9) — recognizes people's names in Slack and other chat apps, and file names in Cursor/VS Code ("index dot js" → `index.js`).
 - **Automatic meeting notes** (0.9, opt-in) — detects Zoom, Google Meet, Teams and Slack huddles and transcribes the meeting locally in 30-second chunks.
-- **Assistant** (0.9) — say "Hey Tella, …" or type a request. An AI you're already signed in to (Claude Code, Codex or Gemini CLI, or local Ollama — no API keys) plans each step, and Tellaflow carries it out on your Mac (open apps, reminders, notes, calendar, music, volume, AppleScript) showing every step and asking before it changes anything. Run `npm run test:assistant-e2e` to exercise it against your signed-in Claude CLI.
+- **Assistant** — hold the command key and say what you want. It runs on [bb](https://www.npmjs.com/package/bb-app) with an AI you're already signed in to (Claude Code or Codex — no API keys), streams its answer onto the island, and works in your other apps one step at a time through [Peekaboo](https://github.com/steipete/peekaboo) — checking each step on screen, refusing to type into password fields, and always asking before quitting, deleting or touching a password manager. Bigger jobs go to a chat on the Assistant page, where you can keep talking to it. Node is bundled; nothing to install. `npm run test:assistant-e2e` runs it end to end against your signed-in Claude CLI.
 
 ## Requirements
 
@@ -93,8 +92,7 @@ src/
 ├── main/                  # Electron main process (Node.js / CommonJS)
 │   ├── index.js           # App entry, IPC handlers, recording lifecycle
 │   ├── whisper.js         # Whisper model loading, transcription, warmup
-│   ├── grammar.js         # SmolLM2 grammar correction (child process)
-│   ├── grammar-worker.js  # Isolated worker for node-llama-cpp
+│   ├── jarvis/            # The assistant: bb brain, desktop tier (Peekaboo), island loop
 │   ├── hotkey.js          # Global hotkey via uiohook-napi
 │   ├── db.js              # SQLite database (better-sqlite3)
 │   ├── config.js          # App settings CRUD
@@ -143,7 +141,7 @@ src/
 | Styling | Tailwind CSS v4, shadcn/ui |
 | Animation | Framer Motion |
 | Speech-to-text | whisper.cpp via @kutalia/whisper-node-addon (Metal GPU) |
-| Grammar | node-llama-cpp with SmolLM2-135M-Instruct (GGUF) |
+| Assistant | bb-app (agent backend) on a bundled Node 22, Peekaboo for desktop actions |
 | Storage | SQLite via better-sqlite3 |
 | Hotkey | uiohook-napi (global keyboard hook) |
 | Packaging | electron-builder |
@@ -168,15 +166,15 @@ npm run build
 
 This builds the renderer with Vite, then packages the app with electron-builder. The output is in `dist/`. The bundled `small` Whisper model (~465 MB) is included as an extra resource.
 
-Native addons (`whisper-node-addon`, `uiohook-napi`, `better-sqlite3`, `node-llama-cpp`) are unpacked from the asar archive so they can load at runtime.
+Native addons (`whisper-node-addon`, `uiohook-napi`, `better-sqlite3`, and bb-app with its dependencies) are unpacked from the asar archive so they can load at runtime.
 
 ## Architecture Notes
 
-**Audio pipeline:** Hotkey press → hidden `audio-capture.html` window starts `MediaRecorder` → hotkey release → PCM float32 sent to main process → silence trimming + volume normalization → whisper.cpp transcription → formatter → dictionary replacement → snippet expansion → (optional) grammar correction → clipboard + paste.
+**Audio pipeline:** Hotkey press → hidden `audio-capture.html` window starts `MediaRecorder` → hotkey release → PCM float32 sent to main process → silence trimming + volume normalization → whisper.cpp transcription → formatter → dictionary replacement → snippet expansion → clipboard + paste.
 
 **Model management:** Models are downloaded to `~/Library/Application Support/tellaflow/models/` with HTTP range requests for pause/resume. The bundled `small` model lives in the app resources.
 
-**Grammar isolation:** `node-llama-cpp` runs in a forked child process (`grammar-worker.js`) to avoid symbol conflicts with the Whisper native addon and to keep the main process responsive.
+**Assistant isolation:** bb runs as a child process on the bundled Node (never inside Electron), so its native modules never share an ABI with Electron's.
 
 **Permissions:** Microphone is requested via Electron's `systemPreferences.askForMediaAccess`. Accessibility is checked with `isTrustedAccessibilityClient` and requires the user to manually toggle the app on in System Settings. A session-aware flag tracks whether accessibility was freshly granted to avoid restart loops.
 

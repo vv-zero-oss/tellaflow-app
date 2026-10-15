@@ -137,6 +137,7 @@ let meetingNotes = null;
 let meetingDetector = null;
 let meetingCaptureWindow = null;
 let assistant = null;
+let pendingChatUrl = null;   // a chat the island asked the Assistant page to show
 let autoLearn = null;
 let modelLoading = false;
 // App context (frontmost app, window title, focused text) captured when a
@@ -553,14 +554,20 @@ function initCoreServices() {
       const c = await peekRecordingContext();
       return c?.ctx ? { app: c.ctx.app, windowTitle: c.ctx.windowTitle } : null;
     },
-    os: osActions,
+    // e2e on Linux: a pretend desktop (scripts/e2e-fake-desktop.js), since
+    // Peekaboo is macOS-only. Never set outside the test run.
+    os: process.env.TELLAFLOW_E2E === '1' && process.env.TELLAFLOW_E2E_DESKTOP === 'fake'
+      ? require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js'))
+      : osActions,
     workspaceDir: path.join(userData, 'assistant', 'workspace'),
     record: (entry) => {
       if (entry.role !== 'mascot' || !entry.text) return;
       sendToMainWindow('assistant-transcript', entry);
     },
     onStatus: (status) => sendToMainWindow('assistant-status', status),
-    openChat: (url) => { showMainWindow(); sendToMainWindow('navigate', 'assistant'); sendToMainWindow('assistant-open-chat', url); },
+    // The page may not be mounted yet: it takes this on its first load
+    // (assistant-workspace-url), and the event covers a page already open.
+    openChat: (url) => { pendingChatUrl = { url, at: Date.now() }; showMainWindow(); sendToMainWindow('navigate', 'assistant'); sendToMainWindow('assistant-open-chat', url); },
     openAccessibility: () => { osActions.requestAccessibility().catch(() => {}); },
     openSettings: () => { showMainWindow(); sendToMainWindow('navigate', 'settings'); },
   });
@@ -607,6 +614,10 @@ function initCoreServices() {
         return pid || null;
       },
       navigate: (page) => sendToMainWindow('navigate', page),
+      // What reached the pretend desktop (TELLAFLOW_E2E_DESKTOP=fake).
+      fakeDesktop: () => (process.env.TELLAFLOW_E2E_DESKTOP === 'fake'
+        ? (({ front, doc, acts }) => ({ front, doc, acts }))(require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js')).state)
+        : null),
       learn: (corrections) => {
         const added = config.addLearnedEntries(corrections);
         sendToMainWindow('dictionary-changed', config.getDictionary());
@@ -1758,8 +1769,18 @@ function registerIPC() {
   ipcMain.handle('assistant-stop', () => assistant.stop());
   ipcMain.handle('assistant-status', () => assistant.status());
   ipcMain.handle('assistant-providers', () => assistant.providers().catch(() => []));
-  ipcMain.handle('assistant-workspace-url', (_, threadId) =>
-    assistant.workspaceUrl(typeof threadId === 'string' ? threadId : undefined).then((r) => ({ ok: true, ...r }), errorOf));
+  ipcMain.handle('assistant-workspace-url', (_, threadId) => {
+    // The chat the island's "Open chat" just asked for wins over the list for
+    // a few seconds — not once: the page can mount twice in a row (React's dev
+    // double mount, a second navigate), and the second must not lose it.
+    if (pendingChatUrl && Date.now() - pendingChatUrl.at > 15_000) pendingChatUrl = null;
+    if (pendingChatUrl && (threadId === undefined || threadId === null)) {
+      const { url } = pendingChatUrl;
+      return { ok: true, url, origin: new URL(url).origin };
+    }
+    if (threadId === '') pendingChatUrl = null; // the Chats button asked for the list
+    return assistant.workspaceUrl(typeof threadId === 'string' ? threadId : undefined).then((r) => ({ ok: true, ...r }), errorOf);
+  });
   ipcMain.handle('assistant-transcript', () => assistant.transcript());
   ipcMain.handle('assistant-reset', () => assistant.reset());
   ipcMain.handle('assistant-get-settings', () => config.getAssistantSettings());
@@ -1767,7 +1788,7 @@ function registerIPC() {
   // The desktop helper (Peekaboo), downloaded on request — pinned and checksummed.
   ipcMain.handle('assistant-install-helper', async () => {
     try {
-      await installPeekaboo((p) => sendToMainWindow('assistant-helper-progress', p));
+      await installPeekaboo((received, total) => sendToMainWindow('assistant-helper-progress', { received, total }));
       return { ok: true };
     } catch (err) { return errorOf(err); }
   });

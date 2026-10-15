@@ -171,12 +171,20 @@ function buildLaunchCommand(args) {
         "--host-daemon-port",
         String(args.daemonPort),
     ].join(" ");
+    if (args.launcher && args.node) {
+        // Tellaflow ships its own Node (scripts/download-node.sh), so nobody has
+        // to install one. Its folder goes on the END of PATH: bb starts the
+        // provider CLIs, and an npm-installed `claude` is a `#!/usr/bin/env node`
+        // script — the user's own node still wins when they have one.
+        return (`export PATH="$PATH:${shDirname(args.node)}"; ` +
+            `exec ${shQuote(args.node)} ${shQuote(args.launcher)} ${flags}`);
+    }
     if (args.launcher) {
-        // The message matters: "did not become ready" with no explanation is what
-        // a missing `node` looks like otherwise, and this is the one prerequisite
-        // the app cannot ship for the user.
+        // A dev checkout without the bundled runtime: the user's own node.
+        // The message matters: "did not become ready" with no explanation is
+        // what a missing `node` looks like otherwise.
         return (`if command -v node >/dev/null 2>&1; then exec node ${shQuote(args.launcher)} ${flags}; ` +
-            `else echo "the agent backend needs Node on your PATH to run" >&2; exit 127; fi`);
+            `else echo "the agent backend needs Node on your PATH to run (npm run download-node)" >&2; exit 127; fi`);
     }
     // No bundled copy (a checkout with pruned modules). Prefer a bb-app the user
     // already has, and download the pinned one only as a last resort — chosen in
@@ -194,6 +202,24 @@ function buildLaunchCommand(args) {
 function loginShellInvocation(command, env = process.env, shell) {
     return { shell: shell ?? env.SHELL ?? "/bin/zsh", args: ["-lc", command] };
 }
+/** A directory for PATH, escaped for inside double quotes. */
+function shDirname(file) {
+    return node_path_1.default.dirname(file).replace(/(["\\$`])/g, "\\$1");
+}
+/**
+ * The Node runtime bundled with the app (scripts/download-node.sh), or null.
+ * Packaged it is in Resources/node/<platform>-<arch>/bin/node; in a checkout,
+ * resources/node/… once `npm run download-node` has run.
+ */
+function bundledNode(exists = node_fs_1.default.existsSync) {
+    const dir = `${process.platform}-${process.arch}`;
+    const candidates = [];
+    if (process.resourcesPath)
+        candidates.push(node_path_1.default.join(process.resourcesPath, "node", dir, "bin", "node"));
+    candidates.push(node_path_1.default.join(__dirname, "..", "..", "..", "..", "resources", "node", dir, "bin", "node"));
+    return candidates.find((c) => exists(c)) ?? null;
+}
+exports.bundledNode = bundledNode;
 function shQuote(value) {
     return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -309,6 +335,20 @@ async function startBbServer(options = {}) {
     if (owned && (await probeReady(owned.handle.client, probeTimeoutMs))) {
         return owned.handle;
     }
+    // Ours, still running, but slow to answer (a busy machine): wait for it
+    // rather than fall through to a second launch, which would only find its
+    // own daemon port taken and fail. (Tellaflow: measured under load, a 1 s
+    // probe missed a healthy server and the next turn failed outright.)
+    if (owned && !childExited.has(owned.child)) {
+        const host = await waitReady(owned.handle.client, deps, {
+            probeTimeoutMs: probeTimeoutMs * 3,
+            pollIntervalMs,
+            deadline: deps.now() + ADOPT_READY_TIMEOUT_MS,
+            child: owned.child,
+        });
+        if (host)
+            return owned.handle;
+    }
     const client = new client_1.BbClient({ port: serverPort, fetchImpl: options.fetchImpl });
     // 1. Adopt a server that is already listening. Reachability is decided by
     //    /health alone (cheap, 1s) so we never fork onto a bound port; full
@@ -361,15 +401,17 @@ async function startBbServer(options = {}) {
             `(\`lsof -nP -iTCP:${daemonPort} -sTCP:LISTEN\`).`);
     }
     const launcher = options.launcher === undefined ? bundledLauncher() : options.launcher;
+    const node = options.node === undefined ? bundledNode() : options.node;
     const command = buildLaunchCommand({
         launcher,
+        node,
         dataDir,
         serverPort,
         daemonPort,
         version: options.bbAppVersion ?? exports.BB_APP_VERSION,
     });
     deps.log(launcher
-        ? `[bb] starting the bundled agent backend (${launcher})`
+        ? `[bb] starting the bundled agent backend (${launcher}) on ${node ?? "the user's node"}`
         : `[bb] no bundled agent backend — falling back to bb-app@${options.bbAppVersion ?? exports.BB_APP_VERSION}`);
     const spawnImpl = options.spawnImpl ??
         ((cmd, args, opts) => (0, node_child_process_1.spawn)(cmd, args, opts));

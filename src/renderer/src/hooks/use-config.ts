@@ -28,16 +28,6 @@ export function useConfig() {
     setConfig(prev => ({ ...prev, model }));
   }, []);
 
-  const setGrammarEnabled = useCallback((enabled: boolean) => {
-    ipc.setGrammarEnabled(enabled);
-    setConfig(prev => ({ ...prev, grammarEnabled: enabled }));
-  }, []);
-
-  const setGrammarTone = useCallback((tone: string) => {
-    ipc.setGrammarTone(tone);
-    setConfig(prev => ({ ...prev, grammarTone: tone }));
-  }, []);
-
   const setTheme = useCallback((theme: Theme) => {
     ipc.setTheme(theme);
     setConfig(prev => ({ ...prev, theme }));
@@ -61,7 +51,7 @@ export function useConfig() {
 
   return {
     config, loading, refresh,
-    setModel, setGrammarEnabled, setGrammarTone, setTheme,
+    setModel, setTheme,
     setTranslationEnabled, setTranslationLanguage,
     setTranscriptionEngine,
   };

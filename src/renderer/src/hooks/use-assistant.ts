@@ -1,43 +1,71 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ipc, type AssistantRun, type AssistantProviderStatus, type AssistantSettings } from '@/lib/ipc';
+import {
+  ipc,
+  type AssistantBackendStatus,
+  type AssistantDesktopStatus,
+  type AssistantProvider,
+  type AssistantSettings,
+} from '@/lib/ipc';
 
-/** Assistant runs, live step updates, provider status and settings. */
+/** The assistant's settings, bb's providers, and the desktop helper's state. */
 export function useAssistant() {
-  const [runs, setRuns] = useState<AssistantRun[]>([]);
-  const [providers, setProviders] = useState<AssistantProviderStatus[] | null>(null);
   const [settings, setSettings] = useState<AssistantSettings | null>(null);
+  const [providers, setProviders] = useState<AssistantProvider[] | null>(null);
+  const [backend, setBackend] = useState<AssistantBackendStatus | null>(null);
+  const [desktop, setDesktop] = useState<AssistantDesktopStatus | null>(null);
+  const [installing, setInstalling] = useState<{ received: number; total: number | null } | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!ipc?.assistantListRuns) return;
-    ipc.assistantListRuns().then(setRuns).catch(() => {});
+    if (!ipc?.assistantGetSettings) return;
     ipc.assistantGetSettings().then(setSettings).catch(() => {});
-    const offRun = ipc.onAssistantRun((run) => {
-      setRuns((prev) => {
-        const i = prev.findIndex((r) => r.id === run.id);
-        if (i === -1) return [run, ...prev];
-        const next = [...prev];
-        // Keep locally accumulated steps if the summary is behind.
-        next[i] = { ...run, steps: run.steps.length >= prev[i].steps.length ? run.steps : prev[i].steps };
-        return next;
-      });
-    });
-    const offStep = ipc.onAssistantStep(({ runId, step }) => {
-      setRuns((prev) => prev.map((r) => (r.id === runId && !r.steps.some((s) => s.id === step.id) ? { ...r, steps: [...r.steps, step] } : r)));
-    });
-    return () => { offRun(); offStep(); };
+    ipc.assistantStatus().then((s) => setBackend(s.backend)).catch(() => {});
+    const offs = [
+      ipc.onAssistantStatus(setBackend),
+      ipc.onAssistantHelperProgress((p) => setInstalling(p)),
+    ];
+    return () => offs.forEach((off) => off());
   }, []);
 
   const refreshProviders = useCallback(async () => {
     setProviders(null);
-    setProviders(await ipc.assistantDetect());
+    try { setProviders(await ipc.assistantProviders()); } catch { setProviders([]); }
   }, []);
 
-  const start = useCallback((request: string) => ipc.assistantStart(request), []);
-  const approve = useCallback((runId: string, actionId: number, ok: boolean) => ipc.assistantApprove(runId, actionId, ok), []);
-  const cancel = useCallback((runId: string) => ipc.assistantCancel(runId), []);
+  const refreshDesktop = useCallback(async () => {
+    try { setDesktop(await ipc.assistantDesktopStatus()); } catch { setDesktop(null); }
+  }, []);
+
   const updateSettings = useCallback(async (patch: Partial<AssistantSettings>) => {
+    setSettings((prev) => (prev ? { ...prev, ...patch } : prev));
     setSettings(await ipc.assistantSetSettings(patch));
   }, []);
 
-  return { runs, providers, settings, refreshProviders, start, approve, cancel, updateSettings };
+  const installHelper = useCallback(async () => {
+    setInstallError(null);
+    setInstalling({ received: 0, total: null });
+    const r = await ipc.assistantInstallHelper();
+    setInstalling(null);
+    if (!r.ok) setInstallError(r.error ?? 'The download failed.');
+    await refreshDesktop();
+  }, [refreshDesktop]);
+
+  const requestAccessibility = useCallback(async () => {
+    await ipc.assistantRequestAccessibility();
+    await refreshDesktop();
+  }, [refreshDesktop]);
+
+  return {
+    settings,
+    providers,
+    backend,
+    desktop,
+    installing,
+    installError,
+    refreshProviders,
+    refreshDesktop,
+    updateSettings,
+    installHelper,
+    requestAccessibility,
+  };
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Power, RotateCcw, X, Check, AlertCircle, Send, Smile, Paperclip, Bold, Hash, MonitorSmartphone, AppWindow } from 'lucide-react';
+import { Power, RotateCcw, X, Check, AlertCircle, Send, Smile, Paperclip, Bold, Hash, MonitorSmartphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ipc, type HotkeyConfig } from '@/lib/ipc';
 
@@ -104,8 +104,6 @@ function WelcomePermissionsStep({
   const [accGranted, setAccGranted] = useState(false);
   const [screenGranted, setScreenGranted] = useState(false);
   const [screenWaiting, setScreenWaiting] = useState(false);
-  const [automationGranted, setAutomationGranted] = useState(false);
-  const [automationWaiting, setAutomationWaiting] = useState(false);
   const [showInstructions, setShowInstructions] = useState(false);
   const [needsRestart, setNeedsRestart] = useState(false);
   const accPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -143,7 +141,6 @@ function WelcomePermissionsStep({
         }
       }
       try { if (ipc?.checkScreenPermission) setScreenGranted(await ipc.checkScreenPermission()); } catch { /* ignore */ }
-      try { if (ipc?.checkAutomationPermission) setAutomationGranted(await ipc.checkAutomationPermission()); } catch { /* ignore */ }
       pollAccess();
     })();
     return () => { if (accPollRef.current) clearInterval(accPollRef.current); };
@@ -170,16 +167,6 @@ function WelcomePermissionsStep({
       }, 1500);
       setTimeout(() => clearInterval(t), 120_000);
     } catch { setScreenWaiting(false); }
-  };
-
-  const grantAutomation = async () => {
-    if (automationGranted || !ipc?.requestAutomationPermission) return;
-    setAutomationWaiting(true);
-    try {
-      const { granted } = await ipc.requestAutomationPermission();
-      setAutomationGranted(granted);
-    } catch { /* ignore */ }
-    setAutomationWaiting(false);
   };
 
   const grantAccessibility = () => {
@@ -310,7 +297,7 @@ function WelcomePermissionsStep({
             />
           </div>
           {/* Row 3 */}
-          <div style={{ padding: '11px 14px', borderBottom: '1px dashed rgba(0,0,0,0.08)' }}>
+          <div style={{ padding: '11px 14px' }}>
             <PermissionRow
               icon={<span className="w-8 h-8 rounded-lg grid place-items-center" style={{ background: '#5856d6' }}><MonitorSmartphone className="w-4.5 h-4.5 text-white" strokeWidth={2} /></span>}
               label="Screen Recording"
@@ -318,17 +305,6 @@ function WelcomePermissionsStep({
               granted={screenGranted}
               waiting={screenWaiting && !screenGranted}
               onGrant={grantScreen}
-            />
-          </div>
-          {/* Row 4 */}
-          <div style={{ padding: '11px 14px' }}>
-            <PermissionRow
-              icon={<span className="w-8 h-8 rounded-lg grid place-items-center" style={{ background: '#ff9500' }}><AppWindow className="w-4.5 h-4.5 text-white" strokeWidth={2} /></span>}
-              label="Control apps"
-              description={automationGranted ? 'Access granted' : automationWaiting ? 'Click OK on each macOS prompt' : 'Notes, Reminders, Calendar, Music, Finder — once, now'}
-              granted={automationGranted}
-              waiting={automationWaiting && !automationGranted}
-              onGrant={grantAutomation}
             />
           </div>
         </div>
