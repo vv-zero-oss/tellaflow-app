@@ -29,6 +29,7 @@ const { createTranscriptionService, WorkerCrashError } = require('./transcriptio
 const { createJobJournal } = require('./job-journal');
 const { createPipeline } = require('./transcription-pipeline');
 const { buildEngineSpec, getActiveEngine, isEngineAvailable } = require('./engine-spec');
+const { createModelLoadProgress } = require('./model-load-progress');
 const { extractContextVocabulary, buildWhisperPrompt, applyContextVocabulary, isEmptyVocab } = require('./app-context');
 const { createAutoLearnWatcher } = require('./auto-learn');
 const { createMeetingDetector } = require('./meeting-detector');
@@ -139,6 +140,12 @@ let meetingCaptureWindow = null;
 let assistant = null;
 let autoLearn = null;
 let modelLoading = false;
+const modelLoad = createModelLoadProgress({
+  getSpec: () => buildEngineSpec(),
+  getTimes: () => config.getModelLoadTimes(),
+  setTime: (id, ms) => config.setModelLoadTime(id, ms),
+  broadcast: (state) => sendToMainWindow('model-load-state', state),
+});
 // App context (frontmost app, window title, focused text) captured when a
 // recording starts; resolves to { ctx, vocab } or null.
 let recordingContextPromise = null;
@@ -509,10 +516,12 @@ function initCoreServices() {
     if (e.type === 'recycle') console.log(`[transcription] worker recycled (${e.reason}, ${e.jobs} jobs, ${(e.rss / 1048576).toFixed(0)} MB)`);
     if (e.type === 'loaded') {
       console.log(`[transcription] ${e.engine} model ready in ${e.ms} ms`);
+      modelLoad.finish(true, e.ms);
       if (modelLoading) { modelLoading = false; broadcastStatus('Ready'); }
     }
     if (e.type === 'load-error') {
       console.error('[transcription] model load failed:', e.error);
+      modelLoad.finish(false);
       if (modelLoading) { modelLoading = false; broadcastStatus('Model load failed'); }
     }
   });
@@ -922,6 +931,7 @@ async function startApp() {
     // the service's 'loaded' event.
     modelLoading = true;
     broadcastStatus('Loading model...');
+    modelLoad.start();
     transcriptionService.prewarm();
 
     // Run first-install smoke test in the background — never blocks startup.
@@ -1390,9 +1400,10 @@ function registerIPC() {
 
   function reloadEngine() {
     transcriptionService.reset();
-    if (!isEngineAvailable()) return;
+    if (!isEngineAvailable()) { modelLoad.finish(false); return; }
     modelLoading = true;
     broadcastStatus('Loading model...');
+    modelLoad.start();
     transcriptionService.prewarm();
   }
 
@@ -1897,6 +1908,7 @@ function registerIPC() {
 
   // Auto-update IPC
   ipcMain.handle('get-update-status', () => updater.getStatus());
+  ipcMain.handle('get-model-load-state', () => modelLoad.getState());
   ipcMain.on('check-for-updates', () => {
     updater.checkForUpdates({ silent: false });
   });

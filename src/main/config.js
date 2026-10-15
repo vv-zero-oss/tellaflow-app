@@ -180,6 +180,16 @@ function setMeetingNotesEnabled(v) { setSetting('meetingNotesEnabled', !!v); }
 function getMeetingBrowserDetection() { return getBool('meetingBrowserDetection'); }
 function setMeetingBrowserDetection(v) { setSetting('meetingBrowserDetection', !!v); }
 
+// Last measured model load time (ms) per model, keyed by engine + path.
+// Drives the time-based "Loading model" progress bar.
+function getModelLoadTimes() {
+  const v = getSetting('modelLoadTimes');
+  return v && typeof v === 'object' ? v : {};
+}
+function setModelLoadTime(id, ms) {
+  setSetting('modelLoadTimes', { ...getModelLoadTimes(), [id]: ms });
+}
+
 function getAudioRetentionDays() {
   const v = getSetting('audioRetentionDays');
   // 0 = keep forever
@@ -357,6 +367,8 @@ module.exports = {
   getMeetingBrowserDetection,
   setMeetingBrowserDetection,
   getAudioRetentionDays,
+  getModelLoadTimes,
+  setModelLoadTime,
   setAudioRetentionDays,
   getAssistantSettings,
   setAssistantSettings,

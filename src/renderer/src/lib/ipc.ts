@@ -345,6 +345,8 @@ interface TellaflowAPI {
   clearDictionary: () => Promise<DictionaryEntry[]>;
   resetPermissions: () => Promise<boolean>;
 
+  getModelLoadState?: () => Promise<ModelLoadState>;
+  onModelLoadState?: (cb: (state: ModelLoadState) => void) => () => void;
   onStatusChange: (cb: (status: string) => void) => () => void;
   onShowRestartBanner: (cb: () => void) => () => void;
   onAccessibilityGranted: (cb: () => void) => () => void;
@@ -401,6 +403,10 @@ export interface UpdateProgress {
   transferred: number;
   total: number;
 }
+
+export type ModelLoadState =
+  | { loading: true; engine: 'whisper' | 'parakeet'; startedAt: number; expectedMs: number }
+  | { loading: false; ok?: boolean; engine?: 'whisper' | 'parakeet' };
 
 export interface UpdateStatus {
   phase: UpdatePhase;

@@ -13,6 +13,7 @@ import { ipc } from '@/lib/ipc';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useHistory } from '@/hooks/use-history';
 import { useStatus } from '@/hooks/use-status';
+import { useModelLoad } from '@/hooks/use-model-load';
 import { useConfig } from '@/hooks/use-config';
 import { usePermissions } from '@/hooks/use-permissions';
 
@@ -26,6 +27,7 @@ export default function App() {
   const [page, setPage] = useState('transcripts');
   const { entries, totalWords, clearHistory, deleteEntry, retry, copy, paste } = useHistory();
   const { status, isError, isLoading } = useStatus();
+  const modelLoad = useModelLoad();
   const appConfig = useConfig();
   const { mic, accessibility, needsRestart, restartApp } = usePermissions();
 
@@ -40,6 +42,7 @@ export default function App() {
         status={status}
         isError={isError}
         isLoading={isLoading}
+        loadProgress={modelLoad.loading ? modelLoad.progress : null}
       />
       <div className="flex-1 p-3 flex h-screen flex-col overflow-hidden relative">
       <main className="flex-1 main-panel rounded-lg flex flex-col overflow-hidden relative">

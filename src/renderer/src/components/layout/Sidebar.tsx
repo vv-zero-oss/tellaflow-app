@@ -1,3 +1,4 @@
+import { Progress } from '@/components/ui/progress';
 import type { SVGProps } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -108,6 +109,8 @@ interface SidebarProps {
   status: string;
   isError: boolean;
   isLoading: boolean;
+  /** Model load progress (0–100), or null when no model is loading. */
+  loadProgress?: number | null;
 }
 
 const navItems = [
@@ -120,7 +123,7 @@ const navItems = [
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
 
-export function Sidebar({ activePage, onNavigate, status, isError, isLoading }: SidebarProps) {
+export function Sidebar({ activePage, onNavigate, status, isError, isLoading, loadProgress = null }: SidebarProps) {
   return (
     <div className="relative w-[220px] min-w-[220px] bg-sidebar flex flex-col [-webkit-app-region:drag] select-none">
       <div className="pt-[24px] px-5 pb-4 flex items-center gap-2.5">
@@ -153,7 +156,13 @@ export function Sidebar({ activePage, onNavigate, status, isError, isLoading }: 
             )}
           />
           <span className="truncate">{status}</span>
+          {loadProgress !== null && <span className="ml-auto tabular-nums">{loadProgress}%</span>}
         </div>
+        {loadProgress !== null && (
+          <div className="px-3">
+            <Progress value={loadProgress} className="h-1" />
+          </div>
+        )}
       </div>
 
       {/* Progressive blur on the right edge */}
