@@ -2,15 +2,6 @@ const { Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 
 let tray = null;
-let onTrayClickFn = null;
-let onStartRecordingFn = null;
-let onStopRecordingFn = null;
-let isRecordingFn = null;
-let onCheckForUpdatesFn = null;
-let onInstallUpdateFn = null;
-let getUpdaterStatusFn = null;
-let quitCallback = null;
-let getExtraItemsFn = null;
 
 function getIconPath() {
   const { app } = require('electron');
@@ -20,29 +11,12 @@ function getIconPath() {
   return path.join(__dirname, '..', '..', 'resources', 'trayIconTemplate.png');
 }
 
-function createTray({
-  onQuit,
-  onChangeHotkeyFn,
-  onRetryHotkeyFn,
-  onTrayClick,
-  onStartRecording,
-  onStopRecording,
-  isRecording,
-  onCheckForUpdates,
-  onInstallUpdate,
-  getUpdaterStatus,
-  getExtraItems,
-}) {
-  getExtraItemsFn = getExtraItems;
-  onTrayClickFn = onTrayClick;
-  onStartRecordingFn = onStartRecording;
-  onStopRecordingFn = onStopRecording;
-  isRecordingFn = isRecording;
-  onCheckForUpdatesFn = onCheckForUpdates;
-  onInstallUpdateFn = onInstallUpdate;
-  getUpdaterStatusFn = getUpdaterStatus;
-  quitCallback = onQuit;
-
+/**
+ * The menubar icon. Its menu is rebuilt on every click from `getTemplate()`
+ * (see tray-menu.js); `beforeOpen()` may refresh what it shows first — it is
+ * given at most `beforeOpenMs` so a slow refresh never holds the menu back.
+ */
+function createTray({ getTemplate, beforeOpen, beforeOpenMs = 300 }) {
   const iconPath = getIconPath();
   let icon;
   try {
@@ -55,67 +29,20 @@ function createTray({
   tray = new Tray(icon);
   tray.setToolTip('Tellaflow');
 
-  tray.on('click', () => {
-    tray.popUpContextMenu(buildTrayMenu());
-  });
-
-  tray.on('right-click', () => {
-    tray.popUpContextMenu(buildTrayMenu());
-  });
+  const open = async () => {
+    if (beforeOpen) {
+      await Promise.race([
+        Promise.resolve().then(beforeOpen).catch(() => {}),
+        new Promise((r) => setTimeout(r, beforeOpenMs)),
+      ]);
+    }
+    if (!tray || tray.isDestroyed()) return;
+    tray.popUpContextMenu(Menu.buildFromTemplate(getTemplate()));
+  };
+  tray.on('click', open);
+  tray.on('right-click', open);
 
   return tray;
-}
-
-function buildTrayMenu() {
-  const status = getUpdaterStatusFn ? getUpdaterStatusFn() : null;
-  const updateDownloaded = status && status.phase === 'downloaded';
-  const updateChecking = status && status.phase === 'checking';
-  const recording = isRecordingFn ? !!isRecordingFn() : false;
-
-  const template = [
-    {
-      label: 'Open Tellaflow',
-      click: () => { if (onTrayClickFn) onTrayClickFn(); },
-    },
-    recording
-      ? {
-          label: 'Stop Recording',
-          click: () => { if (onStopRecordingFn) onStopRecordingFn(); },
-        }
-      : {
-          label: 'Start Recording',
-          click: () => { if (onStartRecordingFn) onStartRecordingFn(); },
-        },
-  ];
-
-  // Contextual items (meeting notes, recordings needing attention).
-  let extra = [];
-  try { extra = getExtraItemsFn ? getExtraItemsFn() || [] : []; } catch {}
-  template.push(...extra, { type: 'separator' });
-
-  if (updateDownloaded) {
-    const ver = status.updateVersion ? ` (v${status.updateVersion})` : '';
-    template.push({
-      label: `Restart to install update${ver}`,
-      click: () => { if (onInstallUpdateFn) onInstallUpdateFn(); },
-    });
-  } else {
-    template.push({
-      label: updateChecking ? 'Checking for Updates…' : 'Check for Updates…',
-      enabled: !updateChecking,
-      click: () => { if (onCheckForUpdatesFn) onCheckForUpdatesFn(); },
-    });
-  }
-
-  template.push(
-    { type: 'separator' },
-    {
-      label: 'Quit Tellaflow',
-      click: () => { if (quitCallback) quitCallback(); },
-    },
-  );
-
-  return Menu.buildFromTemplate(template);
 }
 
 function getTray() {

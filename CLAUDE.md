@@ -85,6 +85,13 @@ writes: `ffmpeg -i in.mp3 -ac 1 -ar 16000 -map_metadata -1 -fflags +bitexact -c:
   `--island-weight-body` / `--island-leading-body`: labels are 600 at 1.15,
   reading text 450 at 1.45, and a long block scrolls inside the card with
   faded edges — never grows past the window.
+- **The menubar menu:**
+  `xvfb-run -a -s "-screen 0 1280x800x24" node scripts/e2e-tray.mjs short.wav e2e-tray`
+  — the menu built by `src/main/tray-menu.js` (Paste Last Transcript + ⌃⌘V,
+  Shortcuts, Microphone, Language), popped up on the main window and captured
+  with ImageMagick `import` (Linux has no menubar). Radio items in a submenu
+  must stay contiguous: a separator splits the group and Electron then checks
+  the lone item.
 - **bb's theme** follows the app: the Assistant page reads its own computed
   shadcn tokens and main injects them into bb's frame
   (`src/main/jarvis/bb/bb-chrome.js`, `assistant-style-frame`); the e2e checks
