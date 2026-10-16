@@ -486,7 +486,7 @@ function handleIslandAction(action) {
     }
     case 'open-settings':
       islandRest();
-      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
+      permissions.openMicrophonePrefs();
       break;
     case 'dismiss':
     case 'later':

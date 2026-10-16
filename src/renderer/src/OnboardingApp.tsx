@@ -107,6 +107,19 @@ function WelcomePermissionsStep({
   const [showInstructions, setShowInstructions] = useState(false);
   const [needsRestart, setNeedsRestart] = useState(false);
   const accPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const micPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Denied before: main opened System Settings → Microphone. Watch for the switch.
+  const pollMic = useCallback(() => {
+    if (!ipc?.checkMicPermission) return;
+    if (micPollRef.current) clearInterval(micPollRef.current);
+    micPollRef.current = setInterval(async () => {
+      if (await ipc.checkMicPermission()) {
+        setMicGranted(true);
+        clearInterval(micPollRef.current!);
+      }
+    }, 1500);
+  }, []);
 
   const pollAccess = useCallback(() => {
     if (!ipc?.checkAccessibility) return;
@@ -143,7 +156,10 @@ function WelcomePermissionsStep({
       try { if (ipc?.checkScreenPermission) setScreenGranted(await ipc.checkScreenPermission()); } catch { /* ignore */ }
       pollAccess();
     })();
-    return () => { if (accPollRef.current) clearInterval(accPollRef.current); };
+    return () => {
+      if (accPollRef.current) clearInterval(accPollRef.current);
+      if (micPollRef.current) clearInterval(micPollRef.current);
+    };
   }, [pollAccess]);
 
   const grantMic = async () => {
@@ -152,6 +168,7 @@ function WelcomePermissionsStep({
       if (ipc?.requestMicPermission) {
         const granted = await ipc.requestMicPermission();
         if (granted) setMicGranted(true);
+        else pollMic();
       }
     } catch { /* ignore */ }
   };
