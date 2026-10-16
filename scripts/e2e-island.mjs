@@ -96,13 +96,12 @@ try {
   await act('cancel-dictation');
   await expectState('idle', 'cancel returns to the idle dot');
 
-  // ── Real dictation → transcribing → done (Undo) ──────────────────────────
+  // ── Real dictation → transcribing → straight back to rest ────────────────
   await T((_, p) => globalThis.__tellaflowTest.dictateWav(p), path.resolve(shortWav));
   await expectState('transcribing', 'a recording shows "Transcribing…"', 60_000);
   await shot('03-transcribing', { settle: 150 });
-  await expectState('done', 'the transcript is inserted and the island says so', 120_000);
-  await shot('04-done');
-  await expectState('idle', 'done returns to rest by itself', 10_000);
+  await expectState('idle', 'the transcript is inserted and the island rests (no "Inserted N words" pill)', 120_000);
+  await shot('04-inserted');
 
   // ── Dictionary offer ─────────────────────────────────────────────────────
   await T(() => globalThis.__tellaflowTest.island.offerWord([{ from: 'kubernetes', to: 'Kubernetes' }]));
