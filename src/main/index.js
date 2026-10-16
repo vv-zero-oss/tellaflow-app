@@ -622,14 +622,13 @@ function initCoreServices() {
     openAccessibility: () => { osActions.requestAccessibility().catch(() => {}); },
     openSettings: () => { showMainWindow(); sendToMainWindow('navigate', 'settings'); },
     // Insert: the answer typed into the app the user was in when they pressed
-    // the key — the same paste dictation uses, with the same Undo pill.
+    // the key — the same paste dictation uses.
     insertText: async (text) => {
       const c = await peekRecordingContext();
       const target = c?.ctx?.app && !isOwnApp(c.ctx.app) ? c.ctx.app : null;
       pasteText(text, target);
       lastPaste = { app: target };
-      const words = text.split(/\s+/).filter(Boolean).length;
-      island('dictation', 'done', { content: { doneText: `Inserted ${words} word${words === 1 ? '' : 's'}`, canUndo: true }, autoRestMs: 3500 });
+      islandRest();
     },
     copyText: (text) => clipboard.writeText(text),
     // Answers live with the transcripts, as the assistant's always have.
@@ -2226,11 +2225,8 @@ function registerIPC() {
       : recordedTarget;
     pasteText(text, pasteTarget);
     lastPaste = { app: pasteTarget };
-    const words = text.split(/\s+/).filter(Boolean).length;
-    island('dictation', 'done', {
-      content: { doneText: `Inserted ${words} word${words === 1 ? '' : 's'}`, canUndo: true },
-      autoRestMs: 3500,
-    });
+    // The text appearing is confirmation enough: no "Inserted N words" pill.
+    islandRest();
     // Watch the field for corrections to learn from (auto-learn dictionary).
     autoLearn.watch(text, { app: pasteTarget });
   }
