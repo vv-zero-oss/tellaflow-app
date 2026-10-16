@@ -87,8 +87,19 @@ jobs:
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --wait
-          xcrun stapler staple "$DMG"
-          xcrun stapler validate "$DMG"
+          # Stapling fetches the ticket from Apple's CloudKit, whose connection
+          # the runner sometimes drops ("The network connection was lost",
+          # error 68) after notarization was already accepted: retry.
+          retry() {
+            for i in 1 2 3 4 5; do
+              "$@" && return 0
+              echo "::warning::$* failed (attempt $i); retrying in $((i * 15))s"
+              sleep $((i * 15))
+            done
+            return 1
+          }
+          retry xcrun stapler staple "$DMG"
+          retry xcrun stapler validate "$DMG"
 
       - name: Verify signature and notarization
         run: |
