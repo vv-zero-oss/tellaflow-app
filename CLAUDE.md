@@ -15,9 +15,13 @@ run by `mascot-dispatch.js` (the desktop tier's gates: Accessibility re-read
 per action, password-field refusal, forced confirmations) through Peekaboo
 (`desktop/`); desktop tasks continue as a loop verified by a fresh look
 (`desktop-loop.js`). Bigger jobs go to a visible bb chat, which the Assistant
-page frames. The assistant is **opt-in** (`assistantEnabled`, off by default):
-off, there is no command key (`hotkey.setCommandKeyGate`), no Assistant page
-and nothing of bb's on disk. Neither bb nor its Node ships in the app — switched
+page frames. The assistant is **opt-in** (`assistantEnabled`, off by default;
+the switch is Settings › General › Beta features): off, there is no command
+key (`hotkey.setCommandKeyGate`), no Assistant page, no Assistant tab in
+Settings, no Screen Recording permission row or onboarding ask, no menubar
+"Ask the assistant" item, and nothing of bb's on disk. On but not downloaded,
+the command key shows a "Download the assistant first" notice
+(`commandKeyNotReady`). Neither bb nor its Node ships in the app — switched
 on, Settings › Assistant offers one **Download** (`jarvis/runtime.js`): a pinned,
 checksummed Node plus `npm ci` of `resources/assistant-runtime`'s lockfile on
 that Node (so native prebuilds match it), staged and verified, into
@@ -28,6 +32,11 @@ bumping `BB_APP_VERSION` and regenerating that lockfile
 "outdated" and offers Update. Files ported verbatim keep
 canvas's names so they diff cleanly against it; canvas's tests for them are in
 `tests/main/ported/`.
+
+Settings is tabbed (`SettingsPage.tsx` `SETTINGS_TABS`: General, Dictation,
+Meetings, Assistant, Permissions, Data & privacy, About). Main links to a tab
+with `sendToMainWindow('navigate', 'settings/<tab>')` (the menubar's
+Shortcuts/Microphone items open `settings/dictation`).
 
 ## Rules
 

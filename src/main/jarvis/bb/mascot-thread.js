@@ -48,6 +48,9 @@ exports.isApproval = isApproval;
 exports.toolFromItem = toolFromItem;
 exports.createMascotThreads = createMascotThreads;
 const model_choice_1 = require("./model-choice");
+/** How long creating a thread may take: the first one on a bb that has just
+ *  started is slow (Tellaflow measured 10 s+ in a cold container). */
+const THREAD_CREATE_TIMEOUT_MS = 90_000;
 /** No event of any kind for this long ends the turn as a timeout. An
  *  INACTIVITY window, so a long tool loop that keeps emitting is never cut. */
 exports.MASCOT_TURN_IDLE_MS = 45_000;
@@ -157,7 +160,12 @@ function createMascotThreads(deps) {
         let lastError = null;
         for (const attempt of attempts) {
             try {
-                const id = (await client.createThread({ ...base, ...(attempt ? { execution: attempt } : {}) })).id;
+                // Tellaflow: a cold bb takes well over the client's default 10 s
+                // to make its first thread (it resolves the provider's
+                // environment first). Aborting it there fell through to "bb
+                // default" — a provider the user may not have — while the
+                // abandoned create kept provisioning and failed the next turn.
+                const id = (await client.createThread({ ...base, ...(attempt ? { execution: attempt } : {}), timeoutMs: THREAD_CREATE_TIMEOUT_MS })).id;
                 // Said once per thread: which model the mascot is really talking on is
                 // the first question when it answers slowly or oddly.
                 log("mascot thread created", { threadId: id, provider: attempt?.providerId ?? "bb default", model: attempt?.model ?? null });

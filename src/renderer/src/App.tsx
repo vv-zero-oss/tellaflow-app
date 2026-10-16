@@ -6,7 +6,7 @@ import { HomePage } from '@/components/home/HomePage';
 import { ModelsPage } from '@/components/models/ModelsPage';
 import { SnippetsPage } from '@/components/snippets/SnippetsPage';
 import { DictionaryPage } from '@/components/dictionary/DictionaryPage';
-import { SettingsPage } from '@/components/settings/SettingsPage';
+import { SettingsPage, isSettingsTab, type SettingsTab } from '@/components/settings/SettingsPage';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
 import { AssistantPage } from '@/components/assistant/AssistantPage';
 import { AssistantNotReady } from '@/components/assistant/AssistantDownload';
@@ -36,7 +36,15 @@ export default function App() {
   const assistantEnabled = !!assistantRuntime?.enabled;
 
   // Main process can switch pages (voice assistant, tray "Needs attention").
-  useEffect(() => ipc?.onNavigate?.((p) => setPage(p)), []);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+  // A page, or 'settings/<tab>' for one tab of Settings (the menubar menu,
+  // the island, the assistant's own links).
+  const navigate = (target: string) => {
+    const [p, sub] = target.split('/');
+    if (p === 'settings' && isSettingsTab(sub)) setSettingsTab(sub);
+    setPage(p);
+  };
+  useEffect(() => ipc?.onNavigate?.((p) => navigate(p)), []);
 
   // The assistant switched off: its page goes with it.
   useEffect(() => {
@@ -76,7 +84,7 @@ export default function App() {
                 hotkey={appConfig.config.hotkey}
                 missingMic={!mic}
                 missingAccessibility={!accessibility}
-                onGoToSettings={() => setPage('settings')}
+                onGoToSettings={() => navigate('settings/permissions')}
                 onGoToDashboard={() => setPage('dashboard')}
               />
             </motion.div>
@@ -150,7 +158,7 @@ export default function App() {
               className="flex flex-col flex-1 overflow-hidden"
             >
               {assistantRuntime?.ready
-                ? <AssistantPage onOpenSettings={() => setPage('settings')} />
+                ? <AssistantPage onOpenSettings={() => navigate('settings/assistant')} />
                 : assistantRuntime && <AssistantNotReady runtime={assistantRuntime} onInstall={installAssistant} />}
             </motion.div>
           )}
@@ -166,6 +174,8 @@ export default function App() {
             >
               <SettingsPage
                 visible={page === 'settings'}
+                tab={settingsTab}
+                onTabChange={setSettingsTab}
                 config={appConfig.config}
                 setTheme={appConfig.setTheme}
                 refreshConfig={appConfig.refresh}

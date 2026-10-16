@@ -451,10 +451,14 @@ export function DashboardPage() {
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
           </p>
         </div>
-        {config.model && (
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
-            <span>🤖</span>
-            <span className="truncate max-w-[90px]">{config.model}</span>
+        {/* The model that is actually transcribing: Parakeet unless the engine is Whisper. */}
+        {(config.transcriptionEngine === 'whisper' ? config.model : 'Parakeet') && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted text-[11px] font-semibold text-muted-foreground" title="Speech model in use">
+            <span className="truncate max-w-[120px]">
+              {config.transcriptionEngine === 'whisper'
+                ? `Whisper ${(config.model ?? '').replace(/^./, (c) => c.toUpperCase())}`
+                : config.parakeetVariant === 'unified' ? 'Parakeet Unified' : 'Parakeet'}
+            </span>
           </div>
         )}
       </motion.div>

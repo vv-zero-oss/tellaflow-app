@@ -619,7 +619,9 @@ function initCoreServices() {
   setPeekabooDownloadRoot(path.join(userData, 'tools', 'peekaboo'));
   assistantRuntime.setRuntimeRoot(path.join(userData, 'tools', 'assistant'));
   runtimeCache = null;
-  hotkey.setCommandKeyGate(assistantReady);
+  // On is enough for the key to answer: pressed before the download is done,
+  // it says so (onStart) instead of silently doing nothing.
+  hotkey.setCommandKeyGate(() => config.getAssistantEnabled());
   assistant = createJarvis({
     island: {
       show: (state, opts) => island('assistant', state, opts),
@@ -653,7 +655,7 @@ function initCoreServices() {
     // (assistant-workspace-url), and the event covers a page already open.
     openChat: (url) => { pendingChatUrl = { url, at: Date.now() }; showMainWindow(); sendToMainWindow('navigate', 'assistant'); sendToMainWindow('assistant-open-chat', url); },
     openAccessibility: () => { osActions.requestAccessibility().catch(() => {}); },
-    openSettings: () => { showMainWindow(); sendToMainWindow('navigate', 'settings'); },
+    openSettings: () => { showMainWindow(); sendToMainWindow('navigate', 'settings/assistant'); },
     // Insert: the answer typed into the app the user was in when they pressed
     // the key — the same paste dictation uses.
     insertText: async (text) => {
@@ -679,7 +681,7 @@ function initCoreServices() {
         const p = list.find((x) => x.id === pick) || list.find((x) => x.status === 'unauthenticated' || x.status === 'expired');
         if (p?.loginCommand) cmd = p.loginCommand;
       } catch {}
-      if (process.platform !== 'darwin') { showMainWindow(); sendToMainWindow('navigate', 'settings'); return; }
+      if (process.platform !== 'darwin') { showMainWindow(); sendToMainWindow('navigate', 'settings/assistant'); return; }
       macAutomation.runAppleScript('tell application "Terminal"\nactivate\ndo script (item 1 of argv)\nend tell', [cmd])
         .catch((err) => console.error('[assistant] could not open Terminal for sign-in:', err.message));
     },
@@ -770,6 +772,8 @@ function initCoreServices() {
         startClickRecording: () => startClickRecording(),
         askMeeting: (info) => askToTranscribeMeeting(info),
         command: (request) => startAssistantFromVoice(request),
+        // The command key's press, before anything is recorded (onStart).
+        commandKeyDown: () => !commandKeyNotReady(),
         // Any assistant view, for the island gallery (scripts/e2e-island-assistant.mjs).
         show: (state, opts) => island('assistant', state, opts),
         // Same path as a real edit the watcher saw in another app.
@@ -830,7 +834,8 @@ function trayMenuState() {
     failedCount: journal ? journal.list({ status: 'failed' }).length : 0,
     update: { phase: status.phase, version: status.updateVersion },
     lastTranscript: lastDictation()?.text || '',
-    shortcuts: { dictate: config.getHotkey()?.label, command: config.getCommandHotkey()?.label || null },
+    // The assistant's key is listed only while the assistant is on.
+    shortcuts: { dictate: config.getHotkey()?.label, command: config.getCommandHotkey()?.label || null, assistant: config.getAssistantEnabled() },
     microphoneId: config.getMicrophoneDeviceId(),
     microphones: trayMicrophones,
     translation: {
@@ -1243,6 +1248,33 @@ function stopAnyActiveRecording() {
   }
 }
 
+// The command key pressed while the assistant is on but not downloaded (or
+// still downloading): say so on the island instead of listening. True when
+// the key should not start a recording.
+function commandKeyNotReady() {
+  if (assistantReady()) return false;
+  const downloading = runtimeJob.installing;
+  islandErrorAction = downloading ? null : 'settings/assistant';
+  // A setup card (a warning sign), not an error one: the error card draws a
+  // crossed-out microphone, which reads as a mic problem. 'retry' is what
+  // navigates to islandErrorAction; 'open-settings' would open mic prefs.
+  island('error', 'setup', {
+    content: {
+      notice: {
+        title: downloading ? 'The assistant is still downloading' : 'Download the assistant first',
+        body: downloading
+          ? 'Try again in a moment — Settings › Assistant shows how far along it is.'
+          : 'It’s turned on, but what it runs on isn’t downloaded yet. It’s one download, in Settings › Assistant.',
+        primary: downloading ? null : 'Open Settings',
+        primaryAction: 'retry',
+        secondary: 'Dismiss',
+        secondaryAction: 'dismiss',
+      },
+    },
+  });
+  return true;
+}
+
 function startHotkeyListener() {
   // Don't restart if already running — prevents orphaning an active recording
   if (hotkey.isRunning()) return;
@@ -1253,6 +1285,7 @@ function startHotkeyListener() {
         // Don't start hotkey recording if click recording is already active
         if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) return;
         if (micBlocked()) { hotkey.resetRecordingState(); return; }
+        if (purpose === 'command' && commandKeyNotReady()) { hotkey.resetRecordingState(); return; }
 
         // Capture the frontmost app SYNCHRONOUSLY and BEFORE createAudioCaptureWindow().
         // An async query races with window creation — on macOS, creating a new
@@ -2481,17 +2514,17 @@ function registerIPC() {
 
       const isModelMissing = err.message && err.message.includes('not found');
       const crashed = err instanceof WorkerCrashError;
-      islandErrorAction = isModelMissing ? 'settings' : job ? 'transcripts' : null;
+      islandErrorAction = isModelMissing ? 'models' : job ? 'transcripts' : null;
       island('error', 'error', {
         content: {
           notice: {
             title: isModelMissing ? 'No speech model yet' : 'Transcription failed',
             body: isModelMissing
-              ? `${err.message} Download one in Settings → Models.`
+              ? `${err.message} Download one on the Models page.`
               : job
                 ? `${crashed ? 'The speech engine crashed and restarted. ' : ''}Your audio is saved — retry it from Transcripts.`
                 : String(err.message || err),
-            primary: isModelMissing ? 'Open Settings' : job ? 'Open Transcripts' : null,
+            primary: isModelMissing ? 'Open Models' : job ? 'Open Transcripts' : null,
             secondary: 'Dismiss',
           },
         },

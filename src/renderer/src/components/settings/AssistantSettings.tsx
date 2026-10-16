@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, CircleDashed, Download, Loader2, RefreshCw } from 'lucide-react';
+import { CheckCircle2, ChevronRight, CircleDashed, Download, Loader2, RefreshCw } from 'lucide-react';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { AssistantDownload } from '@/components/assistant/AssistantDownload';
 import { useAssistant } from '@/hooks/use-assistant';
 import { useAssistantRuntime } from '@/hooks/use-assistant-runtime';
-import type { AssistantProvider, AssistantRuntimeStatus } from '@/lib/ipc';
+import { ipc, type AppConfig, type AssistantProvider, type AssistantRuntimeStatus } from '@/lib/ipc';
+import { HotkeyEditor } from './GeneralSettings';
 
 /** What a provider's state means to the person, in their words. */
 function providerLine(p: AssistantProvider): string {
@@ -23,18 +24,21 @@ function providerLine(p: AssistantProvider): string {
 }
 
 /**
- * The assistant (the command key), behind a switch. On, it offers one
- * download — bb, the Node it runs on and the desktop helper — and only once
- * that is done shows the rest of its settings.
+ * The switch for the assistant, in Settings › General. It is a beta: off, the
+ * rest of the app shows nothing of it — no Assistant page, no Assistant tab
+ * in Settings, no command key, nothing downloaded.
  */
-export function AssistantSettings() {
-  const { runtime, setEnabled, install, remove } = useAssistantRuntime();
+export function BetaFeatures({ onOpenAssistant }: { onOpenAssistant: () => void }) {
+  const { runtime, setEnabled, remove } = useAssistantRuntime();
+  const [removing, setRemoving] = useState(false);
   if (!runtime) return null;
-  const downloaded = runtime.state !== 'missing';
+  // Off, but its download is still on disk (it was on once): say so, and
+  // offer the space back.
+  const leftover = !runtime.enabled && runtime.state !== 'missing' && !runtime.installing;
   return (
-    <Well className="mb-7" data-testid="assistant-settings">
+    <Well className="mb-7" data-testid="beta-features">
       <WellHeader>
-        <WellTitle>Assistant</WellTitle>
+        <WellTitle>Beta features</WellTitle>
       </WellHeader>
       <WellCard>
         <WellItem>
@@ -45,21 +49,137 @@ export function AssistantSettings() {
                 <Badge variant="outline" className="text-[10px] font-normal px-1.5 py-0">Beta</Badge>
               </span>
               <p className="text-xs text-muted-foreground/60 mt-0.5">
-                Hold the command key and say what you want. It answers, and can work in your other apps, using an AI you're signed in to.
+                Hold a second key and say what you want — it answers, and can work in your other apps, using an AI you're already signed in to. Needs a one-time download (about 110 MB).
               </p>
             </div>
-            <Switch checked={runtime.enabled} onCheckedChange={setEnabled} data-testid="assistant-enabled" />
+            <Switch
+              checked={runtime.enabled}
+              disabled={runtime.installing}
+              onCheckedChange={async (v) => { await setEnabled(v); if (v) onOpenAssistant(); }}
+              data-testid="assistant-enabled"
+            />
           </div>
         </WellItem>
-        {runtime.enabled && (!downloaded || runtime.installing || runtime.state === 'outdated' || runtime.error) && (
+        {runtime.enabled && (
           <WellItem>
-            <AssistantDownload runtime={runtime} onInstall={install} />
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-xs text-muted-foreground min-w-0">
+                {runtime.ready ? 'Its settings are in the Assistant tab.' : 'Download it and choose its settings in the Assistant tab.'}
+              </p>
+              <Button variant="outline" size="sm" className="shrink-0" onClick={onOpenAssistant}>
+                Open Assistant settings
+                <ChevronRight className="w-3.5 h-3.5" />
+              </Button>
+            </div>
           </WellItem>
         )}
-        {runtime.enabled && downloaded && !runtime.installing && <AssistantOptions />}
-        {runtime.enabled && downloaded && !runtime.installing && <DownloadedRow runtime={runtime} onRemove={remove} />}
+        {leftover && (
+          <WellItem>
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <span className="text-sm">Assistant download</span>
+                <p className="text-xs text-muted-foreground/60 mt-0.5">Still on this Mac (bb and its Node, about 380 MB). Remove it to free the space; turning the assistant on again downloads it again.</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                disabled={removing}
+                onClick={async () => { setRemoving(true); try { await remove(); } finally { setRemoving(false); } }}
+              >
+                {removing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Remove
+              </Button>
+            </div>
+          </WellItem>
+        )}
       </WellCard>
     </Well>
+  );
+}
+
+/**
+ * Settings › Assistant (the tab exists only while the assistant is on): the
+ * download until there is one, then its settings, the command key, and a way
+ * to remove it or turn it off.
+ */
+export function AssistantSettings({ config, refreshConfig, onTurnedOff }: {
+  config: AppConfig;
+  refreshConfig: () => Promise<void>;
+  onTurnedOff: () => void;
+}) {
+  const { runtime, setEnabled, install, remove } = useAssistantRuntime();
+  if (!runtime) return null;
+  const downloaded = runtime.state !== 'missing';
+  const needsDownload = !downloaded || runtime.installing || runtime.state === 'outdated' || !!runtime.error;
+  return (
+    <div data-testid="assistant-settings">
+      {needsDownload && (
+        <Well className="mb-7">
+          <WellHeader>
+            <WellTitle>{runtime.state === 'outdated' ? 'Update' : 'Set up'}</WellTitle>
+          </WellHeader>
+          <WellCard>
+            <WellItem>
+              <AssistantDownload runtime={runtime} onInstall={install} />
+            </WellItem>
+          </WellCard>
+        </Well>
+      )}
+      {downloaded && !runtime.installing && (
+        <Well className="mb-7">
+          <WellHeader>
+            <WellTitle>Assistant</WellTitle>
+          </WellHeader>
+          <WellCard>
+            <WellItem>
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <span className="text-sm">Command key</span>
+                  <p className="text-xs text-muted-foreground/60 mt-0.5">Hold it anywhere and say what you want; the answer appears on the island.</p>
+                </div>
+                <HotkeyEditor
+                  currentHotkey={config.commandHotkey ?? { names: ['RIGHT ALT'], label: 'Right ⌥' }}
+                  taken={{ hotkey: config.hotkey, label: 'dictation shortcut' }}
+                  onSave={async (hotkey) => {
+                    await ipc.setFeatureSetting('commandHotkey', hotkey);
+                    ipc.retryHotkey();
+                    await refreshConfig();
+                  }}
+                />
+              </div>
+            </WellItem>
+            <AssistantOptions />
+          </WellCard>
+        </Well>
+      )}
+      <Well className="mb-7">
+        <WellHeader>
+          <WellTitle>Manage</WellTitle>
+        </WellHeader>
+        <WellCard>
+          {downloaded && !runtime.installing && <DownloadedRow runtime={runtime} onRemove={remove} />}
+          <WellItem>
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <span className="text-sm">Turn off the assistant</span>
+                <p className="text-xs text-muted-foreground/60 mt-0.5">Hides the Assistant page and this tab, and frees the command key. Turn it back on in General › Beta features.</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                disabled={runtime.installing}
+                onClick={async () => { await setEnabled(false); onTurnedOff(); }}
+                data-testid="assistant-turn-off"
+              >
+                Turn off
+              </Button>
+            </div>
+          </WellItem>
+        </WellCard>
+      </Well>
+    </div>
   );
 }
 
@@ -70,10 +190,10 @@ function DownloadedRow({ runtime, onRemove }: { runtime: AssistantRuntimeStatus;
     <WellItem>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <span className="text-sm">Downloaded</span>
+          <span className="text-sm">Download</span>
           <p className="text-xs text-muted-foreground/60 mt-0.5">
-            bb {runtime.installed?.bb} on Node {runtime.installed?.node?.replace(/^v/, '')}
-            {runtime.helperError ? ` · The desktop helper didn’t download: ${runtime.helperError}` : ''}
+            bb {runtime.installed?.bb} on Node {runtime.installed?.node?.replace(/^v/, '')}, about 380 MB. Remove it to free the space; you can download it again here.
+            {runtime.helperError ? ` The desktop helper didn’t download: ${runtime.helperError}` : ''}
           </p>
         </div>
         <Button
@@ -116,8 +236,8 @@ function AssistantOptions() {
         <WellItem>
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
-              <span className="text-sm">AI</span>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">Uses an AI you're signed in to on this Mac. No API keys.</p>
+              <span className="text-sm">Which AI</span>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">One you're already signed in to on this Mac, like Claude Code or Codex. No API keys.</p>
             </div>
             <Select value={settings.provider} onValueChange={(v) => updateSettings({ provider: v })}>
               <SelectTrigger className="w-[240px] h-8 text-sm shrink-0">

@@ -8,6 +8,8 @@ interface PermissionsSettingsProps {
   accessibility: boolean;
   screen: boolean;
   needsRestart: boolean;
+  /** Screen Recording is the assistant's alone: listed only while it is on. */
+  showScreen: boolean;
   onGrantMic: () => void;
   onGrantAccessibility: () => void;
   onGrantScreen: () => void;
@@ -20,6 +22,7 @@ export function PermissionsSettings({
   accessibility,
   screen,
   needsRestart,
+  showScreen,
   onGrantMic,
   onGrantAccessibility,
   onGrantScreen,
@@ -36,7 +39,10 @@ export function PermissionsSettings({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className={cn('w-2 h-2 rounded-full shrink-0', mic ? 'bg-success' : 'bg-destructive')} />
-              <span className="text-sm">Microphone</span>
+              <div>
+                <span className="text-sm">Microphone</span>
+                <p className="text-xs text-muted-foreground/60">To hear what you say</p>
+              </div>
             </div>
             {mic ? (
               <span className="text-sm text-success">Granted</span>
@@ -50,7 +56,10 @@ export function PermissionsSettings({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className={cn('w-2 h-2 rounded-full shrink-0', accessibility ? 'bg-success' : 'bg-destructive')} />
-              <span className="text-sm">Accessibility</span>
+              <div>
+                <span className="text-sm">Accessibility</span>
+                <p className="text-xs text-muted-foreground/60">For the shortcut, and to type the text into your apps</p>
+              </div>
             </div>
             {accessibility ? (
               <span className="text-sm text-success">Granted</span>
@@ -63,13 +72,14 @@ export function PermissionsSettings({
           </div>
         </WellItem>
 
+        {showScreen && (
         <WellItem>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className={cn('w-2 h-2 rounded-full shrink-0', screen ? 'bg-success' : 'bg-muted-foreground/40')} />
               <div>
                 <span className="text-sm">Screen Recording</span>
-                <p className="text-xs text-muted-foreground/60">Lets the assistant see and capture your screen</p>
+                <p className="text-xs text-muted-foreground/60">Lets the assistant see your screen when you ask it to</p>
               </div>
             </div>
             {screen ? (
@@ -82,7 +92,7 @@ export function PermissionsSettings({
             )}
           </div>
         </WellItem>
-
+        )}
 
         {needsRestart && (
           <WellItem>

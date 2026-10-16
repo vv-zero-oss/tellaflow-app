@@ -104,9 +104,22 @@ describe('tray menu', () => {
   });
 
   it('lists the current shortcuts', () => {
-    const sc = find(buildTrayTemplate({ shortcuts: { dictate: 'fn', command: null } }, actions()), 'Shortcuts').submenu;
+    const sc = find(buildTrayTemplate({ shortcuts: { dictate: 'fn', command: null, assistant: true } }, actions()), 'Shortcuts').submenu;
     expect(find(sc, 'Dictate').sublabel).toBe('fn');
     expect(find(sc, 'Ask the assistant').sublabel).toBe('Off');
     expect(find(sc, 'Paste last transcript').sublabel).toBe('⌃⌘V');
+  });
+
+  it('lists the assistant’s key only while the assistant is on', () => {
+    const sc = find(buildTrayTemplate({ shortcuts: { dictate: 'fn', command: 'Right ⌥', assistant: false } }, actions()), 'Shortcuts').submenu;
+    expect(sc.some((i) => i.label === 'Ask the assistant')).toBe(false);
+  });
+
+  it('opens the Dictation tab of Settings for shortcuts and microphones', () => {
+    const a = actions();
+    const t = buildTrayTemplate({ shortcuts: {} }, a);
+    find(find(t, 'Shortcuts').submenu, 'Change Shortcuts…').click();
+    find(find(t, 'Microphone').submenu, 'Microphone Settings…').click();
+    expect(a.openPage.mock.calls).toEqual([['settings/dictation'], ['settings/dictation']]);
   });
 });

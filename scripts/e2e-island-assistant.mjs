@@ -56,6 +56,8 @@ const VIEWS = [
   ['20-error-long', 'error', { content: { notice: { title: 'That didn’t work', body: `Agent backend 500: ${'x'.repeat(40)} ${URL_LONG}`, primary: 'Try again', secondary: 'Dismiss' } } }],
   // Dictation's own cards share the Notice layout — checked so it stays theirs.
   ['21-meeting', 'meeting', { content: { notice: { title: 'Design sync is starting', body: 'Google Meet · 6 people · 30 min. Take notes as it happens?' } } }],
+  // The command key while the assistant is on but not downloaded yet (index.js commandKeyNotReady).
+  ['21b-download-first', 'setup', { content: { notice: { title: 'Download the assistant first', body: 'It’s turned on, but what it runs on isn’t downloaded yet. It’s one download, in Settings › Assistant.', primary: 'Open Settings', primaryAction: 'retry', secondary: 'Dismiss', secondaryAction: 'dismiss' } } }],
   ['22-mic-setup', 'setup', {}],
   ['23-mic-error', 'error', {}],
 ];

@@ -120,30 +120,53 @@ try {
 
   // ── Setup: off by default → switched on → Download → ready ─────────────
   const navAssistant = () => main.locator('nav button', { hasText: 'Assistant' }).count();
+  const settingsTab = (name) => main.locator('[data-testid="settings-tabs"] [role="tab"]', { hasText: name });
+  const commandKeyRow = () => main.getByText('Command key', { exact: true }).count();
+  const trayShortcuts = async () => (await T(() => globalThis.__tellaflowTest.trayMenu.items())).find((i) => i.label === 'Shortcuts').submenu.map((i) => i.label);
   await sleep(1000);
   check('off by default: no Assistant page in the sidebar', (await navAssistant()) === 0);
+  check('off by default: the menubar menu lists no assistant key', !(await trayShortcuts()).includes('Ask the assistant'));
   await T(() => globalThis.__tellaflowTest.navigate('settings'));
-  const assistantWell = main.locator('[data-testid="assistant-settings"]');
-  await assistantWell.scrollIntoViewIfNeeded();
   await sleep(800);
-  check('off by default: no command key setting', (await main.getByText('Command key', { exact: true }).count()) === 0);
-  check('off by default: only the switch, no download', (await main.locator('[data-testid="assistant-download"]').count()) === 0);
+  check('off by default: Settings has no Assistant tab', (await settingsTab('Assistant').count()) === 0);
+  check('off by default: no command key setting anywhere', (await commandKeyRow()) === 0);
+  await main.locator('[data-testid="beta-features"]').scrollIntoViewIfNeeded();
+  await sleep(400);
   await main.screenshot({ path: path.join(OUT, 'setup-01-off.png') });
+  await settingsTab('Permissions').click();
+  await sleep(500);
+  check('off by default: no Screen Recording permission to grant', (await main.getByText('Screen Recording', { exact: true }).count()) === 0);
+  await settingsTab('General').click();
+  await sleep(300);
 
+  // Switching it on opens its own tab, with the download.
   await main.locator('[data-testid="assistant-enabled"]').click();
   const download = main.locator('[data-testid="assistant-download"]');
   await download.waitFor({ timeout: 10_000 });
-  await assistantWell.scrollIntoViewIfNeeded();
   await sleep(600);
-  check('on: the Assistant page and command key appear', (await navAssistant()) === 1 && (await main.getByText('Command key', { exact: true }).count()) === 1);
+  check('on: lands on the new Assistant tab', (await settingsTab('Assistant').getAttribute('aria-selected')) === 'true');
+  check('on: the Assistant page appears in the sidebar', (await navAssistant()) === 1);
   check('on: nothing is downloaded until Download is pressed', !fs.existsSync(runtimeDir));
+  check('on: the menubar menu lists the assistant key', (await trayShortcuts()).includes('Ask the assistant'));
   await main.screenshot({ path: path.join(OUT, 'setup-02-on-download.png') });
+  // Pressing the command key before the download: a notice, not silence.
+  const keyStarted = await T(() => globalThis.__tellaflowTest.island.commandKeyDown());
+  const notice = (await view())?.content?.notice;
+  check('command key before the download says to download first', !keyStarted && /Download the assistant first/.test(notice?.title ?? ''), JSON.stringify(notice));
+  await shot('setup-02b-command-key-before-download', 1200);
+  // Its button opens Settings › Assistant.
+  await T(() => globalThis.__tellaflowTest.navigate('transcripts'));
+  await sleep(300);
+  await act('retry');
+  await sleep(600);
+  check('the notice’s Open Settings lands on the Assistant tab', (await settingsTab('Assistant').getAttribute('aria-selected')) === 'true');
   // The Assistant page offers the same download.
   await main.locator('nav button', { hasText: 'Assistant' }).click();
   await sleep(800);
   await main.screenshot({ path: path.join(OUT, 'setup-03-assistant-page-download.png') });
-  await T(() => globalThis.__tellaflowTest.navigate('settings'));
+  await T(() => globalThis.__tellaflowTest.navigate('settings/assistant'));
   await sleep(500);
+  const assistantWell = main.locator('[data-testid="assistant-settings"]');
 
   const tDl = Date.now();
   await main.locator('[data-testid="assistant-download"]').click();
@@ -240,7 +263,7 @@ try {
     await sleep(800);
   }
 
-  await T(() => globalThis.__tellaflowTest.navigate('settings'));
+  await T(() => globalThis.__tellaflowTest.navigate('settings/assistant'));
   await sleep(800);
   await main.locator('text=Run actions without asking').first().scrollIntoViewIfNeeded();
   await sleep(2500);
@@ -256,9 +279,11 @@ try {
   await main.locator('[data-testid="assistant-settings"]').scrollIntoViewIfNeeded();
   await sleep(600);
   await main.screenshot({ path: path.join(OUT, 'setup-06-removed.png') });
-  await main.locator('[data-testid="assistant-enabled"]').click();
+  await main.locator('[data-testid="assistant-turn-off"]').click();
   await sleep(800);
-  check('off again: no Assistant page, no command key', (await navAssistant()) === 0 && (await main.getByText('Command key', { exact: true }).count()) === 0);
+  check('off again: no Assistant page, tab or command key', (await navAssistant()) === 0 && (await settingsTab('Assistant').count()) === 0 && (await commandKeyRow()) === 0);
+  check('off again: back on General, by the switch', (await settingsTab('General').getAttribute('aria-selected')) === 'true');
+  await main.screenshot({ path: path.join(OUT, 'setup-07-off-again.png') });
 
   await T(() => globalThis.__tellaflowTest.navigate('models'));
   await sleep(800);

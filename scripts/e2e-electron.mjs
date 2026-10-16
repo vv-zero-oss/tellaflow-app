@@ -151,12 +151,14 @@ try {
   await main.screenshot({ path: path.join(OUT, '05-assistant-page.png') });
 
   // ── Settings: new sections ────────────────────────────────────────────────
-  await T(() => globalThis.__tellaflowTest.navigate('settings'));
+  await T(() => globalThis.__tellaflowTest.navigate('settings/dictation'));
   await sleep(1500);
   const smart = main.locator('text=Smart dictation').first();
   await smart.scrollIntoViewIfNeeded();
   await sleep(500);
   await main.screenshot({ path: path.join(OUT, '06-settings-smart-meetings.png') });
+  await T(() => globalThis.__tellaflowTest.navigate('settings/assistant'));
+  await sleep(1000);
   await main.locator('text=Run actions without asking').first().scrollIntoViewIfNeeded();
   await sleep(1500);
   await main.screenshot({ path: path.join(OUT, '07-settings-assistant.png') });
