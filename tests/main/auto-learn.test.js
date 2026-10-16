@@ -143,6 +143,42 @@ describe('auto-learn watcher', () => {
     expect(learned).toEqual([{ from: 'katlin', to: 'Caitlin' }]);
   });
 
+  it('offers a fix as soon as the user stops editing, without waiting out the window', async () => {
+    const pasted = 'send it to vivake tomorrow';
+    const values = [pasted, pasted, 'send it to Viv tomorrow', 'send it to Vivek tomorrow'];
+    const timers = fakeTimers();
+    const learned = [];
+    const w = createAutoLearnWatcher({
+      readFocused: async () => ({ app: 'Notes', value: values.length > 1 ? values.shift() : values[0] }),
+      onLearn: (c) => learned.push(...c),
+      timers,
+      windowMs: 1e9,
+    });
+    w.watch(pasted, { app: 'Notes' });
+    await timers.runAll(10);
+    expect(w.isWatching()).toBe(false);
+    expect(learned).toEqual([{ from: 'vivake', to: 'Vivek' }]);
+  });
+
+  it('keeps watching while the field is unchanged or only has non-learnable edits', async () => {
+    const pasted = 'this is a great idea';
+    const values = [pasted, 'this is a good idea'];
+    const timers = fakeTimers();
+    const learned = [];
+    const w = createAutoLearnWatcher({
+      readFocused: async () => ({ app: 'Notes', value: values.length > 1 ? values.shift() : values[0] }),
+      onLearn: (c) => learned.push(...c),
+      timers,
+      windowMs: 1e9,
+      log: {},
+    });
+    w.watch(pasted, { app: 'Notes' });
+    await timers.runAll(10);
+    expect(w.isWatching()).toBe(true);
+    w.stop(true);
+    expect(learned).toEqual([]);
+  });
+
   it('does nothing when disabled or when the field never contained the paste', async () => {
     const timers = fakeTimers();
     const learned = [];

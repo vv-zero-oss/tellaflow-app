@@ -16,6 +16,9 @@
  *      or that holds a learnable fix of it (a short dictation can be mostly
  *      replaced by its correction). Chat apps clear the field when you hit
  *      Enter — that last good value is the corrected one.
+ *      As soon as a learnable fix is in the field and the user has stopped
+ *      typing (value unchanged for `settlePolls` polls) or sent it, we offer it
+ *      right away — waiting out the whole window made the feature look broken.
  *   3. Word-diff baseline vs. corrected value, restricted to the pasted span.
  *      Each small substitution (≤3 words → ≤3 words) that sounds like the
  *      original and isn't an everyday word / number / URL / path / code is a
@@ -162,6 +165,7 @@ function createAutoLearnWatcher({
   baselineDelayMs = 700,
   baselineAttempts = 5,
   pollMs = 1500,
+  settlePolls = 2,
   windowMs = 45_000,
   log = console,
 }) {
@@ -209,9 +213,19 @@ function createAutoLearnWatcher({
       }
       s.baseline = snap.value;
       s.lastGood = snap.value;
+      s.lastSeen = snap.value;
       s.app = snap.app;
-    } else if (isGoodValue(s, snap.value)) {
-      s.lastGood = snap.value;
+    } else {
+      const good = isGoodValue(s, snap.value);
+      if (good) s.lastGood = snap.value;
+      s.stable = snap.value === s.lastSeen ? s.stable + 1 : 0;
+      s.lastSeen = snap.value;
+      // Edit finished (paused, or the field was sent/cleared): offer it now.
+      const settled = good ? s.stable >= settlePolls : true;
+      if (settled && s.lastGood !== s.baseline && extractCorrections(s.pasted, s.baseline, s.lastGood).length) {
+        stop(true);
+        return;
+      }
     }
     if (Date.now() - s.startedAt >= windowMs) { stop(true); return; }
     s.timer = timers.setTimeout(() => tick(s), pollMs);
@@ -221,7 +235,7 @@ function createAutoLearnWatcher({
   function watch(pastedText, { app = null } = {}) {
     stop(true);
     if (!isEnabled() || !pastedText || pastedText.length < 3) return;
-    const s = { pasted: pastedText, app, baseline: null, baselineTries: 0, lastGood: null, startedAt: Date.now(), timer: null };
+    const s = { pasted: pastedText, app, baseline: null, baselineTries: 0, lastGood: null, lastSeen: null, stable: 0, startedAt: Date.now(), timer: null };
     session = s;
     s.timer = timers.setTimeout(() => tick(s), baselineDelayMs);
   }

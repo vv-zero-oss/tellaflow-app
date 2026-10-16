@@ -1,7 +1,7 @@
 // Anti-crash guards are installed first so even early startup errors are
 // logged instead of killing the app (see crash-guard.js).
 const { createCrashGuard } = require('./crash-guard');
-const { app, ipcMain, BrowserWindow, Notification, clipboard, dialog, shell, powerMonitor, utilityProcess } = require('electron');
+const { app, ipcMain, BrowserWindow, Notification, clipboard, dialog, shell, powerMonitor, utilityProcess, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -18,6 +18,7 @@ crashGuard.install();
 
 const config = require('./config');
 const { createTray, getTray, destroyTray } = require('./tray');
+const { buildTrayTemplate, PASTE_LAST_ACCELERATOR } = require('./tray-menu');
 const { createOnboardingWindow, closeOnboarding, getOnboardingWindow } = require('./onboarding');
 const hotkey = require('./hotkey');
 const { pasteText, undoPaste } = require('./paste');
@@ -46,7 +47,7 @@ const { formatTranscription } = require('./formatter');
 const { applyDictionary } = require('./dictionary');
 const snippets = require('./snippets');
 const { showToast, hideToast, destroyToast, sendToToast, initFloatingBar, setFloatingBarEnabled: toastSetFloatingBarEnabled, getToastWindow, getCurrentToastState, setToastInteractive, getIslandView, showIsland, restIsland, setRestOverride, isResting, refreshPlacement, onIslandRest } = require('./toast');
-const { showMainWindow, sendToMainWindow, destroyMainWindow, createMainWindow } = require('./main-window');
+const { showMainWindow, sendToMainWindow, destroyMainWindow, createMainWindow, getMainWindow } = require('./main-window');
 const history = require('./history');
 const { closeDb } = require('./db');
 const { registerDictionaryPackIpc } = require('./dictionary-pack-ipc');
@@ -508,7 +509,7 @@ function handleIslandAction(action) {
     }
     case 'open-settings':
       islandRest();
-      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
+      permissions.openMicrophonePrefs();
       break;
     case 'dismiss':
     case 'later':
@@ -727,6 +728,28 @@ function initCoreServices() {
         return pid || null;
       },
       navigate: (page) => sendToMainWindow('navigate', page),
+      // The menubar menu: its items (labels, checks) and a pop-up of it — or of
+      // one of its submenus — on the main window, for screenshots.
+      trayMenu: {
+        items: async () => {
+          await refreshTrayMicrophones().catch(() => {});
+          const strip = (items) => items.map(({ click, submenu, ...rest }) => ({ ...rest, ...(submenu ? { submenu: strip(submenu) } : {}) }));
+          return strip(buildTrayTemplate(trayMenuState(), trayMenuActions));
+        },
+        popup: async (submenu = null) => {
+          await refreshTrayMicrophones().catch(() => {});
+          let t = buildTrayTemplate(trayMenuState(), trayMenuActions);
+          if (submenu) t = t.find((i) => i.label === submenu).submenu;
+          globalThis.__tellaflowTest.trayMenu.open = require('electron').Menu.buildFromTemplate(t);
+          globalThis.__tellaflowTest.trayMenu.open.popup({ window: getMainWindow(), x: 640, y: 8 });
+        },
+        close: () => globalThis.__tellaflowTest.trayMenu.open?.closePopup(),
+        click: (label, submenu = null) => {
+          let t = buildTrayTemplate(trayMenuState(), trayMenuActions);
+          if (submenu) t = t.find((i) => i.label === submenu).submenu;
+          t.find((i) => i.label === label).click();
+        },
+      },
       // What reached the pretend desktop (TELLAFLOW_E2E_DESKTOP=fake).
       fakeDesktop: () => (process.env.TELLAFLOW_E2E_DESKTOP === 'fake'
         ? (({ front, doc, acts }) => ({ front, doc, acts }))(require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js')).state)
@@ -784,6 +807,113 @@ function getFrontmostApp() {
     });
   });
 }
+
+// ── Menubar menu ────────────────────────────────────────────────────────────
+// What the menu shows (tray-menu.js builds it) and what its items do.
+let trayMicrophones = [];
+
+function lastDictation() {
+  try { return history.getEntries().find((e) => e.kind === 'dictation') || null; } catch { return null; }
+}
+
+function trayMenuState() {
+  const engine = config.getTranscriptionEngine();
+  const turbo = config.getModel() === 'turbo';
+  const status = updater.getStatus() || {};
+  return {
+    recording: isAnyRecordingActive(),
+    meeting: {
+      enabled: config.getMeetingNotesEnabled(),
+      active: !!meetingNotes?.isActive(),
+      app: meetingNotes?.isActive() ? meetingNotes.getActive().app : null,
+    },
+    failedCount: journal ? journal.list({ status: 'failed' }).length : 0,
+    update: { phase: status.phase, version: status.updateVersion },
+    lastTranscript: lastDictation()?.text || '',
+    shortcuts: { dictate: config.getHotkey()?.label, command: config.getCommandHotkey()?.label || null },
+    microphoneId: config.getMicrophoneDeviceId(),
+    microphones: trayMicrophones,
+    translation: {
+      available: engine === 'whisper' && !turbo,
+      unavailableReason: engine === 'parakeet' ? 'Parakeet is English only' : 'Whisper Turbo is English only',
+      enabled: !!config.getTranslationEnabled(),
+      language: config.getTranslationLanguage(),
+    },
+  };
+}
+
+// The main window stays alive hidden, so its renderer can list the mics.
+async function refreshTrayMicrophones() {
+  const win = getMainWindow();
+  if (!win || win.isDestroyed()) return;
+  const list = await win.webContents.executeJavaScript(
+    "navigator.mediaDevices.enumerateDevices().then((ds) => ds.filter((d) => d.kind === 'audioinput').map((d) => ({ deviceId: d.deviceId, label: d.label })))",
+    true,
+  );
+  if (Array.isArray(list)) trayMicrophones = list;
+}
+
+function openPage(page) {
+  showMainWindow();
+  sendToMainWindow('navigate', page);
+}
+
+/** Paste the newest dictation into the app in front (menu item and ⌃⌘V). */
+async function pasteLastTranscript() {
+  const entry = lastDictation();
+  if (!entry?.text) return;
+  const front = await getFrontmostApp();
+  const target = isOwnApp(front) ? null : front;
+  pasteText(entry.text, target);
+  lastPaste = { app: target };
+}
+
+function registerPasteLastShortcut() {
+  try {
+    if (!globalShortcut.register(PASTE_LAST_ACCELERATOR, () => { pasteLastTranscript(); })) {
+      console.warn(`[tray] ${PASTE_LAST_ACCELERATOR} is taken by another app; Paste Last Transcript is menu-only`);
+    }
+  } catch (err) {
+    console.warn('[tray] could not register the paste-last shortcut:', err.message);
+  }
+}
+
+const trayMenuActions = {
+  open: () => showMainWindow(),
+  startRecording: () => {
+    // Capture frontmost app synchronously before the menu click steals focus
+    clickPasteTargetApp = null;
+    try {
+      const { execFileSync } = require('child_process');
+      const name = execFileSync('osascript', [
+        '-e',
+        'tell application "System Events" to get name of first process whose frontmost is true',
+      ]).toString().trim();
+      if (name && !isOwnApp(name)) clickPasteTargetApp = name;
+    } catch {}
+    startClickRecording();
+  },
+  stopRecording: () => stopAnyActiveRecording(),
+  startMeeting: () => startMeetingNotes({ app: 'Manual' }),
+  stopMeeting: () => stopMeetingNotes(),
+  checkForUpdates: () => updater.checkForUpdates({ silent: false }),
+  installUpdate: () => updater.quitAndInstall(),
+  pasteLast: () => { pasteLastTranscript(); },
+  openPage,
+  setMicrophone: (deviceId) => {
+    config.setMicrophoneDeviceId(deviceId);
+    sendToMainWindow('config-changed', { microphoneDeviceId: deviceId });
+  },
+  // 'en' turns translation off; any other code is the language spoken, which
+  // Whisper translates to English (the Models page's Translation setting).
+  setLanguage: (code) => {
+    const enabled = code !== 'en';
+    config.setTranslationEnabled(enabled);
+    if (enabled) config.setTranslationLanguage(code);
+    sendToMainWindow('config-changed', { translationEnabled: enabled, translationLanguage: config.getTranslationLanguage() });
+  },
+  quit: () => gracefulQuit(),
+};
 
 // True when the given app name is our own Electron process (not a real user app).
 function isOwnApp(name) {
@@ -859,57 +989,11 @@ app.whenReady().then(async () => {
   });
 
   createTray({
-    onQuit: gracefulQuit,
-    onChangeHotkeyFn: () => {
-      createOnboardingWindow();
-    },
-    onRetryHotkeyFn: () => {
-      startHotkeyListener();
-    },
-    onTrayClick: () => {
-      showMainWindow();
-    },
-    onCheckForUpdates: () => {
-      updater.checkForUpdates({ silent: false });
-    },
-    onInstallUpdate: () => {
-      updater.quitAndInstall();
-    },
-    getUpdaterStatus: () => updater.getStatus(),
-    isRecording: isAnyRecordingActive,
-    onStartRecording: () => {
-      // Capture frontmost app synchronously before the menu click steals focus
-      clickPasteTargetApp = null;
-      try {
-        const { execFileSync } = require('child_process');
-        const name = execFileSync('osascript', [
-          '-e',
-          'tell application "System Events" to get name of first process whose frontmost is true',
-        ]).toString().trim();
-        if (name && !isOwnApp(name)) clickPasteTargetApp = name;
-      } catch {}
-      startClickRecording();
-    },
-    onStopRecording: () => {
-      stopAnyActiveRecording();
-    },
-    getExtraItems: () => {
-      const items = [];
-      if (meetingNotes?.isActive()) {
-        items.push({ label: `Stop Meeting Notes (${meetingNotes.getActive().app})`, click: () => stopMeetingNotes() });
-      } else if (config.getMeetingNotesEnabled()) {
-        items.push({ label: 'Start Meeting Notes Now', click: () => startMeetingNotes({ app: 'Manual' }) });
-      }
-      const failed = journal ? journal.list({ status: 'failed' }).length : 0;
-      if (failed > 0) {
-        items.push({
-          label: `${failed} Recording${failed === 1 ? '' : 's'} Need Attention…`,
-          click: () => { showMainWindow(); sendToMainWindow('navigate', 'transcripts'); },
-        });
-      }
-      return items;
-    },
+    getTemplate: () => buildTrayTemplate(trayMenuState(), trayMenuActions),
+    // Microphone names come from Chromium; refresh them before the menu opens.
+    beforeOpen: refreshTrayMicrophones,
   });
+  registerPasteLastShortcut();
 
   accessibilityInitialState = permissions.isTrustedAccessibility();
   console.log('Accessibility initial state:', accessibilityInitialState);
@@ -969,6 +1053,7 @@ app.on('before-quit', () => {
 });
 
 app.on('will-quit', () => {
+  try { globalShortcut.unregisterAll(); } catch {}
   performCleanup();
 
   // Safety net: force exit if native addons (keyspy, etc.) keep the event loop alive

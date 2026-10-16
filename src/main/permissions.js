@@ -18,10 +18,28 @@ function getMicrophoneStatus() {
   return systemPreferences.getMediaAccessStatus?.('microphone') ?? 'granted';
 }
 
+const MIC_PREFS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone';
+
+function openMicrophonePrefs() {
+  if (!isMac) return;
+  shell.openExternal(MIC_PREFS_URL);
+}
+
+/**
+ * macOS shows its microphone prompt only once, while the status is
+ * "not-determined". After the user has denied it (or MDM restricts it),
+ * askForMediaAccess resolves false without any UI — so open the Microphone
+ * pane instead, where the switch can be turned on.
+ */
 async function requestMicrophone() {
   if (!isMac) return true;
-  const granted = await systemPreferences.askForMediaAccess('microphone');
-  return granted;
+  const status = getMicrophoneStatus();
+  if (status === 'granted') return true;
+  if (status === 'not-determined') {
+    return systemPreferences.askForMediaAccess('microphone');
+  }
+  openMicrophonePrefs();
+  return false;
 }
 
 function openAccessibilityPrefs() {
@@ -58,6 +76,7 @@ module.exports = {
   promptAccessibility,
   getMicrophoneStatus,
   requestMicrophone,
+  openMicrophonePrefs,
   openAccessibilityPrefs,
   isScreenRecordingGranted,
   requestScreenRecording,
