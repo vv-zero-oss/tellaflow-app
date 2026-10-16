@@ -15,11 +15,17 @@ run by `mascot-dispatch.js` (the desktop tier's gates: Accessibility re-read
 per action, password-field refusal, forced confirmations) through Peekaboo
 (`desktop/`); desktop tasks continue as a loop verified by a fresh look
 (`desktop-loop.js`). Bigger jobs go to a visible bb chat, which the Assistant
-page frames. bb runs on the Node bundled into the app
-(`scripts/download-node.sh` → `resources/node/`), never inside Electron and
-never on the user's PATH; its own better-sqlite3 is built for that Node
-(`scripts/postinstall.js`) and its whole dependency closure is in
-`asarUnpack` (`tests/main/bb-unpack.test.js`). Files ported verbatim keep
+page frames. The assistant is **opt-in** (`assistantEnabled`, off by default):
+off, there is no command key (`hotkey.setCommandKeyGate`), no Assistant page
+and nothing of bb's on disk. Neither bb nor its Node ships in the app — switched
+on, Settings › Assistant offers one **Download** (`jarvis/runtime.js`): a pinned,
+checksummed Node plus `npm ci` of `resources/assistant-runtime`'s lockfile on
+that Node (so native prebuilds match it), staged and verified, into
+`<userData>/tools/assistant`; on a Mac Peekaboo comes with it. bb runs on that
+Node, never inside Electron and never on the user's PATH. Bumping bb means
+bumping `BB_APP_VERSION` and regenerating that lockfile
+(`npm install --package-lock-only` in it); an installed copy then reads as
+"outdated" and offers Update. Files ported verbatim keep
 canvas's names so they diff cleanly against it; canvas's tests for them are in
 `tests/main/ported/`.
 
@@ -40,9 +46,10 @@ canvas's names so they diff cleanly against it; canvas's tests for them are in
 ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --ignore-scripts
 node node_modules/electron/install.js              # Electron binary
 (cd node_modules/better-sqlite3 && npx prebuild-install --runtime electron --target "$(node -p "require('electron/package.json').version")")
-npm i --no-save --ignore-scripts playwright-core   # to drive Electron
-npm run download-node                              # Node for the assistant's bb
-(cd node_modules/bb-app/node_modules/better-sqlite3 && npx prebuild-install --runtime node --target 22.23.3)
+npm i --no-save --ignore-scripts playwright-core   # to drive Electron (re-run after any npm install/uninstall)
+# the assistant's Node + bb, as Settings › Download installs them (optional:
+# the e2e downloads its own; point the app at this copy to skip that)
+node scripts/install-assistant.js /tmp/tf-assistant && export TELLAFLOW_ASSISTANT_RUNTIME_DIR=/tmp/tf-assistant
 
 # models (Parakeet is the default engine; Whisper base.en is small)
 npm run download-parakeet
@@ -67,12 +74,14 @@ writes: `ffmpeg -i in.mp3 -ac 1 -ar 16000 -map_metadata -1 -fflags +bitexact -c:
   worker mid-job, builds a meeting entry, asks the assistant (real bb + the
   signed-in Claude CLI), and screenshots each page.
 - **Assistant, full app + real AI + screenshots:**
-  `xvfb-run -a node scripts/e2e-assistant.mjs e2e-assistant` — the app starts
-  real bb (throwaway data dir, ports 38986/7) on the bundled Node; answers,
+  `xvfb-run -a node scripts/e2e-assistant.mjs e2e-assistant` — first the setup
+  through the real UI (off by default → switch on → Download, a real install
+  into a throwaway folder); then the app starts real bb (throwaway data dir,
+  ports 38986/7) on the Node it downloaded; answers,
   a desktop task against a pretend TextEdit (`TELLAFLOW_E2E_DESKTOP=fake`,
   `scripts/e2e-fake-desktop.js` — Peekaboo is macOS-only), a forced
   confirmation declined, a hand-off to a chat, the Assistant page and
-  Settings. Needs `claude` signed in. In the cloud container bb reports Claude
+  Settings; then Remove and switching off again. Needs `claude` signed in. In the cloud container bb reports Claude
   Code "unauthenticated" (it reads the keychain/`~/.claude/.credentials.json`
   shape a Mac login writes) but runs it when named — the script names
   `claude-code` (`E2E_PROVIDER`).

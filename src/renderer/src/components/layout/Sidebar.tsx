@@ -111,6 +111,8 @@ interface SidebarProps {
   isLoading: boolean;
   /** Model load progress (0–100), or null when no model is loading. */
   loadProgress?: number | null;
+  /** The assistant is switched on (Settings › Assistant). */
+  showAssistant?: boolean;
 }
 
 const navItems = [
@@ -123,7 +125,7 @@ const navItems = [
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
 
-export function Sidebar({ activePage, onNavigate, status, isError, isLoading, loadProgress = null }: SidebarProps) {
+export function Sidebar({ activePage, onNavigate, status, isError, isLoading, loadProgress = null, showAssistant = false }: SidebarProps) {
   return (
     <div className="relative w-[220px] min-w-[220px] bg-sidebar flex flex-col [-webkit-app-region:drag] select-none">
       <div className="pt-[24px] px-5 pb-4 flex items-center gap-2.5">
@@ -131,7 +133,7 @@ export function Sidebar({ activePage, onNavigate, status, isError, isLoading, lo
       </div>
 
       <nav className="flex-1 flex flex-col gap-1 px-3 [-webkit-app-region:no-drag]">
-        {navItems.map((item) => (
+        {navItems.filter((item) => item.id !== 'assistant' || showAssistant).map((item) => (
           <button
             key={item.id}
             onClick={() => onNavigate(item.id)}

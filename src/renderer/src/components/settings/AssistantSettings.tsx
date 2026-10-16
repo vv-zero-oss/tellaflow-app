@@ -1,11 +1,14 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCircle2, CircleDashed, Download, Loader2, RefreshCw } from 'lucide-react';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
+import { AssistantDownload } from '@/components/assistant/AssistantDownload';
 import { useAssistant } from '@/hooks/use-assistant';
-import type { AssistantProvider } from '@/lib/ipc';
+import { useAssistantRuntime } from '@/hooks/use-assistant-runtime';
+import type { AssistantProvider, AssistantRuntimeStatus } from '@/lib/ipc';
 
 /** What a provider's state means to the person, in their words. */
 function providerLine(p: AssistantProvider): string {
@@ -20,10 +23,76 @@ function providerLine(p: AssistantProvider): string {
 }
 
 /**
- * The assistant (the command key). It runs on bb with an AI you're already
- * signed in to — no API keys — and can work in your other apps.
+ * The assistant (the command key), behind a switch. On, it offers one
+ * download — bb, the Node it runs on and the desktop helper — and only once
+ * that is done shows the rest of its settings.
  */
 export function AssistantSettings() {
+  const { runtime, setEnabled, install, remove } = useAssistantRuntime();
+  if (!runtime) return null;
+  const downloaded = runtime.state !== 'missing';
+  return (
+    <Well className="mb-7" data-testid="assistant-settings">
+      <WellHeader>
+        <WellTitle>Assistant</WellTitle>
+      </WellHeader>
+      <WellCard>
+        <WellItem>
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-sm flex items-center gap-2">
+                AI assistant
+                <Badge variant="outline" className="text-[10px] font-normal px-1.5 py-0">Beta</Badge>
+              </span>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">
+                Hold the command key and say what you want. It answers, and can work in your other apps, using an AI you're signed in to.
+              </p>
+            </div>
+            <Switch checked={runtime.enabled} onCheckedChange={setEnabled} data-testid="assistant-enabled" />
+          </div>
+        </WellItem>
+        {runtime.enabled && (!downloaded || runtime.installing || runtime.state === 'outdated' || runtime.error) && (
+          <WellItem>
+            <AssistantDownload runtime={runtime} onInstall={install} />
+          </WellItem>
+        )}
+        {runtime.enabled && downloaded && !runtime.installing && <AssistantOptions />}
+        {runtime.enabled && downloaded && !runtime.installing && <DownloadedRow runtime={runtime} onRemove={remove} />}
+      </WellCard>
+    </Well>
+  );
+}
+
+/** What is downloaded, and a way to give the disk space back. */
+function DownloadedRow({ runtime, onRemove }: { runtime: AssistantRuntimeStatus; onRemove: () => Promise<void> }) {
+  const [removing, setRemoving] = useState(false);
+  return (
+    <WellItem>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <span className="text-sm">Downloaded</span>
+          <p className="text-xs text-muted-foreground/60 mt-0.5">
+            bb {runtime.installed?.bb} on Node {runtime.installed?.node?.replace(/^v/, '')}
+            {runtime.helperError ? ` · The desktop helper didn’t download: ${runtime.helperError}` : ''}
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+          disabled={removing}
+          onClick={async () => { setRemoving(true); try { await onRemove(); } finally { setRemoving(false); } }}
+        >
+          {removing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+          Remove
+        </Button>
+      </div>
+    </WellItem>
+  );
+}
+
+/** The assistant's own settings, once it can run. */
+function AssistantOptions() {
   const {
     settings, providers, backend, desktop, installing, installError,
     refreshProviders, refreshDesktop, updateSettings, installHelper, requestAccessibility,
@@ -43,11 +112,7 @@ export function AssistantSettings() {
   const pct = installing?.total ? Math.round((installing.received / installing.total) * 100) : null;
 
   return (
-    <Well className="mb-7">
-      <WellHeader>
-        <WellTitle>Assistant</WellTitle>
-      </WellHeader>
-      <WellCard>
+    <>
         <WellItem>
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
@@ -159,7 +224,6 @@ export function AssistantSettings() {
             <Switch checked={settings.fullAccess} onCheckedChange={(v) => updateSettings({ fullAccess: v })} />
           </div>
         </WellItem>
-      </WellCard>
-    </Well>
+    </>
   );
 }

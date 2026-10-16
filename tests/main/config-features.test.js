@@ -20,7 +20,8 @@ describe('feature settings defaults', () => {
     expect(config.getMeetingNotesEnabled()).toBe(false); // opt-in
     expect(config.getMeetingBrowserDetection()).toBe(true);
     expect(config.getAudioRetentionDays()).toBe(30);
-    expect(config.getAssistantSettings()).toEqual({ provider: 'auto', fullAccess: true, desktopActions: true, screenVision: true });
+    expect(config.getAssistantSettings()).toEqual({ enabled: false, provider: 'auto', fullAccess: true, desktopActions: true, screenVision: true });
+    expect(config.getAssistantEnabled()).toBe(false); // opt-in
   });
 
   it('persists toggles and validates assistant settings', () => {
@@ -33,6 +34,8 @@ describe('feature settings defaults', () => {
     const s = config.setAssistantSettings({ provider: 'Not An Id!', fullAccess: false, desktopActions: false });
     expect(s).toMatchObject({ provider: 'auto', fullAccess: false, desktopActions: false, screenVision: true });
     expect(config.setAssistantSettings({ provider: 'claude-code' }).provider).toBe('claude-code');
+    expect(config.setAssistantSettings({ enabled: true }).enabled).toBe(true);
+    expect(config.getAssistantEnabled()).toBe(true);
   });
 });
 

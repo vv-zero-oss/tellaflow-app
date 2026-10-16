@@ -86,6 +86,8 @@ export const THEME_TOKENS_FOR_BB = [
 ] as const;
 
 export interface AssistantSettings {
+  /** The assistant is opt-in: off, there is no command key and no Assistant page. */
+  enabled: boolean;
   /** One of bb's provider ids ("claude-code", "codex", …), or 'auto'. */
   provider: string;
   /** Plain desktop steps run without a confirmation. */
@@ -97,6 +99,23 @@ export interface AssistantSettings {
 }
 
 /** One of bb's providers and whether it can run here. */
+/** What the assistant runs on (Node + bb), downloaded from Settings. */
+export interface AssistantRuntimeStatus {
+  enabled: boolean;
+  /** On and downloaded: the command key works. */
+  ready: boolean;
+  state: 'missing' | 'outdated' | 'installed';
+  /** False on a platform with no pinned Node build. */
+  supported: boolean;
+  installed: { node: string; bb: string; at: string } | null;
+  want: { node: string; bb: string | null };
+  installing: boolean;
+  progress: { phase: 'node' | 'bb' | 'verify' | 'helper'; received: number; total: number | null } | null;
+  error: string | null;
+  /** The desktop helper failed to download (the rest installed). */
+  helperError: string | null;
+}
+
 export interface AssistantProvider {
   id: string;
   label: string;
@@ -356,6 +375,10 @@ interface TellaflowAPI {
   assistantGetSettings: () => Promise<AssistantSettings>;
   assistantSetSettings: (patch: Partial<AssistantSettings>) => Promise<AssistantSettings>;
   assistantInstallHelper: () => Promise<{ ok: boolean; error?: string }>;
+  assistantRuntimeStatus: () => Promise<AssistantRuntimeStatus>;
+  assistantRuntimeInstall: () => Promise<{ ok: boolean; error?: string }>;
+  assistantRuntimeRemove: () => Promise<{ ok: boolean; error?: string }>;
+  onAssistantRuntime: (cb: (s: AssistantRuntimeStatus) => void) => () => void;
   assistantRequestAccessibility: () => Promise<{ granted: boolean }>;
   assistantDesktopStatus: () => Promise<AssistantDesktopStatus>;
   onAssistantStatus: (cb: (s: AssistantBackendStatus) => void) => () => void;

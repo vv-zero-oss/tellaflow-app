@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ipc, type AppConfig, type HotkeyConfig, type Theme } from '@/lib/ipc';
 import { MicrophoneSelectDialog } from './MicrophoneSelectDialog';
+import { useAssistantRuntime } from '@/hooks/use-assistant-runtime';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -308,6 +309,8 @@ export function GeneralSettings({ config, onSetTheme, refreshConfig }: GeneralSe
   const [micDialogOpen, setMicDialogOpen] = useState(false);
   const micLabel = useMicLabel(config.microphoneDeviceId);
   const activationDelay = config.hotkeyActivationDelay ?? DEFAULT_ACTIVATION_DELAY;
+  // The command key belongs to the assistant: no assistant, no key to set.
+  const assistantEnabled = !!useAssistantRuntime().runtime?.enabled;
 
   const handleMicSelect = (deviceId: string) => {
     ipc.setMicrophoneDeviceId(deviceId);
@@ -353,6 +356,7 @@ export function GeneralSettings({ config, onSetTheme, refreshConfig }: GeneralSe
           </div>
         </WellItem>
 
+        {assistantEnabled && (
         <WellItem>
           <div className="flex items-center justify-between">
             <div>
@@ -369,6 +373,7 @@ export function GeneralSettings({ config, onSetTheme, refreshConfig }: GeneralSe
             />
           </div>
         </WellItem>
+        )}
 
         <WellItem>
           <div className="flex items-center justify-between">

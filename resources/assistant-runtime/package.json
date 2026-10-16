@@ -1,0 +1,8 @@
+{
+  "name": "tellaflow-assistant-runtime",
+  "private": true,
+  "description": "What Settings › Assistant › Download installs: bb, the assistant's agent backend. Installed with `npm ci` against this lockfile on the Node it downloads alongside (src/main/jarvis/runtime.js), so every package is pinned by integrity hash.",
+  "dependencies": {
+    "bb-app": "0.42.1"
+  }
+}

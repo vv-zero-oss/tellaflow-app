@@ -37,9 +37,10 @@ const { createMeetingNotes } = require('./meeting-notes');
 const macAutomation = require('./mac-automation');
 const { createJarvis } = require('./jarvis');
 const osActions = require('./jarvis/desktop/os-actions');
-const { setPeekabooDownloadRoot, resolvePeekaboo } = require('./jarvis/desktop/peekaboo');
+const { setPeekabooDownloadRoot, peekabooDownloadDir, resolvePeekaboo } = require('./jarvis/desktop/peekaboo');
 const { installPeekaboo } = require('./jarvis/desktop/peekaboo-install');
-const { currentBbServer } = require('./jarvis/bb/supervisor');
+const { currentBbServer, stopBbServer } = require('./jarvis/bb/supervisor');
+const assistantRuntime = require('./jarvis/runtime');
 const { buildBbChromeScript } = require('./jarvis/bb/bb-chrome');
 const { formatTranscription } = require('./formatter');
 const { applyDictionary } = require('./dictionary');
@@ -186,6 +187,28 @@ let meetingNotes = null;
 let meetingDetector = null;
 let meetingCaptureWindow = null;
 let assistant = null;
+
+// The assistant is opt-in, and what it runs on (Node + bb) is a download
+// (jarvis/runtime.js). It is "ready" — command key live, bb allowed to start —
+// only when it is switched on AND downloaded. The disk check is cached: the
+// command key asks on every key event.
+let runtimeCache = null;
+let runtimeJob = { installing: false, progress: null, error: null, helperError: null };
+function runtimeStatus() { return (runtimeCache ??= assistantRuntime.runtimeStatus()); }
+function assistantReady() { return config.getAssistantEnabled() && !!runtimeStatus().launcher; }
+function assistantRuntimeView() {
+  const s = runtimeStatus();
+  return {
+    enabled: config.getAssistantEnabled(),
+    ready: assistantReady(),
+    state: s.state,
+    supported: s.supported,
+    installed: s.installed,
+    want: s.want,
+    ...runtimeJob,
+  };
+}
+function broadcastAssistantRuntime() { sendToMainWindow('assistant-runtime', assistantRuntimeView()); }
 let pendingChatUrl = null;   // a chat the island asked the Assistant page to show
 let autoLearn = null;
 let modelLoading = false;
@@ -593,12 +616,21 @@ function initCoreServices() {
   });
 
   setPeekabooDownloadRoot(path.join(userData, 'tools', 'peekaboo'));
+  assistantRuntime.setRuntimeRoot(path.join(userData, 'tools', 'assistant'));
+  runtimeCache = null;
+  hotkey.setCommandKeyGate(assistantReady);
   assistant = createJarvis({
     island: {
       show: (state, opts) => island('assistant', state, opts),
       rest: () => { if (islandOwner === 'assistant') islandRest(); },
     },
     getSettings: () => config.getAssistantSettings(),
+    runtime: () => {
+      if (!config.getAssistantEnabled()) throw new Error('The assistant is turned off. Turn it on in Settings › Assistant.');
+      const s = runtimeStatus();
+      if (!s.launcher) throw new Error('The assistant isn’t downloaded yet. Open Settings › Assistant and press Download.');
+      return { node: s.node, launcher: s.launcher };
+    },
     // Where the user was when they pressed the key (read at key-down, before
     // the island or anything of ours could come to the front).
     getContext: async () => {
@@ -1029,7 +1061,7 @@ async function startApp() {
   // only for someone who uses the assistant: a warm is a (tiny) model call,
   // and nobody who only dictates should pay for one on every launch. Their
   // first command warms it on key-down (beginRecording) instead.
-  if (config.getAssistantUsed()) setTimeout(() => { assistant?.warm().catch(() => {}); }, 8000).unref?.();
+  if (assistantReady() && config.getAssistantUsed()) setTimeout(() => { if (assistantReady()) assistant?.warm().catch(() => {}); }, 8000).unref?.();
 
   startHotkeyListener();
   initFloatingBar();
@@ -1897,7 +1929,68 @@ function registerIPC() {
   });
   ipcMain.handle('assistant-reset', () => assistant.reset());
   ipcMain.handle('assistant-get-settings', () => config.getAssistantSettings());
-  ipcMain.handle('assistant-set-settings', (_, patch) => config.setAssistantSettings(patch || {}));
+  ipcMain.handle('assistant-set-settings', async (_, patch) => {
+    const was = config.getAssistantEnabled();
+    const next = config.setAssistantSettings(patch || {});
+    if (was !== next.enabled) {
+      // Off: nothing of the assistant keeps running — no island turn, no bb.
+      if (!next.enabled) {
+        if (islandOwner === 'assistant') islandRest();
+        await assistant?.dispose().catch(() => {});
+      }
+      broadcastAssistantRuntime();
+    }
+    return next;
+  });
+  // What the assistant runs on: downloaded on request (Settings › Assistant).
+  ipcMain.handle('assistant-runtime-status', () => assistantRuntimeView());
+  ipcMain.handle('assistant-runtime-install', async () => {
+    if (runtimeJob.installing) return { ok: false, error: 'Already downloading.' };
+    runtimeJob = { installing: true, progress: { phase: 'node', received: 0, total: null }, error: null, helperError: null };
+    broadcastAssistantRuntime();
+    try {
+      // A bb we started from the old copy must not run while it is replaced.
+      await assistant?.dispose().catch(() => {});
+      await assistantRuntime.installRuntime({
+        onProgress: (progress) => { runtimeJob.progress = progress; broadcastAssistantRuntime(); },
+      });
+      runtimeCache = null;
+      // Everything in one go: on a Mac, the desktop helper (Peekaboo) too.
+      // Optional — the assistant answers without it — so a failure is noted,
+      // not fatal; Settings offers it again.
+      if (process.platform === 'darwin') {
+        const helper = await resolvePeekaboo(true).catch(() => null);
+        if (helper && !helper.ok && !/macOS/i.test(helper.error ?? '')) {
+          try {
+            await installPeekaboo((received, total) => { runtimeJob.progress = { phase: 'helper', received, total }; broadcastAssistantRuntime(); });
+          } catch (err) { runtimeJob.helperError = String(err.message || err); }
+        }
+      }
+      runtimeJob = { ...runtimeJob, installing: false, progress: null };
+      broadcastAssistantRuntime();
+      return { ok: true };
+    } catch (err) {
+      console.error('[assistant] download failed:', err);
+      runtimeCache = null;
+      runtimeJob = { installing: false, progress: null, error: String(err.message || err), helperError: null };
+      broadcastAssistantRuntime();
+      return errorOf(err);
+    }
+  });
+  ipcMain.handle('assistant-runtime-remove', async () => {
+    if (runtimeJob.installing) return { ok: false, error: 'Still downloading.' };
+    try {
+      if (islandOwner === 'assistant') islandRest();
+      await assistant?.dispose().catch(() => {});
+      await stopBbServer().catch(() => {});
+      assistantRuntime.removeRuntime();
+      // And the desktop helper Download fetched with it.
+      const helperDir = peekabooDownloadDir();
+      if (helperDir) { fs.rmSync(helperDir, { recursive: true, force: true }); await resolvePeekaboo(true).catch(() => {}); }
+      return { ok: true };
+    } catch (err) { return errorOf(err); }
+    finally { runtimeCache = null; runtimeJob = { installing: false, progress: null, error: null, helperError: null }; broadcastAssistantRuntime(); }
+  });
   // The desktop helper (Peekaboo), downloaded on request — pinned and checksummed.
   ipcMain.handle('assistant-install-helper', async () => {
     try {
