@@ -94,6 +94,14 @@ export interface AssistantSettings {
   desktopActions: boolean;
   /** A picture of the screen goes with each request. */
   screenVision: boolean;
+  /** Simple requests (screenshot, open an app, music, volume) run at once, without the AI. */
+  instantCommands: boolean;
+}
+
+/** One instant command, as Settings lists it. */
+export interface AssistantQuickCommand {
+  say: string;
+  does: string;
 }
 
 /** One of bb's providers and whether it can run here. */
@@ -354,6 +362,7 @@ interface TellaflowAPI {
   assistantReset: () => Promise<void>;
   assistantStyleFrame: (options: { theme: 'light' | 'dark'; tokens: Record<string, string> }) => Promise<{ ok: boolean; applied?: number; error?: string }>;
   assistantGetSettings: () => Promise<AssistantSettings>;
+  assistantQuickCommands: () => Promise<AssistantQuickCommand[]>;
   assistantSetSettings: (patch: Partial<AssistantSettings>) => Promise<AssistantSettings>;
   assistantInstallHelper: () => Promise<{ ok: boolean; error?: string }>;
   assistantRequestAccessibility: () => Promise<{ granted: boolean }>;

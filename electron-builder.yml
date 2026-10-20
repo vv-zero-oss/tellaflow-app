@@ -52,6 +52,10 @@ extraResources:
   # app's own entitlements by electron-builder and notarized with the DMG.
   - from: resources/node/darwin-arm64/
     to: node/darwin-arm64/
+  # The island bridge bb loads by path (src/main/jarvis/bb/island-bridge.js):
+  # a real folder, since bb runs on plain Node and cannot read app.asar.
+  - from: resources/bb-plugin-tellaflow/
+    to: bb-plugin-tellaflow/
   - from: resources/trayIconTemplate.png
     to: trayIconTemplate.png
   - from: resources/trayIconTemplate@2x.png

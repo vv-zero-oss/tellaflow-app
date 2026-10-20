@@ -20,7 +20,7 @@ describe('feature settings defaults', () => {
     expect(config.getMeetingNotesEnabled()).toBe(false); // opt-in
     expect(config.getMeetingBrowserDetection()).toBe(true);
     expect(config.getAudioRetentionDays()).toBe(30);
-    expect(config.getAssistantSettings()).toEqual({ provider: 'auto', fullAccess: true, desktopActions: true, screenVision: true });
+    expect(config.getAssistantSettings()).toEqual({ provider: 'auto', fullAccess: true, desktopActions: true, screenVision: true, instantCommands: true });
   });
 
   it('persists toggles and validates assistant settings', () => {

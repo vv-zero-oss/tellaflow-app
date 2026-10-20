@@ -4,7 +4,7 @@
  * src/main/jarvis/desktop/os-actions.js. Used only when the app is started
  * with TELLAFLOW_E2E_DESKTOP=fake — never in a real build.
  */
-const state = { front: 'Finder', doc: '', acts: [] };
+const state = { front: 'Finder', doc: '', acts: [], quick: [] };
 
 const elements = () => (state.front === 'TextEdit'
   ? [
@@ -29,4 +29,23 @@ module.exports = {
   },
   osInspect: async () => ({ ok: false, error: 'not on this desktop' }),
   captureScreen: async () => ({ ok: false, error: 'no screen here' }),
+  // The instant commands' system calls (quick-commands.js), recorded instead
+  // of run: `open -a` knows a few apps, as the real one would.
+  quickRunners: {
+    platform: 'darwin',
+    homeDir: '/Users/e2e',
+    exec: async (file, args) => {
+      state.quick.push([file, ...args]);
+      // Like LaunchServices, names match whatever their case.
+      const known = ['Safari', 'Notes', 'Spotify', 'TextEdit', 'Calendar'].find((n) => n.toLowerCase() === String(args[1]).toLowerCase());
+      if (file === 'open' && args[0] === '-a' && !known) {
+        throw new Error(`Unable to find application named '${args[1]}'`);
+      }
+      if (file === 'open' && args[0] === '-a') state.front = known;
+      return '';
+    },
+    appleScript: async (body, argv = []) => { state.quick.push(['osascript', body, ...argv]); return /return v/.test(body) ? '62' : ''; },
+    jxa: async (source, argv = []) => { state.quick.push(['jxa', ...argv]); return ''; },
+    runningApps: async () => ['Finder', 'Spotify'],
+  },
 };
