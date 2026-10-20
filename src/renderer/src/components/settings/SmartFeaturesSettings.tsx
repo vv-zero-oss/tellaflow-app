@@ -30,80 +30,88 @@ const RETENTION_OPTIONS = [
   { value: '0', label: 'Forever' },
 ];
 
-export function SmartFeaturesSettings({ config, refreshConfig }: Props) {
-  const set = async (key: FeatureSettingKey, value: boolean | number) => {
+function useSet(refreshConfig: () => Promise<void>) {
+  return async (key: FeatureSettingKey, value: boolean | number) => {
     await ipc.setFeatureSetting(key, value);
     await refreshConfig();
   };
+}
 
+export function SmartDictationSettings({ config, refreshConfig }: Props) {
+  const set = useSet(refreshConfig);
   return (
-    <>
-      <Well className="mb-7">
-        <WellHeader>
-          <WellTitle>Smart dictation</WellTitle>
-        </WellHeader>
-        <WellCard>
-          <Row
-            label="Learn from my corrections"
-            description="If you fix a misheard word right after dictating, it's added to your Dictionary automatically."
-            checked={config.autoLearnEnabled ?? true}
-            onChange={(v) => set('autoLearnEnabled', v)}
-          />
-          <Row
-            label="Understand the app I'm in"
-            description="Recognizes names in Slack and other chat apps, and file names in Cursor, VS Code and other editors (“index dot js” → index.js)."
-            checked={config.contextAwarenessEnabled ?? true}
-            onChange={(v) => set('contextAwarenessEnabled', v)}
-          />
-        </WellCard>
-      </Well>
+    <Well className="mb-7">
+      <WellHeader>
+        <WellTitle>Smart dictation</WellTitle>
+      </WellHeader>
+      <WellCard>
+        <Row
+          label="Learn from my corrections"
+          description="If you fix a misheard word right after dictating, Tellaflow offers to add it to your Dictionary."
+          checked={config.autoLearnEnabled ?? true}
+          onChange={(v) => set('autoLearnEnabled', v)}
+        />
+        <Row
+          label="Understand the app I'm in"
+          description="Recognizes names in Slack and other chat apps, and file names in Cursor, VS Code and other editors (“index dot js” → index.js)."
+          checked={config.contextAwarenessEnabled ?? true}
+          onChange={(v) => set('contextAwarenessEnabled', v)}
+        />
+      </WellCard>
+    </Well>
+  );
+}
 
-      <Well className="mb-7">
-        <WellHeader>
-          <WellTitle>Meeting notes</WellTitle>
-        </WellHeader>
-        <WellCard>
+export function MeetingSettings({ config, refreshConfig }: Props) {
+  const set = useSet(refreshConfig);
+  const on = config.meetingNotesEnabled ?? false;
+  return (
+    <Well className="mb-7">
+      <WellHeader>
+        <WellTitle>Meeting notes</WellTitle>
+      </WellHeader>
+      <WellCard>
+        <Row
+          label="Offer to take notes in meetings"
+          description="When Zoom, Google Meet, Teams or a Slack huddle starts, Tellaflow asks whether to transcribe it. Notes are made on this Mac and saved with your transcripts."
+          checked={on}
+          onChange={(v) => set('meetingNotesEnabled', v)}
+        />
+        {/* Only means something while meeting notes are on. */}
+        {on && (
           <Row
-            label="Take notes automatically in meetings"
-            description="When Zoom, Google Meet, Teams or a Slack huddle starts, records your microphone and transcribes it locally into a Meeting notes entry. No hotkey needed."
-            checked={config.meetingNotesEnabled ?? false}
-            onChange={(v) => set('meetingNotesEnabled', v)}
-          />
-          <Row
-            label="Detect meetings in browser tabs"
-            description="Checks open tabs in Chrome, Arc, Brave, Edge and Safari for meeting links. macOS asks once for permission per browser."
+            label="Also look in browser tabs"
+            description="Finds Google Meet, Zoom and Teams calls open in Chrome, Arc, Brave, Edge or Safari. macOS asks once per browser."
             checked={config.meetingBrowserDetection ?? true}
             onChange={(v) => set('meetingBrowserDetection', v)}
-            disabled={!config.meetingNotesEnabled}
           />
-        </WellCard>
-      </Well>
+        )}
+      </WellCard>
+    </Well>
+  );
+}
 
-      <Well className="mb-7">
-        <WellHeader>
-          <WellTitle>Storage</WellTitle>
-        </WellHeader>
-        <WellCard>
-          <WellItem>
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <span className="text-sm">Keep recordings for</span>
-                <p className="text-xs text-muted-foreground/60 mt-0.5">Older audio is deleted to save disk space. Transcripts are always kept.</p>
-              </div>
-              <Select value={String(config.audioRetentionDays ?? 30)} onValueChange={(v) => set('audioRetentionDays', Number(v))}>
-                <SelectTrigger className="w-[130px] h-8 text-sm shrink-0">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {RETENTION_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </WellItem>
-        </WellCard>
-      </Well>
-    </>
+/** How long recordings are kept (the Data & privacy tab). */
+export function RetentionRow({ config, refreshConfig }: Props) {
+  const set = useSet(refreshConfig);
+  return (
+    <WellItem>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <span className="text-sm">Keep recordings for</span>
+          <p className="text-xs text-muted-foreground/60 mt-0.5">Older audio is deleted to save disk space. Transcripts are always kept.</p>
+        </div>
+        <Select value={String(config.audioRetentionDays ?? 30)} onValueChange={(v) => set('audioRetentionDays', Number(v))}>
+          <SelectTrigger className="w-[130px] h-8 text-sm shrink-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {RETENTION_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </WellItem>
   );
 }

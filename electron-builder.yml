@@ -48,10 +48,14 @@ extraResources:
     filter:
       - "*.onnx"
       - "tokens.txt"
-  # The Node runtime bb runs on (scripts/download-node.sh) — signed with the
-  # app's own entitlements by electron-builder and notarized with the DMG.
-  - from: resources/node/darwin-arm64/
-    to: node/darwin-arm64/
+  # What Settings › Assistant › Download installs (bb, pinned by this
+  # lockfile, on a pinned Node — src/main/jarvis/runtime.js). Neither ships in
+  # the app: the assistant is opt-in.
+  - from: resources/assistant-runtime/
+    to: assistant-runtime/
+    filter:
+      - package.json
+      - package-lock.json
   # The island bridge bb loads by path (src/main/jarvis/bb/island-bridge.js):
   # a real folder, since bb runs on plain Node and cannot read app.asar.
   - from: resources/bb-plugin-tellaflow/
@@ -75,12 +79,6 @@ files:
 asarUnpack:
   - node_modules/@kutalia/whisper-node-addon/**/*
   - node_modules/better-sqlite3/**/*
-  # bb, the assistant's agent backend, runs as a plain-Node child and loads
-  # native binaries (its own better-sqlite3, node-pty, @parcel/watcher), which
-  # must be real files — supervisor.js rewrites the launcher to this copy…
-  # …and everything bb-app needs, since plain Node cannot read inside app.asar
-  # (tests/main/bb-unpack.test.js fails when a bb bump adds a dependency).
-  - "node_modules/{@parcel/watcher*,@pinojs/redact,atomic-sleep,base64-js,bb-app,bindings,bl,buffer,colorette,date-fns,dateformat,decompress-response,deep-extend,detect-libc,end-of-stream,expand-template,fast-copy,fast-safe-stringify,file-uri-to-path,fs-constants,github-from-package,help-me,hono,ieee754,inherits,ini,is-extglob,is-glob,jiti,joycon,minimist,mkdirp-classic,napi-build-utils,node-pty,on-exit-leak-free,once,picomatch,pino,pino-abstract-transport,pino-pretty,pino-roll,pino-std-serializers,prebuild-install,process-warning,pump,quick-format-unescaped,rc,readable-stream,real-require,safe-buffer,safe-stable-stringify,secure-json-parse,simple-concat,simple-get,sonic-boom,split2,string_decoder,strip-json-comments,tar-fs,tar-stream,thread-stream,tunnel-agent,util-deprecate,wrappy,zod}/**/*"
   - dist/renderer/*.mp4
   - dist/renderer/*.png
   - dist/renderer/*.svg

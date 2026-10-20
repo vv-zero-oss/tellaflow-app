@@ -17,7 +17,7 @@ Offline speech-to-text for macOS. Hold a hotkey, speak, release — your words a
 - **Learns from your corrections** (0.9) — fix a misheard word right after dictating and it's added to your Dictionary automatically.
 - **App-aware vocabulary** (0.9) — recognizes people's names in Slack and other chat apps, and file names in Cursor/VS Code ("index dot js" → `index.js`).
 - **Automatic meeting notes** (0.9, opt-in) — detects Zoom, Google Meet, Teams and Slack huddles and transcribes the meeting locally in 30-second chunks.
-- **Assistant** — hold the command key and say what you want. It runs on [bb](https://www.npmjs.com/package/bb-app) with an AI you're already signed in to (Claude Code or Codex — no API keys), streams its answer onto the island, and works in your other apps one step at a time through [Peekaboo](https://github.com/steipete/peekaboo) — checking each step on screen, refusing to type into password fields, and always asking before quitting, deleting or touching a password manager. Bigger jobs go to a chat on the Assistant page, where you can keep talking to it. Node is bundled; nothing to install. `npm run test:assistant-e2e` runs it end to end against your signed-in Claude CLI.
+- **Assistant** (beta, opt-in) — turn it on in Settings › Assistant and press Download (about 110 MB: bb and its own Node, plus the desktop helper on a Mac — none of it ships in the app). Then hold the command key and say what you want. It runs on [bb](https://www.npmjs.com/package/bb-app) with an AI you're already signed in to (Claude Code or Codex — no API keys), streams its answer onto the island, and works in your other apps one step at a time through [Peekaboo](https://github.com/steipete/peekaboo) — checking each step on screen, refusing to type into password fields, and always asking before quitting, deleting or touching a password manager. Bigger jobs go to a chat on the Assistant page, where you can keep talking to it. Nothing else to install. `npm run test:assistant-e2e` runs it end to end against your signed-in Claude CLI.
 
 ## Requirements
 
@@ -141,7 +141,7 @@ src/
 | Styling | Tailwind CSS v4, shadcn/ui |
 | Animation | Framer Motion |
 | Speech-to-text | whisper.cpp via @kutalia/whisper-node-addon (Metal GPU) |
-| Assistant | bb-app (agent backend) on a bundled Node 22, Peekaboo for desktop actions |
+| Assistant | bb-app (agent backend) on Node 22, both downloaded on demand; Peekaboo for desktop actions |
 | Storage | SQLite via better-sqlite3 |
 | Hotkey | uiohook-napi (global keyboard hook) |
 | Packaging | electron-builder |
@@ -156,6 +156,7 @@ src/
 | `npm start` | Launch Electron directly (no dev server) |
 | `npm run dev:sign` | Re-sign `Electron.app` and `MacKeyServer` for dev-mode Accessibility (runs automatically on `npm install`) |
 | `npm run download-model` | Download a Whisper GGML model |
+| `npm run install-assistant -- <dir>` | Install the assistant's Node + bb into `<dir>` (what Settings › Download does); run the app with `TELLAFLOW_ASSISTANT_RUNTIME_DIR=<dir>` |
 | `npm run test-wav` | Test transcription with a WAV file |
 
 ## Building for Distribution
@@ -166,7 +167,7 @@ npm run build
 
 This builds the renderer with Vite, then packages the app with electron-builder. The output is in `dist/`. The bundled `small` Whisper model (~465 MB) is included as an extra resource.
 
-Native addons (`whisper-node-addon`, `uiohook-napi`, `better-sqlite3`, and bb-app with its dependencies) are unpacked from the asar archive so they can load at runtime.
+Native addons (`whisper-node-addon`, `uiohook-napi`, `better-sqlite3`) are unpacked from the asar archive so they can load at runtime.
 
 ## Architecture Notes
 

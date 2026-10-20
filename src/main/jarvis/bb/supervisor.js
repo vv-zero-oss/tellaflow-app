@@ -60,10 +60,10 @@ const node_child_process_1 = require("node:child_process");
 const client_1 = require("./client");
 const process_tree_1 = require("../process-tree");
 /**
- * The version of bb this app ships. It is a real dependency (`bb-app` in
- * package.json), so this is normally the copy in `node_modules` rather than a
- * download — see {@link bundledLauncher} — and
- * `electron/__tests__/bb-supervisor.test.ts` fails if the two ever disagree.
+ * The version of bb this app runs. (Tellaflow: not a dependency of the app —
+ * Settings › Assistant › Download installs it from the lockfile in
+ * resources/assistant-runtime, and tests/main/ported/bb-supervisor.test.ts
+ * fails if that lockfile and this pin ever disagree.)
  *
  * Pinned deliberately: bb states an explicit no-deprecation-window policy, so
  * a floating version can change the wire format between two launches. Bumping
@@ -172,8 +172,8 @@ function buildLaunchCommand(args) {
         String(args.daemonPort),
     ].join(" ");
     if (args.launcher && args.node) {
-        // Tellaflow ships its own Node (scripts/download-node.sh), so nobody has
-        // to install one. Its folder goes on the END of PATH: bb starts the
+        // Tellaflow downloads its own Node with bb (src/main/jarvis/runtime.js),
+        // so nobody has to install one. Its folder goes on the END of PATH: bb starts the
         // provider CLIs, and an npm-installed `claude` is a `#!/usr/bin/env node`
         // script — the user's own node still wins when they have one.
         return (`export PATH="$PATH:${shDirname(args.node)}"; ` +
@@ -184,7 +184,7 @@ function buildLaunchCommand(args) {
         // The message matters: "did not become ready" with no explanation is
         // what a missing `node` looks like otherwise.
         return (`if command -v node >/dev/null 2>&1; then exec node ${shQuote(args.launcher)} ${flags}; ` +
-            `else echo "the agent backend needs Node on your PATH to run (npm run download-node)" >&2; exit 127; fi`);
+            `else echo "the agent backend needs Node on your PATH to run" >&2; exit 127; fi`);
     }
     // No bundled copy (a checkout with pruned modules). Prefer a bb-app the user
     // already has, and download the pinned one only as a last resort — chosen in
@@ -206,20 +206,6 @@ function loginShellInvocation(command, env = process.env, shell) {
 function shDirname(file) {
     return node_path_1.default.dirname(file).replace(/(["\\$`])/g, "\\$1");
 }
-/**
- * The Node runtime bundled with the app (scripts/download-node.sh), or null.
- * Packaged it is in Resources/node/<platform>-<arch>/bin/node; in a checkout,
- * resources/node/… once `npm run download-node` has run.
- */
-function bundledNode(exists = node_fs_1.default.existsSync) {
-    const dir = `${process.platform}-${process.arch}`;
-    const candidates = [];
-    if (process.resourcesPath)
-        candidates.push(node_path_1.default.join(process.resourcesPath, "node", dir, "bin", "node"));
-    candidates.push(node_path_1.default.join(__dirname, "..", "..", "..", "..", "resources", "node", dir, "bin", "node"));
-    return candidates.find((c) => exists(c)) ?? null;
-}
-exports.bundledNode = bundledNode;
 function shQuote(value) {
     return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -401,7 +387,7 @@ async function startBbServer(options = {}) {
             `(\`lsof -nP -iTCP:${daemonPort} -sTCP:LISTEN\`).`);
     }
     const launcher = options.launcher === undefined ? bundledLauncher() : options.launcher;
-    const node = options.node === undefined ? bundledNode() : options.node;
+    const node = options.node ?? null;
     const command = buildLaunchCommand({
         launcher,
         node,

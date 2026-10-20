@@ -133,7 +133,13 @@ try {
 
   // ── Assistant: a typed request through the real bb + signed-in AI ───────
   // (scripts/e2e-assistant.mjs covers the island, desktop tasks and chats.)
-  await main.evaluate(() => window.tellaflow.assistantSetSettings({ provider: 'claude-code' }));
+  // Opt-in, and a download: the same IPC Settings uses (TELLAFLOW_ASSISTANT_RUNTIME_DIR
+  // points at a copy from `npm run install-assistant` to skip it).
+  await main.evaluate(() => window.tellaflow.assistantSetSettings({ enabled: true, provider: 'claude-code' }));
+  if ((await main.evaluate(() => window.tellaflow.assistantRuntimeStatus())).state !== 'installed') {
+    const r = await main.evaluate(() => window.tellaflow.assistantRuntimeInstall());
+    check('assistant: Download installs Node + bb', r.ok, r.error ?? '');
+  }
   await main.evaluate(() => window.tellaflow.assistantAsk('What is 6 times 7? One short sentence.'));
   const said = await waitFor(async () => {
     const t = await main.evaluate(() => window.tellaflow.assistantTranscript());
@@ -145,12 +151,14 @@ try {
   await main.screenshot({ path: path.join(OUT, '05-assistant-page.png') });
 
   // ── Settings: new sections ────────────────────────────────────────────────
-  await T(() => globalThis.__tellaflowTest.navigate('settings'));
+  await T(() => globalThis.__tellaflowTest.navigate('settings/dictation'));
   await sleep(1500);
   const smart = main.locator('text=Smart dictation').first();
   await smart.scrollIntoViewIfNeeded();
   await sleep(500);
   await main.screenshot({ path: path.join(OUT, '06-settings-smart-meetings.png') });
+  await T(() => globalThis.__tellaflowTest.navigate('settings/assistant'));
+  await sleep(1000);
   await main.locator('text=Run actions without asking').first().scrollIntoViewIfNeeded();
   await sleep(1500);
   await main.screenshot({ path: path.join(OUT, '07-settings-assistant.png') });

@@ -28,6 +28,9 @@ const DEFAULTS = {
   meetingNotesEnabled: false,
   meetingBrowserDetection: true,
   audioRetentionDays: 30,
+  // The assistant is opt-in (Settings › Assistant): off, there is no command
+  // key, no Assistant page and nothing of bb's on disk.
+  assistantEnabled: false,
   // Which of bb's providers answers ('auto' = the first one signed in).
   assistantProvider: 'auto',
   // Run actions without asking: plain desktop steps run without a
@@ -202,6 +205,7 @@ const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 function getAssistantSettings() {
   const provider = getSetting('assistantProvider');
   return {
+    enabled: getBool('assistantEnabled'),
     provider: typeof provider === 'string' && PROVIDER_ID.test(provider) ? provider : 'auto',
     fullAccess: getBool('assistantFullAccess'),
     desktopActions: getBool('assistantDesktopActions'),
@@ -209,9 +213,11 @@ function getAssistantSettings() {
     instantCommands: getBool('assistantInstantCommands'),
   };
 }
+function getAssistantEnabled() { return getBool('assistantEnabled'); }
 function getAssistantUsed() { return getBool('assistantUsed'); }
 function setAssistantUsed(v) { if (getBool('assistantUsed') !== !!v) setSetting('assistantUsed', !!v); }
 function setAssistantSettings(patch = {}) {
+  if (patch.enabled !== undefined) setSetting('assistantEnabled', !!patch.enabled);
   if (typeof patch.provider === 'string' && PROVIDER_ID.test(patch.provider)) setSetting('assistantProvider', patch.provider);
   if (patch.fullAccess !== undefined) setSetting('assistantFullAccess', !!patch.fullAccess);
   if (patch.desktopActions !== undefined) setSetting('assistantDesktopActions', !!patch.desktopActions);
@@ -386,6 +392,7 @@ module.exports = {
   setModelLoadTime,
   setAudioRetentionDays,
   getAssistantSettings,
+  getAssistantEnabled,
   getAssistantUsed,
   setAssistantUsed,
   setAssistantSettings,

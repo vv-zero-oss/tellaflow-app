@@ -14,4 +14,6 @@ e2e-island/
 e2e-models/
 e2e-assistant/
 resources/node/
+resources/assistant-runtime/node_modules/
+resources/assistant-runtime-install/
 e2e-island-assistant/

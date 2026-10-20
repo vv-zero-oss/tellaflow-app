@@ -34,8 +34,14 @@ const MAX_RESTARTS = 10;
 // For combos (e.g. Ctrl+A), the last name in the array is the trigger,
 // the rest are modifiers that must all be in the `down` map simultaneously.
 function hotkeyFor(which) {
-  return which === 'command' ? config.getCommandHotkey() : config.getHotkey();
+  if (which === 'command') return commandKeyActive() ? config.getCommandHotkey() : null;
+  return config.getHotkey();
 }
+
+// The command key only exists while the assistant is on and downloaded (main
+// decides; see setCommandKeyGate).
+let commandKeyActive = () => true;
+function setCommandKeyGate(fn) { commandKeyActive = typeof fn === 'function' ? fn : () => true; }
 
 function matchesHotkey(e, down, hk = config.getHotkey()) { // hk: { names: string[], label: string }
   if (!hk || !Array.isArray(hk.names) || hk.names.length === 0) return false;
@@ -291,4 +297,4 @@ function didStartFail() {
   return startFailed;
 }
 
-module.exports = { start, stop, isRunning, getIsRecording, getMode, getPurpose, enterHandsFree, resetRecordingState, didStartFail };
+module.exports = { start, stop, isRunning, getIsRecording, getMode, getPurpose, enterHandsFree, resetRecordingState, didStartFail, setCommandKeyGate };

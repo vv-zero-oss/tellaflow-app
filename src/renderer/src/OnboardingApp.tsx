@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Power, RotateCcw, X, Check, AlertCircle, Send, Smile, Paperclip, Bold, Hash, MonitorSmartphone } from 'lucide-react';
+import { Power, RotateCcw, X, Check, AlertCircle, Send, Smile, Paperclip, Bold, Hash } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ipc, type HotkeyConfig } from '@/lib/ipc';
 
@@ -102,8 +102,6 @@ function WelcomePermissionsStep({
 }) {
   const [micGranted, setMicGranted] = useState(false);
   const [accGranted, setAccGranted] = useState(false);
-  const [screenGranted, setScreenGranted] = useState(false);
-  const [screenWaiting, setScreenWaiting] = useState(false);
   const [showInstructions, setShowInstructions] = useState(false);
   const [needsRestart, setNeedsRestart] = useState(false);
   const accPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -153,7 +151,6 @@ function WelcomePermissionsStep({
           }
         }
       }
-      try { if (ipc?.checkScreenPermission) setScreenGranted(await ipc.checkScreenPermission()); } catch { /* ignore */ }
       pollAccess();
     })();
     return () => {
@@ -171,19 +168,6 @@ function WelcomePermissionsStep({
         else pollMic();
       }
     } catch { /* ignore */ }
-  };
-
-  const grantScreen = async () => {
-    if (screenGranted || !ipc?.requestScreenPermission) return;
-    setScreenWaiting(true);
-    try {
-      if (await ipc.requestScreenPermission()) { setScreenGranted(true); setScreenWaiting(false); return; }
-      // The user flips the switch in System Settings — watch for it.
-      const t = setInterval(async () => {
-        if (await ipc.checkScreenPermission()) { setScreenGranted(true); setScreenWaiting(false); clearInterval(t); }
-      }, 1500);
-      setTimeout(() => clearInterval(t), 120_000);
-    } catch { setScreenWaiting(false); }
   };
 
   const grantAccessibility = () => {
@@ -297,7 +281,7 @@ function WelcomePermissionsStep({
             />
           </div>
           {/* Row 2 */}
-          <div style={{ padding: '11px 14px', borderBottom: '1px dashed rgba(0,0,0,0.08)' }}>
+          <div style={{ padding: '11px 14px' }}>
             <PermissionRow
               imgSrc={`${import.meta.env.BASE_URL}permission-accessibility.png`}
               label="Accessibility"
@@ -313,17 +297,7 @@ function WelcomePermissionsStep({
               onGrant={grantAccessibility}
             />
           </div>
-          {/* Row 3 */}
-          <div style={{ padding: '11px 14px' }}>
-            <PermissionRow
-              icon={<span className="w-8 h-8 rounded-lg grid place-items-center" style={{ background: '#5856d6' }}><MonitorSmartphone className="w-4.5 h-4.5 text-white" strokeWidth={2} /></span>}
-              label="Screen Recording"
-              description={screenGranted ? 'Access granted' : screenWaiting ? 'Waiting — turn on Tellaflow in System Settings' : 'So AI commands can see your screen'}
-              granted={screenGranted}
-              waiting={screenWaiting && !screenGranted}
-              onGrant={grantScreen}
-            />
-          </div>
+          {/* Screen Recording is the assistant's (a beta, off at first): it asks for it when it's turned on. */}
         </div>
       </div>
 
@@ -381,7 +355,7 @@ interface ChatMessage {
 }
 
 const SEED_MESSAGES: ChatMessage[] = [
-  { id: 1, fromBot: true,  text: 'Hey, welcome to Tellaflow! 👋 I\'m your voice assistant.' },
+  { id: 1, fromBot: true,  text: 'Hey, welcome to Tellaflow! 👋' },
   { id: 2, fromBot: true,  text: 'You can dictate into any app on your Mac — emails, docs, chats, anywhere.' },
   { id: 3, fromBot: true,  text: 'Give it a go right now. Hold fn, say one of these, then release:',
     suggestions: ['Hey, this is pretty cool!', 'Meeting at 3 PM tomorrow.', 'The weather is nice today.'] },

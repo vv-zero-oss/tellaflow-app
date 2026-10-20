@@ -106,6 +106,7 @@ function confirmCard(action, seen, reason) {
  * @param {(threadUrl: string) => void} [deps.openChat]      show a bb chat on the Assistant page
  * @param {() => void} [deps.openAccessibility]              System Settings › Accessibility
  * @param {() => void} [deps.openSettings]                   Tellaflow › Settings › Assistant
+ * @param {() => {node: string, launcher: string}} [deps.runtime] the downloaded Node + bb (jarvis/runtime.js); throws when there is none
  * @param {object} [deps.quick]                              quick-commands.js — instant commands, no AI
  * @param {() => boolean} [deps.islandFree]                  whether a chat's report may take the island now
  * @param {object} [deps.bb]                                 test seams: { ensureServer, createThreads(emit), workspace, createBridge(onEvent) }
@@ -114,7 +115,9 @@ function createJarvis(deps) {
   const log = deps.log || ((...a) => console.log('[assistant]', ...a));
   const island = deps.island;
   const os = deps.os;
-  const rawEnsureServer = deps.bb?.ensureServer || ((o) => ensureBbServer({ log: (m) => log(m), ...o }));
+  // bb runs from the runtime Settings downloaded; without one there is no
+  // assistant (never npx's fallback, which would fetch an unpinned bb).
+  const rawEnsureServer = deps.bb?.ensureServer || (async (o) => ensureBbServer({ log: (m) => log(m), ...(deps.runtime ? deps.runtime() : {}), ...o }));
   // Every way into bb goes through here, so the island bridge's plugin is in
   // bb before any thread starts (a thread gets its tools when it is made).
   const ensureServer = async (o) => {

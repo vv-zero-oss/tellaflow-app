@@ -53,9 +53,6 @@ jobs:
       - name: Download Parakeet model (if not cached)
         run: npm run download-parakeet
 
-      - name: Download the bundled Node runtime (pinned, checksummed)
-        run: bash scripts/download-node.sh darwin-arm64
-
       - name: Install dependencies
         run: npm ci
 
