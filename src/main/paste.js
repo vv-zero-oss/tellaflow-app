@@ -1,4 +1,3 @@
-const { clipboard } = require('electron');
 const { execFile } = require('child_process');
 
 // How long the target app gets to read the clipboard after Cmd+V has been
@@ -163,14 +162,21 @@ function createPaster({ clipboard: cb, runScript = runOsascript, restoreDelayMs 
   return { pasteText };
 }
 
-const paster = createPaster({ clipboard });
+// Electron's clipboard, required on first paste rather than at load: the unit
+// tests load this module with their own clipboard, and CI installs without the
+// Electron binary (requiring 'electron' there throws).
+let paster = null;
+function appPaster() {
+  if (!paster) paster = createPaster({ clipboard: require('electron').clipboard });
+  return paster;
+}
 
 /**
  * Paste text into the target app (re-activated first). Resolves to whether
  * the Cmd+V keystroke was delivered; callers may ignore the promise.
  */
 function pasteText(text, targetApp = null) {
-  return paster.pasteText(text, targetApp);
+  return appPaster().pasteText(text, targetApp);
 }
 
 /** Undo the last paste: re-activate the app it went into and press Cmd+Z. */
