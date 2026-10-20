@@ -239,6 +239,19 @@ function createJarvis(deps) {
     return outcome;
   }
 
+  /** Make the rewrite thread before it is needed (a dictation is about to be
+   *  styled): cold it is ~14 s to the first word, warm ~2 s. */
+  async function warmRewrite() {
+    try {
+      await ensureServer();
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err) };
+    }
+    const r = await rewriteThreads.warm(rewriteDir(), buildRewriteStanding());
+    if (!r.ok) log('rewrite warm failed:', r.error);
+    return r;
+  }
+
   async function stopRewrite() {
     for (const settle of rewriteWaits) settle({ ok: false, message: 'stopped' });
     rewriteWaits.clear();
@@ -887,6 +900,7 @@ function createJarvis(deps) {
     stop,
     warm,
     rewrite,
+    warmRewrite,
     stopRewrite,
     action,
     status,

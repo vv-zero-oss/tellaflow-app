@@ -47,6 +47,9 @@ const DEFAULTS = {
   rewriteStyle: 'grammar',
   // The user's own instructions, for the 'custom' style.
   rewriteInstructions: '',
+  // Every dictation goes through the same style before it is pasted (while
+  // the assistant is on).
+  rewriteDictation: true,
 };
 
 const AUTO_LEARN_PACK_ID = 'auto-learned';
@@ -125,11 +128,13 @@ function getRewriteSettings() {
   return {
     style: REWRITE_STYLE_IDS.includes(style) ? style : DEFAULTS.rewriteStyle,
     instructions: typeof instructions === 'string' ? instructions.slice(0, MAX_REWRITE_INSTRUCTIONS) : '',
+    dictation: getBool('rewriteDictation'),
   };
 }
 function setRewriteSettings(patch = {}) {
   if (REWRITE_STYLE_IDS.includes(patch.style)) setSetting('rewriteStyle', patch.style);
   if (typeof patch.instructions === 'string') setSetting('rewriteInstructions', patch.instructions.slice(0, MAX_REWRITE_INSTRUCTIONS));
+  if (patch.dictation !== undefined) setSetting('rewriteDictation', !!patch.dictation);
   return getRewriteSettings();
 }
 

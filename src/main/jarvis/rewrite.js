@@ -69,13 +69,22 @@ function buildRewriteStanding() {
 }
 
 /** One rewrite request. */
-function buildRewritePrompt(text, { style, instructions } = {}) {
+function buildRewritePrompt(text, { style, instructions } = {}, { dictated = false } = {}) {
   const s = styleById(style);
   const custom = String(instructions || '').trim();
   const how = s.id === 'custom'
     ? (custom ? `${custom}\nAlso fix grammar and spelling.` : REWRITE_STYLES[0].instruction)
     : s.instruction;
-  return `STYLE: ${s.id === 'custom' ? 'Custom' : s.label} — ${how}\n\n<text>\n${text}\n</text>`;
+  // Dictation is speech: what a speaker trips over is not what they meant.
+  const source = dictated
+    ? 'SOURCE: dictated speech, transcribed. Also drop filler words, stutters and false starts, and fix words the transcriber misheard when the meaning is clear. Keep everything the speaker meant.\n'
+    : '';
+  return `STYLE: ${s.id === 'custom' ? 'Custom' : s.label} — ${how}\n${source}\n<text>\n${text}\n</text>`;
+}
+
+function styleLabel(settings) {
+  const s = styleById(settings?.style);
+  return s.id === 'custom' ? 'Custom' : s.label;
 }
 
 /** The model's answer, without the wrapping a model sometimes adds anyway. */
@@ -198,8 +207,57 @@ function createRewriter(deps) {
   return { run, cancel, isRunning: () => running };
 }
 
+/** How long a dictation waits for its styled text before pasting it as said. */
+const DICTATION_STYLE_TIMEOUT_MS = 12_000;
+
+/**
+ * Every dictation in the chosen style: the transcript goes through the same
+ * rewrite before it is pasted. Never loses words — if the AI is off, slow,
+ * failing or answers nothing, the dictation is pasted exactly as transcribed.
+ *
+ * @param {object} deps
+ * @param {() => boolean} deps.isOn                     style dictation, with the assistant on
+ * @param {() => { style: string, instructions: string }} deps.getSettings
+ * @param {(prompt: string) => Promise<{ ok: boolean, text?: string, message?: string }>} deps.complete
+ * @param {() => Promise<void>} [deps.stop]
+ * @param {(label: string) => void} [deps.onWorking]    the island's "Polishing · Formal"
+ * @param {number} [deps.timeoutMs]
+ * @returns {(text: string) => Promise<{ text: string, styled: boolean, reason?: string }>}
+ */
+function createDictationStyler(deps) {
+  const log = deps.log || ((...a) => console.log('[style]', ...a));
+  const timeoutMs = deps.timeoutMs ?? DICTATION_STYLE_TIMEOUT_MS;
+  return async function styleDictation(text) {
+    if (!text || !text.trim() || !deps.isOn()) return { text, styled: false, reason: 'off' };
+    if (text.length > MAX_REWRITE_CHARS) return { text, styled: false, reason: 'too-long' };
+    const settings = deps.getSettings() || {};
+    deps.onWorking?.(styleLabel(settings));
+    let timer;
+    const timedOut = new Promise((resolve) => { timer = setTimeout(() => resolve({ ok: false, message: 'timeout' }), timeoutMs); });
+    let outcome;
+    try {
+      outcome = await Promise.race([
+        Promise.resolve(deps.complete(buildRewritePrompt(text, settings, { dictated: true }))).catch((err) => ({ ok: false, message: String(err?.message || err) })),
+        timedOut,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!outcome?.ok) {
+      log(`pasting as said (${outcome?.message || 'no answer'})`);
+      if (outcome?.message === 'timeout') await deps.stop?.().catch(() => {});
+      return { text, styled: false, reason: outcome?.message === 'timeout' ? 'timeout' : 'error' };
+    }
+    const styled = cleanRewriteOutput(outcome.text);
+    if (!styled) return { text, styled: false, reason: 'empty' };
+    return { text: styled, styled: styled !== text.trim() };
+  };
+}
+
 module.exports = {
   REWRITE_STYLES,
+  DICTATION_STYLE_TIMEOUT_MS,
+  createDictationStyler,
   MAX_REWRITE_CHARS,
   buildRewriteStanding,
   buildRewritePrompt,

@@ -9,6 +9,7 @@ import {
   buildRewriteStanding,
   cleanRewriteOutput,
   REWRITE_STYLES,
+  createDictationStyler,
 } from '../../src/main/jarvis/rewrite.js';
 import { createJarvis } from '../../src/main/jarvis/index.js';
 
@@ -243,5 +244,54 @@ describe('the rewrite thread on a cold bb', () => {
     });
     expect(await j.rewrite('x')).toMatchObject({ ok: false });
     expect(turns).toBe(1);
+  });
+});
+
+describe('styled dictation', () => {
+  function styler({ on = true, answer = { ok: true, text: 'I went to the store.' }, settings = { style: 'formal', instructions: '', dictation: true }, timeoutMs } = {}) {
+    const prompts = [];
+    const working = [];
+    let stopped = 0;
+    const style = createDictationStyler({
+      isOn: () => on,
+      getSettings: () => settings,
+      complete: async (p) => { prompts.push(p); return typeof answer === 'function' ? answer() : answer; },
+      stop: async () => { stopped += 1; },
+      onWorking: (l) => working.push(l),
+      timeoutMs,
+      log: () => {},
+    });
+    return { style, prompts, working, stopped: () => stopped };
+  }
+
+  it('pastes the dictation in the chosen style, telling the AI it was speech', async () => {
+    const s = styler();
+    expect(await s.style('um i goed to the the store')).toEqual({ text: 'I went to the store.', styled: true });
+    expect(s.prompts[0]).toMatch(/^STYLE: Formal/);
+    expect(s.prompts[0]).toMatch(/SOURCE: dictated speech/);
+    expect(s.working).toEqual(['Formal']);
+  });
+
+  it('leaves the dictation as said when off, and never asks the AI', async () => {
+    const s = styler({ on: false });
+    expect(await s.style('as said')).toEqual({ text: 'as said', styled: false, reason: 'off' });
+    expect(s.prompts).toEqual([]);
+    expect(s.working).toEqual([]);
+  });
+
+  it('never loses words: an error or an empty answer pastes it as said', async () => {
+    expect((await styler({ answer: { ok: false, message: 'Provider unauthenticated' } }).style('as said')).text).toBe('as said');
+    expect((await styler({ answer: { ok: true, text: '   ' } }).style('as said')).text).toBe('as said');
+    expect((await styler({ answer: () => { throw new Error('bb died'); } }).style('as said')).text).toBe('as said');
+  });
+
+  it('a slow AI is stopped and the dictation pasted as said', async () => {
+    const s = styler({ answer: () => new Promise(() => {}), timeoutMs: 20 });
+    expect(await s.style('as said')).toEqual({ text: 'as said', styled: false, reason: 'timeout' });
+    expect(s.stopped()).toBe(1);
+  });
+
+  it('a rewrite prompt for typed text does not say it was speech', () => {
+    expect(buildRewritePrompt('x', { style: 'grammar' })).not.toMatch(/SOURCE/);
   });
 });
