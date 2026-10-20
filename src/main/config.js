@@ -1,5 +1,6 @@
 const { getDb } = require('./db');
 const { getDictionaryPacksManifest, getPackById } = require('./dictionary-packs');
+const { REWRITE_STYLES } = require('./jarvis/rewrite');
 
 const DEFAULTS = {
   hotkey: { names: ['FN'], label: 'fn' },
@@ -45,6 +46,13 @@ const DEFAULTS = {
   assistantInstantCommands: true,
   // Set once the assistant has answered: from then on it warms at launch.
   assistantUsed: false,
+  // Press to have the assistant rewrite the focused text field in place
+  // (select all, copy, rewrite, paste). null = off.
+  rewriteHotkey: { names: ['LEFT CTRL', 'LEFT ALT', 'F'], label: '⌃⌥F' },
+  // How the rewrite sounds: one of jarvis/rewrite.js REWRITE_STYLES.
+  rewriteStyle: 'grammar',
+  // The user's own instructions, for the 'custom' style.
+  rewriteInstructions: '',
 };
 
 const AUTO_LEARN_PACK_ID = 'auto-learned';
@@ -102,6 +110,33 @@ function getCommandHotkey() {
 }
 function setCommandHotkey(hotkey) {
   setSetting('commandHotkey', hotkey && Array.isArray(hotkey.names) && hotkey.names.length ? hotkey : null);
+}
+
+/** The rewrite shortcut, or null when the user turned it off. */
+function getRewriteHotkey() {
+  const v = getSetting('rewriteHotkey');
+  if (v === null) return null;
+  if (!v || !Array.isArray(v.names) || v.names.length === 0) return DEFAULTS.rewriteHotkey;
+  return v;
+}
+function setRewriteHotkey(hotkey) {
+  setSetting('rewriteHotkey', hotkey && Array.isArray(hotkey.names) && hotkey.names.length ? hotkey : null);
+}
+
+const REWRITE_STYLE_IDS = REWRITE_STYLES.map((s) => s.id);
+const MAX_REWRITE_INSTRUCTIONS = 500;
+function getRewriteSettings() {
+  const style = getSetting('rewriteStyle');
+  const instructions = getSetting('rewriteInstructions');
+  return {
+    style: REWRITE_STYLE_IDS.includes(style) ? style : DEFAULTS.rewriteStyle,
+    instructions: typeof instructions === 'string' ? instructions.slice(0, MAX_REWRITE_INSTRUCTIONS) : '',
+  };
+}
+function setRewriteSettings(patch = {}) {
+  if (REWRITE_STYLE_IDS.includes(patch.style)) setSetting('rewriteStyle', patch.style);
+  if (typeof patch.instructions === 'string') setSetting('rewriteInstructions', patch.instructions.slice(0, MAX_REWRITE_INSTRUCTIONS));
+  return getRewriteSettings();
 }
 
 const ISLAND_PLACEMENTS = ['left', 'bottom', 'right'];
@@ -404,6 +439,10 @@ module.exports = {
   setHotkey,
   getCommandHotkey,
   setCommandHotkey,
+  getRewriteHotkey,
+  setRewriteHotkey,
+  getRewriteSettings,
+  setRewriteSettings,
   getParakeetVariant,
   setParakeetVariant,
   getIslandPlacement,

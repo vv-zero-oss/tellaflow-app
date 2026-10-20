@@ -21,7 +21,7 @@ const { createTray, getTray, destroyTray } = require('./tray');
 const { buildTrayTemplate, PASTE_LAST_ACCELERATOR } = require('./tray-menu');
 const { createOnboardingWindow, closeOnboarding, getOnboardingWindow } = require('./onboarding');
 const hotkey = require('./hotkey');
-const { pasteText, undoPaste } = require('./paste');
+const { pasteText, undoPaste, copyForRewrite } = require('./paste');
 const permissions = require('./permissions');
 const models = require('./models');
 const { trimSilence, normalizeVolume } = require('./audio-preprocess');
@@ -37,6 +37,7 @@ const { createMeetingDetector } = require('./meeting-detector');
 const { createMeetingNotes } = require('./meeting-notes');
 const macAutomation = require('./mac-automation');
 const { createJarvis } = require('./jarvis');
+const { createRewriter } = require('./jarvis/rewrite');
 const { createQuickCommands, QUICK_COMMANDS } = require('./jarvis/quick-commands');
 const osActions = require('./jarvis/desktop/os-actions');
 const { setPeekabooDownloadRoot, peekabooDownloadDir, resolvePeekaboo } = require('./jarvis/desktop/peekaboo');
@@ -118,7 +119,7 @@ let recordingPurpose = 'dictation';
 
 // ── Voice island ─────────────────────────────────────────────────────────────
 // Who owns what the island shows right now, so its buttons reach the right
-// flow: 'dictation' | 'assistant' | 'meeting' | 'learn' | 'error' | null.
+// flow: 'dictation' | 'assistant' | 'rewrite' | 'meeting' | 'learn' | 'error' | null.
 let islandOwner = null;
 let lastPaste = null;         // { app } — for Undo on the "done" pill
 let islandErrorAction = null; // what "Try again" on a dictation error does
@@ -189,6 +190,7 @@ let meetingNotes = null;
 let meetingDetector = null;
 let meetingCaptureWindow = null;
 let assistant = null;
+let rewriter = null;
 
 // The assistant is opt-in, and what it runs on (Node + bb) is a download
 // (jarvis/runtime.js). It is "ready" — command key live, bb allowed to start —
@@ -398,6 +400,26 @@ function startAssistantFromVoice(request) {
     });
 }
 
+// The rewrite shortcut: the focused field's text, rewritten in place.
+function startRewrite() {
+  // Switched off, the assistant (and its shortcut) isn't there at all.
+  if (!rewriter || !config.getAssistantEnabled()) return;
+  // The app the user is typing in, read before anything of ours can come to
+  // the front (as dictation does at key-down).
+  let target = null;
+  if (process.platform === 'darwin') {
+    try {
+      const { execFileSync } = require('child_process');
+      const name = execFileSync('osascript', ['-e', 'tell application "System Events" to get name of first process whose frontmost is true'], { timeout: 500 }).toString().trim();
+      if (name && !isOwnApp(name)) target = name;
+    } catch {}
+  }
+  rewriteTarget = target;
+  rewriter.run().catch((err) => console.error('[rewrite] failed:', err));
+}
+let rewriteTarget = null;
+let rewriteE2eField = null; // the pretend field in the e2e run
+
 // ── Meeting notes ───────────────────────────────────────────────────────────
 function getMeetingState() {
   const m = meetingNotes?.getActive();
@@ -453,6 +475,11 @@ function handleIslandAction(action) {
     const r = assistant.action(action);
     if (r && r.retry) { startAssistantFromVoice(r.retry); return; }
     if (r) return;
+  }
+  if (islandOwner === 'rewrite') {
+    if (action === 'retry') { startRewrite(); return; }
+    if (action === 'open-settings') { islandRest(); showMainWindow(); sendToMainWindow('navigate', 'settings/assistant'); return; }
+    if (action === 'dismiss' || action === 'later' || action === 'cancel') { void rewriter?.cancel(); islandRest(); return; }
   }
   switch (action) {
     case 'start-listening':
@@ -664,6 +691,8 @@ function initCoreServices() {
     // A chat's report waits while the island is busy with something else.
     islandFree: () => isResting() || islandOwner === 'assistant',
     workspaceDir: path.join(userData, 'assistant', 'workspace'),
+    rewriteDir: path.join(userData, 'assistant', 'rewrite'),
+    rewriteEnabled: () => assistantReady() && !!config.getRewriteHotkey(),
     record: (entry) => {
       if (entry.role !== 'mascot' || !entry.text) return;
       sendToMainWindow('assistant-transcript', entry);
@@ -705,6 +734,41 @@ function initCoreServices() {
     },
     installHelper: (onProgress) => installPeekaboo(onProgress),
   });
+
+  // The text field the rewrite reads and writes: the real one, or in the e2e
+  // run a pretend field (scripts/e2e-rewrite.mjs) — Linux has no ⌘A / ⌘C.
+  const e2eField = process.env.TELLAFLOW_E2E === '1' && process.env.TELLAFLOW_E2E_FIELD === 'fake'
+    ? { app: 'TextEdit', value: '', selection: null, replaced: 0 }
+    : null;
+  rewriter = createRewriter({
+    island: {
+      show: (state, opts) => island('rewrite', state, opts),
+      rest: () => { if (islandOwner === 'rewrite') islandRest(); },
+    },
+    isAssistantOn: () => assistantReady(),
+    getSettings: () => config.getRewriteSettings(),
+    capture: e2eField
+      ? async () => {
+        const sel = e2eField.selection;
+        return sel && sel[1] > sel[0]
+          ? { text: e2eField.value.slice(sel[0], sel[1]), app: e2eField.app, scope: 'selection' }
+          : { text: e2eField.value, app: e2eField.app, scope: 'all' };
+      }
+      : () => copyForRewrite(rewriteTarget),
+    // A selection is replaced by pasting over it; the whole field by ⌘A first.
+    replace: e2eField
+      ? async (text, _app, scope) => {
+        const sel = e2eField.selection;
+        e2eField.value = scope === 'selection' ? e2eField.value.slice(0, sel[0]) + text + e2eField.value.slice(sel[1]) : text;
+        e2eField.selection = null;
+        e2eField.replaced += 1;
+      }
+      : async (text, app, scope) => { pasteText(text, app || rewriteTarget, { selectAll: scope !== 'selection' }); },
+    complete: (prompt, onWaking) => assistant.rewrite(prompt, onWaking),
+    stop: () => assistant.stopRewrite(),
+    onReplaced: ({ app }) => { lastPaste = { app: app || rewriteTarget }; config.setAssistantUsed(true); },
+  });
+  rewriteE2eField = e2eField;
 
   meetingDetector = createMeetingDetector({
     probes: {
@@ -769,6 +833,13 @@ function initCoreServices() {
           if (submenu) t = t.find((i) => i.label === submenu).submenu;
           t.find((i) => i.label === label).click();
         },
+      },
+      // The rewrite shortcut against the pretend field (TELLAFLOW_E2E_FIELD=fake).
+      rewrite: {
+        // selection: [start, end) of the text the user selected, or none.
+        setField: (value, selection = null) => { rewriteE2eField.value = value; rewriteE2eField.selection = selection; rewriteE2eField.replaced = 0; },
+        field: () => ({ ...rewriteE2eField }),
+        press: () => startRewrite(),
       },
       // What reached the pretend desktop (TELLAFLOW_E2E_DESKTOP=fake).
       fakeDesktop: () => (process.env.TELLAFLOW_E2E_DESKTOP === 'fake'
@@ -853,7 +924,7 @@ function trayMenuState() {
     update: { phase: status.phase, version: status.updateVersion },
     lastTranscript: lastDictation()?.text || '',
     // The assistant's key is listed only while the assistant is on.
-    shortcuts: { dictate: config.getHotkey()?.label, command: config.getCommandHotkey()?.label || null, assistant: config.getAssistantEnabled() },
+    shortcuts: { dictate: config.getHotkey()?.label, command: config.getCommandHotkey()?.label || null, assistant: config.getAssistantEnabled(), rewrite: config.getRewriteHotkey()?.label || null },
     microphoneId: config.getMicrophoneDeviceId(),
     microphones: trayMicrophones,
     translation: {
@@ -1308,6 +1379,7 @@ function startHotkeyListener() {
 
   try {
     hotkey.start({
+      onRewrite: () => startRewrite(),
       onStart: ({ purpose } = {}) => {
         // Don't start hotkey recording if click recording is already active
         if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) return;
@@ -1607,6 +1679,7 @@ function registerIPC() {
       meetingBrowserDetection: config.getMeetingBrowserDetection(),
       audioRetentionDays: config.getAudioRetentionDays(),
       commandHotkey: config.getCommandHotkey(),
+      rewriteHotkey: config.getRewriteHotkey(),
       islandPlacement: config.getIslandPlacement(),
       islandMaterial: config.getIslandMaterial(),
     };
@@ -1624,6 +1697,7 @@ function registerIPC() {
     islandPlacement: (v) => { config.setIslandPlacement(v); refreshPlacement(); },
     islandMaterial: (v) => { config.setIslandMaterial(v); refreshPlacement(); },
     commandHotkey: (v) => config.setCommandHotkey(v),
+    rewriteHotkey: (v) => config.setRewriteHotkey(v),
     meetingNotesEnabled: (v) => {
       config.setMeetingNotesEnabled(!!v);
       if (v && process.platform === 'darwin') meetingDetector.start();
@@ -1872,19 +1946,15 @@ function registerIPC() {
     // We filter out keys that would be disruptive (e.g. mouse events).
     const IGNORED_SOLO = new Set(['MOUSE LEFT', 'MOUSE RIGHT', 'MOUSE MIDDLE']);
 
-    tempListener.addListener((e, down) => {
-      if (e.state !== 'DOWN') return;
-      if (IGNORED_SOLO.has(e.name)) return;
+    // A combo is recorded at its first non-modifier key (⌃⌥F); modifiers
+    // alone (fn, Right ⌥, ⌃⇧) when the first of them is let go.
+    const isModifier = (n) => /CTRL|SHIFT|ALT|META|FUNCTION|FN/i.test(n);
+    let peakModifiers = [];
+    let recorded = false;
 
-      // Collect all currently held key names (modifiers + the trigger)
-      const heldModifiers = Object.entries(down)
-        .filter(([name, isDown]) => isDown && name !== e.name)
-        .map(([name]) => name)
-        // Only keep recognized modifier-like names
-        .filter(n => /CTRL|SHIFT|ALT|META|FUNCTION|FN/i.test(n));
-
-      const names = [...heldModifiers, e.name];
-
+    const finish = (names) => {
+      if (recorded) return;
+      recorded = true;
       // Build human-readable label
       const LABEL_MAP = {
         'LEFT CTRL': 'Left Control (^)', 'RIGHT CTRL': 'Right Control (^)',
@@ -1903,6 +1973,24 @@ function registerIPC() {
       }
       stopRecordingSession();
       startHotkeyListener(); // resume main hotkey listener
+    };
+
+    tempListener.addListener((e, down) => {
+      if (IGNORED_SOLO.has(e.name)) return;
+
+      // Collect all currently held modifier names (besides this key)
+      const heldModifiers = Object.entries(down)
+        .filter(([name, isDown]) => isDown && name !== e.name)
+        .map(([name]) => name)
+        .filter(isModifier);
+
+      if (e.state === 'DOWN') {
+        if (!isModifier(e.name)) { finish([...heldModifiers, e.name]); return; }
+        const now = [...heldModifiers, e.name];
+        if (now.length >= peakModifiers.length) peakModifiers = now;
+        return;
+      }
+      if (e.state === 'UP' && isModifier(e.name) && peakModifiers.length) finish(peakModifiers);
     });
 
     const timer = setTimeout(() => {
@@ -2136,6 +2224,8 @@ function registerIPC() {
     } catch (err) { return errorOf(err); }
     finally { runtimeCache = null; runtimeJob = { installing: false, progress: null, error: null, helperError: null }; broadcastAssistantRuntime(); }
   });
+  ipcMain.handle('rewrite-get-settings', () => config.getRewriteSettings());
+  ipcMain.handle('rewrite-set-settings', (_, patch) => config.setRewriteSettings(patch || {}));
   ipcMain.handle('assistant-quick-commands', () => QUICK_COMMANDS.map(({ say, does }) => ({ say, does })));
   // The desktop helper (Peekaboo), downloaded on request — pinned and checksummed.
   ipcMain.handle('assistant-install-helper', async () => {

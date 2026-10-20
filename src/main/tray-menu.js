@@ -86,7 +86,11 @@ function shortcutsMenu({ shortcuts }, actions) {
   return [
     { label: 'Dictate', sublabel: s.dictate || 'fn', enabled: false },
     // Only while the assistant is on (Settings › General › Beta features).
-    ...(s.assistant ? [{ label: 'Ask the assistant', sublabel: s.command || 'Off', enabled: false }] : []),
+    ...(s.assistant ? [
+      { label: 'Ask the assistant', sublabel: s.command || 'Off', enabled: false },
+      // Rewriting runs on the assistant's AI.
+      { label: 'Rewrite text', sublabel: s.rewrite || 'Off', enabled: false },
+    ] : []),
     { label: 'Paste last transcript', sublabel: '⌃⌘V', enabled: false },
     { type: 'separator' },
     { label: 'Change Shortcuts…', click: () => actions.openPage('settings/dictation') },
@@ -96,7 +100,7 @@ function shortcutsMenu({ shortcuts }, actions) {
 /**
  * @param {object} state
  *   recording, meeting: { enabled, active, app }, failedCount,
- *   update: { phase, version }, lastTranscript, shortcuts: { dictate, command, assistant },
+ *   update: { phase, version }, lastTranscript, shortcuts: { dictate, command, assistant, rewrite },
  *   microphoneId, microphones: [{ deviceId, label }],
  *   translation: { available, unavailableReason, enabled, language }
  * @param {object} actions

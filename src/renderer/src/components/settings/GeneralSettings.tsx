@@ -58,11 +58,13 @@ const themeOptions: { value: Theme; label: string; icon: typeof Sun }[] = [
 function HotkeyDialog({
   open,
   currentHotkey,
+  defaultHotkey = DEFAULT_HOTKEY,
   onOpenChange,
   onSave,
 }: {
   open: boolean;
   currentHotkey: HotkeyConfig | undefined;
+  defaultHotkey?: HotkeyConfig;
   onOpenChange: (v: boolean) => void;
   onSave: (hotkey: HotkeyConfig) => void;
 }) {
@@ -112,8 +114,8 @@ function HotkeyDialog({
   const handleReset = () => {
     ipc.stopHotkeyRecording();
     setListening(false);
-    setCaptured(DEFAULT_HOTKEY);
-    flashCodes(namesToCodes(DEFAULT_HOTKEY.names));
+    setCaptured(defaultHotkey);
+    flashCodes(namesToCodes(defaultHotkey.names));
   };
 
   const handleChange = () => {
@@ -123,7 +125,7 @@ function HotkeyDialog({
   };
 
   const handleSave = () => {
-    const hotkey = captured ?? currentHotkey ?? DEFAULT_HOTKEY;
+    const hotkey = captured ?? currentHotkey ?? defaultHotkey;
     onSave(hotkey);
     onOpenChange(false);
   };
@@ -133,7 +135,7 @@ function HotkeyDialog({
     onOpenChange(false);
   };
 
-  const displayLabel = captured?.label ?? currentHotkey?.label ?? DEFAULT_HOTKEY.label;
+  const displayLabel = captured?.label ?? currentHotkey?.label ?? defaultHotkey.label;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -183,7 +185,7 @@ function HotkeyDialog({
           <div className="flex items-center gap-1">
             <button
               onClick={handleReset}
-              title="Reset to fn"
+              title={`Reset to ${defaultHotkey.label}`}
               className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
             >
               <RotateCcw className="w-3 h-3" />
@@ -225,10 +227,14 @@ export function sameHotkey(a: HotkeyConfig | null | undefined, b: HotkeyConfig |
 
 export function HotkeyEditor({
   currentHotkey,
+  defaultHotkey,
+  disabled,
   onSave,
   taken,
 }: {
   currentHotkey: HotkeyConfig | undefined;
+  defaultHotkey?: HotkeyConfig;
+  disabled?: boolean;
   onSave?: (hotkey: HotkeyConfig) => void;
   /** Another shortcut this one must not equal — the dictation key and the
    *  command key share one listener, and the dictation key wins a tie. */
@@ -258,7 +264,8 @@ export function HotkeyEditor({
         </span>
         <button
           onClick={() => setDialogOpen(true)}
-          className="flex items-center gap-1 text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors rounded px-1.5 py-0.5 hover:bg-muted/50"
+          disabled={disabled}
+          className="disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1 text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors rounded px-1.5 py-0.5 hover:bg-muted/50"
         >
           <Pencil className="w-3 h-3" />
           Edit
@@ -268,6 +275,7 @@ export function HotkeyEditor({
       <HotkeyDialog
         open={dialogOpen}
         currentHotkey={currentHotkey}
+        defaultHotkey={defaultHotkey}
         onOpenChange={setDialogOpen}
         onSave={handleSave}
       />

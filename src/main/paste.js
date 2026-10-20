@@ -9,6 +9,10 @@ const SCRIPT_TIMEOUT_MS = 5000;
 
 const PASTE_KEY = 'tell application "System Events" to keystroke "v" using command down';
 const UNDO_KEY = 'tell application "System Events" to keystroke "z" using command down';
+// Replace everything in the field (the rewrite shortcut with nothing selected).
+const SELECT_ALL_PASTE_KEY = 'tell application "System Events"\nkeystroke "a" using command down\ndelay 0.05\nkeystroke "v" using command down\nend tell';
+const COPY_KEY = 'tell application "System Events" to keystroke "c" using command down';
+const SELECT_ALL_COPY_KEY = 'tell application "System Events"\nkeystroke "a" using command down\ndelay 0.05\nkeystroke "c" using command down\nend tell';
 
 // Strip characters that would break the osascript string literal. Names come
 // from System Events, so this is a safety measure, not a user-input concern.
@@ -127,7 +131,7 @@ function createPaster({ clipboard: cb, runScript = runOsascript, restoreDelayMs 
   let original = null;
   let ours = null;
 
-  async function pasteOne(text, targetApp) {
+  async function pasteOne(text, targetApp, { selectAll = false } = {}) {
     if (original === null) original = snapshotClipboard(cb);
     cb.writeText(text);
     ours = text;
@@ -135,7 +139,7 @@ function createPaster({ clipboard: cb, runScript = runOsascript, restoreDelayMs 
     if (!sanitizeApp(targetApp)) console.warn('pasteText: no target app known — pasting into current frontmost window.');
     let pasted = true;
     try {
-      await runScript(keystrokeScript(PASTE_KEY, targetApp));
+      await runScript(keystrokeScript(selectAll ? SELECT_ALL_PASTE_KEY : PASTE_KEY, targetApp));
     } catch (err) {
       pasted = false;
       console.error('Failed to simulate paste:', err.message);
@@ -152,9 +156,9 @@ function createPaster({ clipboard: cb, runScript = runOsascript, restoreDelayMs 
     return pasted;
   }
 
-  function pasteText(text, targetApp = null) {
+  function pasteText(text, targetApp = null, opts) {
     pending++;
-    const run = queue.then(() => pasteOne(text, targetApp)).finally(() => { pending--; });
+    const run = queue.then(() => pasteOne(text, targetApp, opts)).finally(() => { pending--; });
     queue = run.catch(() => {});
     return run;
   }
@@ -174,9 +178,10 @@ function appPaster() {
 /**
  * Paste text into the target app (re-activated first). Resolves to whether
  * the Cmd+V keystroke was delivered; callers may ignore the promise.
+ * `selectAll` presses ⌘A first, so the text replaces the whole field.
  */
-function pasteText(text, targetApp = null) {
-  return appPaster().pasteText(text, targetApp);
+function pasteText(text, targetApp = null, opts) {
+  return appPaster().pasteText(text, targetApp, opts);
 }
 
 /** Undo the last paste: re-activate the app it went into and press Cmd+Z. */
@@ -186,4 +191,75 @@ function undoPaste(targetApp = null) {
   });
 }
 
-module.exports = { pasteText, undoPaste, createPaster, snapshotClipboard, restoreClipboard, keystrokeScript };
+const COPY_WAIT_MS = 900;
+
+// The focused element's selected text, through Accessibility. Electron and
+// Chromium apps keep their tree off until an assistive app asks for it.
+// Prints "ok" + linefeed + the selection (empty: nothing selected), or
+// "unknown" when the app doesn't say.
+const SELECTED_TEXT_SCRIPT = `
+tell application "System Events"
+  set p to first application process whose frontmost is true
+  try
+    set s to value of attribute "AXSelectedText" of (value of attribute "AXFocusedUIElement" of p)
+    if s is missing value then error "none"
+    return "ok" & linefeed & (s as text)
+  end try
+  try
+    set value of attribute "AXManualAccessibility" of p to true
+    delay 0.1
+    set s to value of attribute "AXSelectedText" of (value of attribute "AXFocusedUIElement" of p)
+    if s is missing value then error "none"
+    return "ok" & linefeed & (s as text)
+  end try
+end tell
+return "unknown"
+`;
+
+function readOsascript(script, timeout) {
+  return new Promise((resolve, reject) => {
+    execFile('osascript', ['-e', script], { timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))));
+  });
+}
+
+/**
+ * The text to rewrite in the focused field: { text, app, scope }.
+ * What the user selected (scope 'selection'); with nothing selected, the
+ * whole field (scope 'all', so the paste selects all first). The selection is
+ * read through Accessibility first; an app that doesn't expose it is asked
+ * with ⌘C (an empty copy means nothing is selected). The user's clipboard is
+ * put back as it was.
+ */
+async function copyForRewrite(targetApp = null) {
+  const app = sanitizeApp(targetApp);
+  let selection = null; // null: the app didn't say
+  try {
+    const out = (await readOsascript(SELECTED_TEXT_SCRIPT, 2000)).replace(/\n$/, '');
+    if (out === 'ok' || out.startsWith('ok\n')) selection = out.slice(3);
+  } catch {}
+  if (selection) return { text: selection, app, scope: 'selection' };
+
+  const cb = require('electron').clipboard;
+  const original = snapshotClipboard(cb);
+  const copyWith = async (key) => {
+    cb.clear();
+    await runOsascript(keystrokeScript(key, app));
+    for (const t0 = Date.now(); Date.now() - t0 < COPY_WAIT_MS;) {
+      const text = cb.readText();
+      if (text) return text;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return '';
+  };
+  try {
+    if (selection === null) {
+      const copied = await copyWith(COPY_KEY);
+      if (copied) return { text: copied, app, scope: 'selection' };
+    }
+    return { text: await copyWith(SELECT_ALL_COPY_KEY), app, scope: 'all' };
+  } finally {
+    restoreClipboard(cb, original);
+  }
+}
+
+module.exports = { pasteText, undoPaste, copyForRewrite, createPaster, snapshotClipboard, restoreClipboard, keystrokeScript };

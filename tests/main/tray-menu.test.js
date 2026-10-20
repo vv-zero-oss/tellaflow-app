@@ -108,11 +108,16 @@ describe('tray menu', () => {
     expect(find(sc, 'Dictate').sublabel).toBe('fn');
     expect(find(sc, 'Ask the assistant').sublabel).toBe('Off');
     expect(find(sc, 'Paste last transcript').sublabel).toBe('⌃⌘V');
+    expect(find(sc, 'Rewrite text').sublabel).toBe('Off');
+    const on = find(buildTrayTemplate({ shortcuts: { dictate: 'fn', command: 'Right ⌥', rewrite: '⌃⌥F', assistant: true } }, actions()), 'Shortcuts').submenu;
+    expect(find(on, 'Rewrite text').sublabel).toBe('⌃⌥F');
   });
 
   it('lists the assistant’s key only while the assistant is on', () => {
     const sc = find(buildTrayTemplate({ shortcuts: { dictate: 'fn', command: 'Right ⌥', assistant: false } }, actions()), 'Shortcuts').submenu;
     expect(sc.some((i) => i.label === 'Ask the assistant')).toBe(false);
+    // Rewriting runs on the assistant's AI: hidden with it.
+    expect(sc.some((i) => i.label === 'Rewrite text')).toBe(false);
   });
 
   it('opens the Dictation tab of Settings for shortcuts and microphones', () => {

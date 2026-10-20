@@ -24,6 +24,7 @@ import {
   CalendarClock,
   Check,
   Circle,
+  Info,
   LoaderCircle,
   MicOff,
   Pause,
@@ -1202,6 +1203,10 @@ export type IslandContent = {
   /** done: what just happened, and whether Undo applies */
   doneText?: string;
   canUndo?: boolean;
+  /** done: a check (it worked) or an info mark (nothing to do) */
+  doneIcon?: "check" | "info";
+  /** thinking: what it is thinking about ("Rewriting · Formal") */
+  thinkingText?: string;
   /** error, setup, approval, meeting */
   notice?: IslandNotice;
   plan?: { title: string; steps: PlanStep[] };
@@ -1356,7 +1361,7 @@ export function VoiceIsland({
                 )}
                 {state === "thinking" && (
                   <span className="island-shimmer text-[length:var(--island-text-button)] whitespace-nowrap">
-                    Thinking
+                    {content.thinkingText ?? "Thinking"}
                   </span>
                 )}
                 {state === "transcribing" && (
@@ -1383,7 +1388,11 @@ export function VoiceIsland({
                 )}
                 {state === "done" && (
                   <div className="flex items-center gap-2">
-                    <Check className="size-3.5 text-[var(--island-success)]" aria-hidden="true" />
+                    {content.doneIcon === "info" ? (
+                      <Info className="size-3.5 text-[var(--island-fg-muted)]" aria-hidden="true" />
+                    ) : (
+                      <Check className="size-3.5 text-[var(--island-success)]" aria-hidden="true" />
+                    )}
                     <span className="text-[length:var(--island-text-button)] whitespace-nowrap">{content.doneText ?? "Inserted 38 words"}</span>
                     {(content.canUndo ?? true) && (
                       <IslandButton className="ml-1 h-6 flex-none" onClick={act("undo")}>

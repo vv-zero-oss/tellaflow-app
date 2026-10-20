@@ -155,6 +155,8 @@ contextBridge.exposeInMainWorld('tellaflow', {
   assistantGetSettings: () => ipcRenderer.invoke('assistant-get-settings'),
   assistantQuickCommands: () => ipcRenderer.invoke('assistant-quick-commands'),
   assistantSetSettings: (patch) => ipcRenderer.invoke('assistant-set-settings', patch),
+  rewriteGetSettings: () => ipcRenderer.invoke('rewrite-get-settings'),
+  rewriteSetSettings: (patch) => ipcRenderer.invoke('rewrite-set-settings', patch),
   assistantInstallHelper: () => ipcRenderer.invoke('assistant-install-helper'),
   assistantRuntimeStatus: () => ipcRenderer.invoke('assistant-runtime-status'),
   assistantRuntimeInstall: () => ipcRenderer.invoke('assistant-runtime-install'),

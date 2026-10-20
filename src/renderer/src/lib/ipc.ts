@@ -40,6 +40,7 @@ export interface AppConfig {
   meetingBrowserDetection?: boolean;
   audioRetentionDays?: number;
   commandHotkey?: HotkeyConfig | null;
+  rewriteHotkey?: HotkeyConfig | null;
   islandPlacement?: 'left' | 'bottom' | 'right';
   islandMaterial?: 'translucent' | 'opaque';
 }
@@ -48,6 +49,7 @@ export type FeatureSettingKey =
   | 'islandPlacement'
   | 'islandMaterial'
   | 'commandHotkey'
+  | 'rewriteHotkey'
   | 'autoLearnEnabled'
   | 'contextAwarenessEnabled'
   | 'meetingNotesEnabled'
@@ -104,6 +106,15 @@ export interface AssistantSettings {
 export interface AssistantQuickCommand {
   say: string;
   does: string;
+}
+
+/** How the rewrite shortcut rewrites (src/main/jarvis/rewrite.js REWRITE_STYLES). */
+export type RewriteStyle = 'grammar' | 'formal' | 'casual' | 'concise' | 'custom';
+
+export interface RewriteSettings {
+  style: RewriteStyle;
+  /** The user's own instructions, for the 'custom' style. */
+  instructions: string;
 }
 
 /** One of bb's providers and whether it can run here. */
@@ -383,6 +394,8 @@ interface TellaflowAPI {
   assistantGetSettings: () => Promise<AssistantSettings>;
   assistantQuickCommands: () => Promise<AssistantQuickCommand[]>;
   assistantSetSettings: (patch: Partial<AssistantSettings>) => Promise<AssistantSettings>;
+  rewriteGetSettings: () => Promise<RewriteSettings>;
+  rewriteSetSettings: (patch: Partial<RewriteSettings>) => Promise<RewriteSettings>;
   assistantInstallHelper: () => Promise<{ ok: boolean; error?: string }>;
   assistantRuntimeStatus: () => Promise<AssistantRuntimeStatus>;
   assistantRuntimeInstall: () => Promise<{ ok: boolean; error?: string }>;

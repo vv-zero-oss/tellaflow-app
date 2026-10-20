@@ -39,6 +39,25 @@ describe('feature settings defaults', () => {
   });
 });
 
+describe('rewrite settings', () => {
+  it('defaults to fixing grammar on ⌃⌥F, and can be turned off', () => {
+    const config = freshConfig();
+    expect(config.getRewriteSettings()).toEqual({ style: 'grammar', instructions: '' });
+    expect(config.getRewriteHotkey()).toEqual({ names: ['LEFT CTRL', 'LEFT ALT', 'F'], label: '⌃⌥F' });
+    config.setRewriteHotkey(null);
+    expect(config.getRewriteHotkey()).toBeNull();
+    config.setRewriteHotkey({ names: ['RIGHT META', 'G'], label: '⌘G' });
+    expect(config.getRewriteHotkey().names).toEqual(['RIGHT META', 'G']);
+  });
+
+  it('keeps only known styles and caps the instructions', () => {
+    const config = freshConfig();
+    expect(config.setRewriteSettings({ style: 'formal' }).style).toBe('formal');
+    expect(config.setRewriteSettings({ style: 'shouty' }).style).toBe('formal');
+    expect(config.setRewriteSettings({ style: 'custom', instructions: 'x'.repeat(900) }).instructions).toHaveLength(500);
+  });
+});
+
 describe('auto-learned dictionary entries', () => {
   it('adds learned corrections tagged as auto-learned', () => {
     const config = freshConfig();

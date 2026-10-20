@@ -108,6 +108,17 @@ writes: `ffmpeg -i in.mp3 -ac 1 -ar 16000 -map_metadata -1 -fflags +bitexact -c:
   Code "unauthenticated" (it reads the keychain/`~/.claude/.credentials.json`
   shape a Mac login writes) but runs it when named — the script names
   `claude-code` (`E2E_PROVIDER`).
+- **Rewrite text (the rewrite shortcut, ⌃⌥F):**
+  `xvfb-run -a node scripts/e2e-rewrite.mjs e2e-rewrite` — switches the
+  assistant on and downloads its runtime (`E2E_RUNTIME_DIR` reuses one), then
+  real bb + the real AI rewrite a pretend text field
+  (`TELLAFLOW_E2E_FIELD=fake`; ⌘A/⌘C/⌘V and Accessibility are macOS-only) in
+  each style (`src/main/jarvis/rewrite.js`): the selection only when there is
+  one (read via AXSelectedText, else ⌘C), the whole field otherwise; on a
+  hidden bb thread in a project of its own (`assistant/rewrite`), then
+  screenshots Settings › Assistant › Rewrite text. Off with the assistant (the
+  shortcut does nothing); on but not downloaded, it says to download. Nothing
+  is ever rewritten unasked — dictation is pasted as said.
 - **The assistant's island states:**
   `xvfb-run -a node scripts/e2e-island-assistant.mjs` — every assistant view
   (asking, reply short/long/streaming, steps, hand-off, confirmations with

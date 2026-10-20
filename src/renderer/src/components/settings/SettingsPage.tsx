@@ -15,6 +15,7 @@ import { PermissionsSettings } from './PermissionsSettings';
 import { IslandSettings } from './SystemSettings';
 import { SmartDictationSettings, MeetingSettings, RetentionRow } from './SmartFeaturesSettings';
 import { AssistantSettings, BetaFeatures } from './AssistantSettings';
+import { RewriteSettings } from './RewriteSettings';
 import { UpdateRow } from './UpdateRow';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useAssistantRuntime } from '@/hooks/use-assistant-runtime';
@@ -254,7 +255,10 @@ export function SettingsPage({
           )}
           {tab === 'meetings' && <MeetingSettings config={config} refreshConfig={refreshConfig} />}
           {tab === 'assistant' && assistantOn && (
-            <AssistantSettings config={config} refreshConfig={refreshConfig} onTurnedOff={() => onTabChange('general')} />
+            <>
+              <AssistantSettings config={config} refreshConfig={refreshConfig} onTurnedOff={() => onTabChange('general')} />
+              <RewriteSettings config={config} refreshConfig={refreshConfig} />
+            </>
           )}
           {tab === 'permissions' && (
             <PermissionsSettings
