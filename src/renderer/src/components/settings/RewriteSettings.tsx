@@ -17,8 +17,9 @@ export const REWRITE_STYLES: { id: RewriteStyle; label: string; description: str
 ];
 
 /**
- * Rewrite text: a shortcut that selects everything in the field you're typing
- * in, has the assistant's AI rewrite it in the chosen style, and puts it back.
+ * Rewrite text: a shortcut that takes the text you selected (or, with none,
+ * the whole field you're typing in), has the assistant's AI rewrite it in the
+ * chosen style, and puts it back. Never runs on its own.
  * Runs on the assistant, so it is off while the command key is.
  */
 export function RewriteSettings({ config, refreshConfig }: { config: AppConfig; refreshConfig: () => Promise<void> }) {
@@ -57,7 +58,7 @@ export function RewriteSettings({ config, refreshConfig }: { config: AppConfig; 
               <span className="text-sm">Rewrite shortcut</span>
               <p className="text-xs text-muted-foreground/60 mt-0.5">
                 {assistantOn
-                  ? 'Press in any text field: it selects all the text, rewrites it with AI, and pastes it back. ⌘Z undoes it.'
+                  ? 'Select text and press it: the selection is rewritten in this style and put back. With nothing selected, the whole field is. ⌘Z undoes it.'
                   : 'Uses the assistant’s AI. Set a Command key under General to turn it on.'}
               </p>
             </div>

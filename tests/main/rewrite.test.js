@@ -12,8 +12,8 @@ import {
 } from '../../src/main/jarvis/rewrite.js';
 import { createJarvis } from '../../src/main/jarvis/index.js';
 
-function setup({ text = 'i has went to the store yesterday', answer, assistantOn = true, settings = { style: 'grammar', instructions: '' }, complete } = {}) {
-  const field = { text, app: 'Notes', replaced: [] };
+function setup({ text = 'i has went to the store yesterday', selection = null, answer, assistantOn = true, settings = { style: 'grammar', instructions: '' }, complete } = {}) {
+  const field = { text, app: 'Notes', replaced: [], scopes: [] };
   const shown = [];
   const prompts = [];
   const replaced = [];
@@ -21,8 +21,14 @@ function setup({ text = 'i has went to the store yesterday', answer, assistantOn
     island: { show: (state, opts) => shown.push({ state, content: opts?.content }), rest: () => shown.push({ state: 'rest' }) },
     isAssistantOn: () => assistantOn,
     getSettings: () => settings,
-    capture: async () => ({ text: field.text, app: field.app }),
-    replace: async (t, app) => { field.text = t; field.replaced.push(app); },
+    capture: async () => (selection
+      ? { text: field.text.slice(...selection), app: field.app, scope: 'selection' }
+      : { text: field.text, app: field.app, scope: 'all' }),
+    replace: async (t, app, scope) => {
+      field.text = scope === 'selection' ? field.text.slice(0, selection[0]) + t + field.text.slice(selection[1]) : t;
+      field.replaced.push(app);
+      field.scopes.push(scope);
+    },
     complete: complete || (async (prompt) => { prompts.push(prompt); return { ok: true, text: answer ?? 'I went to the store yesterday.' }; }),
     onReplaced: (e) => replaced.push(e),
     log: () => {},
@@ -65,6 +71,26 @@ describe('rewriter', () => {
     expect(replaced).toEqual([{ app: 'Notes' }]);
     expect(shown.filter((s) => s.state === 'thinking').map((s) => s.content.thinkingText)).toContain('Rewriting · Formal');
     expect(shown.at(-1)).toMatchObject({ state: 'done', content: { doneText: 'Rewrote 6 words · Formal', canUndo: true } });
+  });
+
+  it('rewrites only the selection, and pastes over just that', async () => {
+    const text = 'Keep this. i has went to the store. Keep this too.';
+    const start = text.indexOf('i has');
+    const end = text.indexOf(' Keep this too');
+    const { r, field, prompts } = setup({ text, selection: [start, end], answer: 'I went to the store.' });
+    expect(await r.run()).toMatchObject({ ok: true, changed: true });
+    expect(prompts[0]).toContain('<text>\ni has went to the store.\n</text>');
+    expect(prompts[0]).not.toContain('Keep this');
+    expect(prompts[0]).toMatch(/SCOPE: a selection/);
+    expect(field.scopes).toEqual(['selection']);
+    expect(field.text).toBe('Keep this. I went to the store. Keep this too.');
+  });
+
+  it('with nothing selected, rewrites the whole field', async () => {
+    const { r, field, prompts } = setup();
+    await r.run();
+    expect(field.scopes).toEqual(['all']);
+    expect(prompts[0]).not.toMatch(/SCOPE/);
   });
 
   it('needs the assistant on, and never reads the field otherwise', async () => {

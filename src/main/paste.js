@@ -74,34 +74,78 @@ function undoPaste(targetApp = null) {
 
 const COPY_WAIT_MS = 900;
 
-/**
- * Select everything in the focused field and copy it: { text, app }.
- * The clipboard is emptied first so an app that copies nothing (no field
- * focused) reads as empty instead of as whatever was on it, and is put back
- * afterwards.
- */
-async function copyAllText(targetApp = null) {
-  const original = clipboard.readText();
+// The focused element's selected text, through Accessibility. Electron and
+// Chromium apps keep their tree off until an assistive app asks for it.
+// Prints "ok" + linefeed + the selection (empty: nothing selected), or
+// "unknown" when the app doesn't say.
+const SELECTED_TEXT_SCRIPT = `
+tell application "System Events"
+  set p to first application process whose frontmost is true
+  try
+    set s to value of attribute "AXSelectedText" of (value of attribute "AXFocusedUIElement" of p)
+    if s is missing value then error "none"
+    return "ok" & linefeed & (s as text)
+  end try
+  try
+    set value of attribute "AXManualAccessibility" of p to true
+    delay 0.1
+    set s to value of attribute "AXSelectedText" of (value of attribute "AXFocusedUIElement" of p)
+    if s is missing value then error "none"
+    return "ok" & linefeed & (s as text)
+  end try
+end tell
+return "unknown"
+`;
+
+function osa(script, timeout = 3000) {
+  return new Promise((resolve, reject) => {
+    execFile('osascript', ['-e', script], { timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))));
+  });
+}
+
+/** Press keys in System Events and read what landed on the clipboard. */
+async function copyWith(keys, safeTarget) {
   clipboard.clear();
+  const body = `tell application "System Events"\n${keys}\nend tell`;
+  await osa(safeTarget ? `tell application "${safeTarget}" to activate\ndelay 0.1\n${body}` : body);
+  for (const t0 = Date.now(); Date.now() - t0 < COPY_WAIT_MS;) {
+    const text = clipboard.readText();
+    if (text) return text;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return '';
+}
+
+const COPY = 'keystroke "c" using command down';
+const SELECT_ALL_COPY = 'keystroke "a" using command down\ndelay 0.05\nkeystroke "c" using command down';
+
+/**
+ * The text to rewrite in the focused field: { text, app, scope }.
+ * What the user selected (scope 'selection'); with nothing selected, the
+ * whole field (scope 'all', selected with ⌘A so the paste replaces it).
+ * The selection is read through Accessibility first; an app that doesn't
+ * expose it is asked with ⌘C (an empty copy means nothing is selected). The
+ * clipboard is put back afterwards.
+ */
+async function copyForRewrite(targetApp = null) {
   const safeTarget = targetApp ? targetApp.replace(/[\\"'\n\r]/g, '') : null;
-  const copyScript = 'tell application "System Events"\nkeystroke "a" using command down\ndelay 0.05\nkeystroke "c" using command down\nend tell';
-  const script = safeTarget
-    ? `tell application "${safeTarget}" to activate\ndelay 0.1\n${copyScript}`
-    : copyScript;
+  let selection = null; // null: the app didn't say
   try {
-    await new Promise((resolve, reject) => {
-      execFile('osascript', ['-e', script], { timeout: 3000 }, (err) => (err ? reject(err) : resolve()));
-    });
-    let text = '';
-    for (const t0 = Date.now(); Date.now() - t0 < COPY_WAIT_MS;) {
-      text = clipboard.readText();
-      if (text) break;
-      await new Promise((r) => setTimeout(r, 50));
+    const out = (await osa(SELECTED_TEXT_SCRIPT, 2000)).replace(/\n$/, '');
+    if (out.startsWith('ok\n') || out === 'ok') selection = out.slice(3);
+  } catch {}
+  if (selection) return { text: selection, app: safeTarget, scope: 'selection' };
+
+  const original = clipboard.readText();
+  try {
+    if (selection === null) {
+      const copied = await copyWith(COPY, safeTarget);
+      if (copied) return { text: copied, app: safeTarget, scope: 'selection' };
     }
-    return { text, app: safeTarget };
+    return { text: await copyWith(SELECT_ALL_COPY, safeTarget), app: safeTarget, scope: 'all' };
   } finally {
     clipboard.writeText(original);
   }
 }
 
-module.exports = { pasteText, undoPaste, copyAllText };
+module.exports = { pasteText, undoPaste, copyForRewrite };

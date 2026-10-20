@@ -21,7 +21,7 @@ const { createTray, getTray, destroyTray } = require('./tray');
 const { buildTrayTemplate, PASTE_LAST_ACCELERATOR } = require('./tray-menu');
 const { createOnboardingWindow, closeOnboarding, getOnboardingWindow } = require('./onboarding');
 const hotkey = require('./hotkey');
-const { pasteText, undoPaste, copyAllText } = require('./paste');
+const { pasteText, undoPaste, copyForRewrite } = require('./paste');
 const permissions = require('./permissions');
 const models = require('./models');
 const { trimSilence, normalizeVolume } = require('./audio-preprocess');
@@ -685,7 +685,7 @@ function initCoreServices() {
   // The text field the rewrite reads and writes: the real one, or in the e2e
   // run a pretend field (scripts/e2e-rewrite.mjs) — Linux has no ⌘A / ⌘C.
   const e2eField = process.env.TELLAFLOW_E2E === '1' && process.env.TELLAFLOW_E2E_FIELD === 'fake'
-    ? { app: 'TextEdit', value: '', replaced: 0 }
+    ? { app: 'TextEdit', value: '', selection: null, replaced: 0 }
     : null;
   rewriter = createRewriter({
     island: {
@@ -695,11 +695,22 @@ function initCoreServices() {
     isAssistantOn: () => !!config.getCommandHotkey(),
     getSettings: () => config.getRewriteSettings(),
     capture: e2eField
-      ? async () => ({ text: e2eField.value, app: e2eField.app })
-      : () => copyAllText(rewriteTarget),
+      ? async () => {
+        const sel = e2eField.selection;
+        return sel && sel[1] > sel[0]
+          ? { text: e2eField.value.slice(sel[0], sel[1]), app: e2eField.app, scope: 'selection' }
+          : { text: e2eField.value, app: e2eField.app, scope: 'all' };
+      }
+      : () => copyForRewrite(rewriteTarget),
+    // A selection is replaced by pasting over it; the whole field by ⌘A first.
     replace: e2eField
-      ? async (text) => { e2eField.value = text; e2eField.replaced += 1; }
-      : async (text, app) => { pasteText(text, app || rewriteTarget, { selectAll: true }); },
+      ? async (text, _app, scope) => {
+        const sel = e2eField.selection;
+        e2eField.value = scope === 'selection' ? e2eField.value.slice(0, sel[0]) + text + e2eField.value.slice(sel[1]) : text;
+        e2eField.selection = null;
+        e2eField.replaced += 1;
+      }
+      : async (text, app, scope) => { pasteText(text, app || rewriteTarget, { selectAll: scope !== 'selection' }); },
     complete: (prompt, onWaking) => assistant.rewrite(prompt, onWaking),
     stop: () => assistant.stopRewrite(),
     onReplaced: ({ app }) => { lastPaste = { app: app || rewriteTarget }; config.setAssistantUsed(true); },
@@ -772,7 +783,8 @@ function initCoreServices() {
       },
       // The rewrite shortcut against the pretend field (TELLAFLOW_E2E_FIELD=fake).
       rewrite: {
-        setField: (value) => { rewriteE2eField.value = value; rewriteE2eField.replaced = 0; },
+        // selection: [start, end) of the text the user selected, or none.
+        setField: (value, selection = null) => { rewriteE2eField.value = value; rewriteE2eField.selection = selection; rewriteE2eField.replaced = 0; },
         field: () => ({ ...rewriteE2eField }),
         press: () => startRewrite(),
       },
