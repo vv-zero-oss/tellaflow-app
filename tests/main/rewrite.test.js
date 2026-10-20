@@ -70,7 +70,19 @@ describe('rewriter', () => {
     expect(field.replaced).toEqual(['Notes']);
     expect(replaced).toEqual([{ app: 'Notes' }]);
     expect(shown.filter((s) => s.state === 'thinking').map((s) => s.content.thinkingText)).toContain('Rewriting · Formal');
-    expect(shown.at(-1)).toMatchObject({ state: 'done', content: { doneText: 'Rewrote 6 words · Formal', canUndo: true } });
+    expect(shown.at(-1)).toMatchObject({ state: 'done', content: { doneText: 'Updated to formal text', canUndo: true } });
+  });
+
+  it('says what the text became, per style', async () => {
+    const said = async (style) => {
+      const { r, shown } = setup({ settings: { style, instructions: '' } });
+      await r.run();
+      return shown.at(-1).content.doneText;
+    };
+    expect(await said('grammar')).toBe('Fixed the grammar');
+    expect(await said('casual')).toBe('Updated to casual text');
+    expect(await said('concise')).toBe('Updated to concise text');
+    expect(await said('custom')).toBe('Updated the text');
   });
 
   it('rewrites only the selection, and pastes over just that', async () => {

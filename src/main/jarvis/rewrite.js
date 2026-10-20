@@ -94,8 +94,11 @@ function cleanRewriteOutput(out) {
   return t;
 }
 
-function wordCount(text) {
-  return String(text || '').split(/\s+/).filter(Boolean).length;
+/** What the done pill says: what the text became, not how much changed. */
+function doneMessage(style) {
+  if (style.id === 'grammar') return 'Fixed the grammar';
+  if (style.id === 'custom') return 'Updated the text';
+  return `Updated to ${style.label.toLowerCase()} text`;
 }
 
 /**
@@ -180,7 +183,7 @@ function createRewriter(deps) {
       if (!live()) return { ok: true, changed: true, text: rewritten };
       deps.onReplaced?.({ app: field.app ?? null });
       deps.island.show('done', {
-        content: { doneText: `Rewrote ${wordCount(rewritten)} word${wordCount(rewritten) === 1 ? '' : 's'} · ${style.id === 'custom' ? 'Custom' : style.label}`, canUndo: true },
+        content: { doneText: doneMessage(style), canUndo: true },
         autoRestMs: 4000,
       });
       return { ok: true, changed: true, text: rewritten };
