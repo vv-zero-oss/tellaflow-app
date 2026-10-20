@@ -46,8 +46,21 @@ async function waitFor(fn, { timeout = 60_000, every = 200, label = 'condition' 
 }
 
 // Each case: the request, what to press on a confirmation, and what must hold.
+const ran = (d, file) => (d?.quick ?? []).some((c) => c[0] === file);
 const CASES = [
+  // Instant commands: no AI, done as the key is let go.
+  { id: 'instant-screenshot', request: 'Take a screenshot', expect: (v, t, d) => /Screenshot saved/.test(t) && ran(d, 'screencapture'), fast: true },
+  { id: 'instant-music', request: 'Pause the music', expect: (v, t, d) => /Paused Spotify/.test(t) && ran(d, 'osascript'), fast: true },
+  { id: 'instant-open', request: 'Open Safari', expect: (v, t, d) => /Opened Safari/.test(t) && ran(d, 'open'), fast: true },
+  // Mixed requests: every step instant, or the instant part first and only
+  // the rest to the AI.
+  { id: 'mixed-instant', request: 'Open Safari and go to github.com', expect: (v, t, d) => /Opened Safari\. Opened github\.com\./.test(t) && d.quick.some((c) => c[1] === 'https://github.com'), fast: 'open-url' },
+  { id: 'mixed-ai', request: 'Open Notes and tell me what 12 times 12 is', expect: (v, t, d) => /^Opened Notes\./.test(t) && /144/.test(t) && d.quick.some((c) => c[2] === 'Notes') },
   { id: 'answer', request: 'What is 15 percent of 240? Answer in one short sentence.', expect: (v, t) => /36/.test(t) },
+  // A question that needs a lookup is answered here, by the island's own
+  // thread with its tools — not handed to a chat.
+  { id: 'lookup', request: 'What is the weather in Mumbai right now?', expect: (v, t) => /mumbai/i.test(t) && /°|degree|celsius|rain|humid|cloud|sunny|clear/i.test(t) && !v?.content?.reply?.chat },
+  { id: 'follow-up', request: 'And in Fahrenheit?', expect: (v, t) => /°F|fahrenheit/i.test(t) },
   {
     id: 'desktop',
     request: 'Open TextEdit and type: Buy milk',
@@ -65,6 +78,14 @@ const CASES = [
     request: 'This is a bigger job for a chat: write a packing list for a weekend hiking trip.',
     expect: (v) => v?.content?.reply?.chat === true,
     then: 'open-chat',
+  },
+  // The bridge: a chat asks on the island, gets the answer, and reports back
+  // there when it is done.
+  {
+    id: 'chat-talks-back',
+    request: 'Start a new chat to plan a three-course dinner menu for four. It must first ask me on the island whether it should be vegetarian, with the options Vegetarian and Anything.',
+    expect: (v) => v?.content?.reply?.chat === true,
+    bridge: true,
   },
 ];
 
@@ -190,6 +211,7 @@ try {
 
   for (const c of CASES) {
     const t0 = Date.now();
+    const quickBefore = (await desk())?.quick?.length ?? 0;
     await T((_, r) => globalThis.__tellaflowTest.island.command(r), c.request);
     const seen = [];
     let n = 0;
@@ -213,13 +235,41 @@ try {
       if (settled || Date.now() - t0 > 240_000) {
         await shot(`${c.id}-${String(++n).padStart(2, '0')}-final`, 600);
         const d = await desk();
-        check(`${c.id}: "${c.request}"`, !!c.expect(v, reply?.text ?? '', d ?? {}), `${st}: ${JSON.stringify(reply?.text ?? v?.content?.notice ?? '')} · first words ${firstWordsMs ?? '—'} ms · ${Math.round((Date.now() - t0) / 1000)} s`);
+        const dd = d ? { ...d, quick: (d.quick ?? []).slice(quickBefore) } : {};
+        check(`${c.id}: "${c.request}"`, !!c.expect(v, reply?.text ?? '', dd), `${st}: ${JSON.stringify(reply?.text ?? v?.content?.notice ?? '')} · first words ${firstWordsMs ?? '—'} ms · ${Math.round((Date.now() - t0) / 1000)} s`);
+        if (c.fast) check(`${c.id}: answered in under a second, without the AI`, firstWordsMs !== null && firstWordsMs < 1000 && mainLogs.join('').includes(`instant command { id: '${typeof c.fast === 'string' ? c.fast : c.request.includes('screenshot') ? 'screenshot' : c.request.includes('music') ? 'media' : 'open-app'}'`), `${firstWordsMs} ms to the answer`);
         break;
       }
       await sleep(120);
     }
     summary.push(`${c.id}: "${c.request}" → ${seen.map((s) => s.split('|')[0]).join(' → ')}`);
     await act(c.then || 'dismiss');
+    await sleep(800);
+    if (c.bridge) await chatTalksBack(c);
+  }
+
+  /** After a hand-off: the chat's question on the island, answered there, and
+   *  its report on the island when it is done. */
+  async function chatTalksBack(c) {
+    const t0 = Date.now();
+    const ask = await waitFor(async () => { const v = await view(); return v?.state === 'ask' ? v : null; }, { label: "the chat's question on the island", timeout: 240_000 }).catch(() => null);
+    check(`${c.id}: the chat asks on the island`, !!ask, JSON.stringify(ask?.content?.ask ?? null));
+    if (ask) {
+      await shot(`${c.id}-ask`, 400);
+      const i = Math.max(0, (ask.content.ask.options ?? []).findIndex((o) => /veg/i.test(o)));
+      await act(`answer:${i}`);
+      await sleep(300);
+      await shot(`${c.id}-answered`, 100);
+    }
+    const report = await waitFor(async () => {
+      const v = await view();
+      const r = v?.content?.reply;
+      return v?.state === 'reply' && r && !r.working && r.chat && r.done && r.text && !/started|I'll tell you/i.test(r.text) ? v : null;
+    }, { label: "the chat's report on the island", timeout: 300_000, every: 300 }).catch(() => null);
+    check(`${c.id}: the chat reports back on the island`, !!report, `${JSON.stringify(report?.content?.reply ?? null)} · ${Math.round((Date.now() - t0) / 1000)} s after the hand-off`);
+    if (report) await shot(`${c.id}-report`, 400);
+    summary.push(`${c.id}: chat → ask on island → answered → report on island: ${JSON.stringify(report?.content?.reply?.text ?? null)}`);
+    await act('dismiss');
     await sleep(800);
   }
 
@@ -265,9 +315,11 @@ try {
 
   await T(() => globalThis.__tellaflowTest.navigate('settings/assistant'));
   await sleep(800);
+  await main.locator('text=What can I say?').first().click();
   await main.locator('text=Run actions without asking').first().scrollIntoViewIfNeeded();
   await sleep(2500);
   await main.screenshot({ path: path.join(OUT, 'settings-assistant.png') });
+  check('Settings › Assistant lists the instant commands', (await main.locator('[data-quick-commands] li').count()) >= 10);
   check('Settings › Assistant has no Control apps row', (await main.locator('text=Control apps').count()) === 0);
 
   // ── And back out: Remove frees the disk; off hides it all and stops bb ──

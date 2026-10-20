@@ -14,8 +14,20 @@ reply's ```mascot block is checked by `mascot-actions.js` (the allowlist) and
 run by `mascot-dispatch.js` (the desktop tier's gates: Accessibility re-read
 per action, password-field refusal, forced confirmations) through Peekaboo
 (`desktop/`); desktop tasks continue as a loop verified by a fresh look
-(`desktop-loop.js`). Bigger jobs go to a visible bb chat, which the Assistant
-page frames. The assistant is **opt-in** (`assistantEnabled`, off by default;
+(`desktop-loop.js`). Simple requests ("take a screenshot", "open Safari",
+"pause the music", "volume up") never reach the AI: `quick-commands.js` matches
+whole utterances and runs them at once (a denylisted app falls through to
+bb). A mixed request is split (`planQuickRequest`): its LEADING instant
+clauses run at once ("open Spotify"), and only the rest ("play my liked
+songs") goes to bb, told what is already done. Questions that need a lookup (weather,
+facts) are answered by the island's own thread with its tools. Bigger jobs go
+to a visible bb chat, which the Assistant page frames; the chat talks back on
+the island through the **island bridge** — a bb plugin
+(`resources/bb-plugin-tellaflow/`, plain ESM, no build) that gives every bb
+agent `tellaflow_say` / `tellaflow_ask`, and that `bb/island-bridge.js`
+installs by path and long-polls (`/api/v1/plugins/tellaflow/http/events`).
+Bump the plugin's `package.json` version when you change it: the app reloads
+it in bb when the versions differ. The assistant is **opt-in** (`assistantEnabled`, off by default;
 the switch is Settings › General › Beta features): off, there is no command
 key (`hotkey.setCommandKeyGate`), no Assistant page, no Assistant tab in
 Settings, no Screen Recording permission row or onboarding ask, no menubar
@@ -90,7 +102,9 @@ writes: `ffmpeg -i in.mp3 -ac 1 -ar 16000 -map_metadata -1 -fflags +bitexact -c:
   a desktop task against a pretend TextEdit (`TELLAFLOW_E2E_DESKTOP=fake`,
   `scripts/e2e-fake-desktop.js` — Peekaboo is macOS-only), a forced
   confirmation declined, a hand-off to a chat, the Assistant page and
-  Settings; then Remove and switching off again. Needs `claude` signed in. In the cloud container bb reports Claude
+  Settings. It also runs the instant commands (no AI, under a second), a
+  lookup ("weather in Mumbai") and its follow-up, and a chat that asks on the
+  island and reports back there; then Remove and switching off again. Needs `claude` signed in. In the cloud container bb reports Claude
   Code "unauthenticated" (it reads the keychain/`~/.claude/.credentials.json`
   shape a Mac login writes) but runs it when named — the script names
   `claude-code` (`E2E_PROVIDER`).

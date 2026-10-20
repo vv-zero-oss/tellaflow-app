@@ -40,6 +40,9 @@ const DEFAULTS = {
   assistantDesktopActions: true,
   // A still of the screen goes with each request (needs Screen Recording).
   assistantScreenVision: true,
+  // Simple requests (screenshot, open an app, pause music, volume) run at once,
+  // without the AI.
+  assistantInstantCommands: true,
   // Set once the assistant has answered: from then on it warms at launch.
   assistantUsed: false,
 };
@@ -207,6 +210,7 @@ function getAssistantSettings() {
     fullAccess: getBool('assistantFullAccess'),
     desktopActions: getBool('assistantDesktopActions'),
     screenVision: getBool('assistantScreenVision'),
+    instantCommands: getBool('assistantInstantCommands'),
   };
 }
 function getAssistantEnabled() { return getBool('assistantEnabled'); }
@@ -218,6 +222,7 @@ function setAssistantSettings(patch = {}) {
   if (patch.fullAccess !== undefined) setSetting('assistantFullAccess', !!patch.fullAccess);
   if (patch.desktopActions !== undefined) setSetting('assistantDesktopActions', !!patch.desktopActions);
   if (patch.screenVision !== undefined) setSetting('assistantScreenVision', !!patch.screenVision);
+  if (patch.instantCommands !== undefined) setSetting('assistantInstantCommands', !!patch.instantCommands);
   return getAssistantSettings();
 }
 

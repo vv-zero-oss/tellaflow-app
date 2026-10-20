@@ -61,8 +61,10 @@ exports.MASCOT_WAIT_SLICE_MS = 250;
 /** Past this the thread is archived after the turn and the next one starts
  *  fresh (re-seeded from the renderer's transcript). The mascot's context is
  *  per-turn state plus a short conversation, so a thread this full is carrying
- *  mostly stale boards. */
-exports.MASCOT_ROTATE_TOKENS = 150_000;
+ *  mostly stale boards. Tellaflow: 80k, not canvas's 150k — every turn carries
+ *  a desktop element map, and time to first token grows with the context; the
+ *  replacement thread is warmed at once (`onRotate`), so rotating is cheap. */
+exports.MASCOT_ROTATE_TOKENS = 80_000;
 /** Replies are two sentences and an action block; deep reasoning only buys
  *  silence in front of a character. The user's provider and model are kept. */
 exports.MASCOT_REASONING_LEVEL = "low";
@@ -435,6 +437,12 @@ function createMascotThreads(deps) {
                             threads.delete(key);
                             void client.archiveThread(threadId).catch(() => { });
                             log("rotated", { cwd: key, threadId, usedTokens: record.usedTokens });
+                            // Tellaflow: warm the replacement now, so the next
+                            // utterance is not the one that pays the cold start.
+                            try {
+                                deps.onRotate?.(key);
+                            }
+                            catch { }
                         }
                         return;
                     }
@@ -459,5 +467,13 @@ function createMascotThreads(deps) {
             }
         }
     }
-    return { warm, turn, stop, reset };
+    /** Tellaflow: whether `threadId` is one of these hidden threads — the
+     *  island bridge treats what they say as part of the turn in flight. */
+    function owns(threadId) {
+        for (const record of threads.values())
+            if (record.threadId === threadId)
+                return true;
+        return active?.threadId === threadId;
+    }
+    return { warm, turn, stop, reset, owns };
 }
