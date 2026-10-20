@@ -6,6 +6,7 @@ import {
 } from '@/components/ui/dialog';
 import { ModifierKeyRow } from '@/components/ui/mac-keyboard';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { ipc, type AppConfig, type HotkeyConfig, type Theme } from '@/lib/ipc';
 import { MicrophoneSelectDialog } from './MicrophoneSelectDialog';
@@ -218,20 +219,36 @@ function HotkeyDialog({
 
 // ─── Inline hotkey display ────────────────────────────────────────────────────
 
+/** Two shortcuts made of the same keys (in any order). */
+export function sameHotkey(a: HotkeyConfig | null | undefined, b: HotkeyConfig | null | undefined) {
+  if (!a?.names?.length || !b?.names?.length) return false;
+  return [...a.names].sort().join('+') === [...b.names].sort().join('+');
+}
+
 export function HotkeyEditor({
   currentHotkey,
   defaultHotkey,
   disabled,
   onSave,
+  taken,
 }: {
   currentHotkey: HotkeyConfig | undefined;
   defaultHotkey?: HotkeyConfig;
   disabled?: boolean;
   onSave?: (hotkey: HotkeyConfig) => void;
+  /** Another shortcut this one must not equal — the dictation key and the
+   *  command key share one listener, and the dictation key wins a tie. */
+  taken?: { hotkey: HotkeyConfig | null | undefined; label: string };
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSave = (hotkey: HotkeyConfig) => {
+    if (taken && sameHotkey(hotkey, taken.hotkey)) {
+      setError(`${hotkey.label} is already the ${taken.label} — pick another key.`);
+      return;
+    }
+    setError(null);
     if (onSave) { onSave(hotkey); return; }
     ipc.setHotkey(hotkey);
     ipc.retryHotkey();
@@ -239,6 +256,8 @@ export function HotkeyEditor({
 
   return (
     <>
+      <div className="flex flex-col items-end gap-1">
+      {error && <p className="text-xs text-destructive max-w-[260px] text-right">{error}</p>}
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground font-mono">
           {currentHotkey?.label || DEFAULT_HOTKEY.label}
@@ -251,6 +270,7 @@ export function HotkeyEditor({
           <Pencil className="w-3 h-3" />
           Edit
         </button>
+      </div>
       </div>
       <HotkeyDialog
         open={dialogOpen}
@@ -298,7 +318,7 @@ function useMicLabel(deviceId: string | undefined) {
   return label;
 }
 
-// ─── GeneralSettings ──────────────────────────────────────────────────────────
+// ─── General: appearance and how the app runs ────────────────────────────────
 
 interface GeneralSettingsProps {
   config: AppConfig;
@@ -306,138 +326,181 @@ interface GeneralSettingsProps {
   refreshConfig: () => Promise<void>;
 }
 
+function SwitchRow({ label, description, checked, onCheckedChange }: { label: string; description?: string; checked: boolean; onCheckedChange: (v: boolean) => void }) {
+  return (
+    <WellItem>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <span className="text-sm">{label}</span>
+          {description && <p className="text-xs text-muted-foreground/60 mt-0.5">{description}</p>}
+        </div>
+        <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      </div>
+    </WellItem>
+  );
+}
+
+export function GeneralSettings({ config, onSetTheme, refreshConfig }: GeneralSettingsProps) {
+  const currentTheme = config.theme || 'dark';
+  const run = (fn: () => unknown) => async () => { await fn(); await refreshConfig(); };
+  return (
+    <>
+      <Well className="mb-7">
+        <WellHeader>
+          <WellTitle>App</WellTitle>
+        </WellHeader>
+        <WellCard>
+          <WellItem>
+            <div className="flex items-center justify-between">
+              <span className="text-sm">Appearance</span>
+              <div className="flex items-center gap-1 rounded-full border border-input p-0.5">
+                {themeOptions.map(({ value, label, icon: Icon }) => (
+                  <button
+                    key={value}
+                    onClick={() => onSetTheme(value)}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors',
+                      currentTheme === value
+                        ? 'bg-secondary text-secondary-foreground'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </WellItem>
+          <SwitchRow
+            label="Open at login"
+            description="Start Tellaflow when you log in to your Mac, so the shortcut always works."
+            checked={config.launchAtLogin ?? false}
+            onCheckedChange={(v) => run(() => ipc.setLaunchAtLogin(v))()}
+          />
+          <SwitchRow
+            label="Show in the Dock"
+            description="Off, Tellaflow lives only in the menu bar."
+            checked={config.showInDock ?? true}
+            onCheckedChange={(v) => run(() => ipc.setShowInDock(v))()}
+          />
+        </WellCard>
+      </Well>
+
+      <Well className="mb-7">
+        <WellHeader>
+          <WellTitle>Sound</WellTitle>
+        </WellHeader>
+        <WellCard>
+          <SwitchRow
+            label="Play sounds"
+            description="A short sound when dictation starts and stops."
+            checked={config.soundsEnabled ?? true}
+            onCheckedChange={(v) => run(() => ipc.setSoundsEnabled(v))()}
+          />
+          <SwitchRow
+            label="Pause music while dictating"
+            description="Pauses Apple Music and Spotify while you speak, and resumes after."
+            checked={config.muteWhileDictating ?? false}
+            onCheckedChange={(v) => run(() => ipc.setMuteWhileDictating(v))()}
+          />
+        </WellCard>
+      </Well>
+    </>
+  );
+}
+
+// ─── Dictation: the shortcut, the microphone ─────────────────────────────────
+
 const DEFAULT_ACTIVATION_DELAY = 0;
 const MIN_DELAY = 0;
 const MAX_DELAY = 2000;
 const DELAY_STEP = 100;
 
-export function GeneralSettings({ config, onSetTheme, refreshConfig }: GeneralSettingsProps) {
-  const currentTheme = config.theme || 'dark';
+export function DictationSettings({ config, refreshConfig, commandHotkey }: {
+  config: AppConfig;
+  refreshConfig: () => Promise<void>;
+  /** The assistant's key while the assistant is on: the shortcut can't be it. */
+  commandHotkey: HotkeyConfig | null;
+}) {
   const [micDialogOpen, setMicDialogOpen] = useState(false);
   const micLabel = useMicLabel(config.microphoneDeviceId);
   const activationDelay = config.hotkeyActivationDelay ?? DEFAULT_ACTIVATION_DELAY;
-
-  const handleMicSelect = (deviceId: string) => {
-    ipc.setMicrophoneDeviceId(deviceId);
-  };
+  const setDelay = (ms: number) => { ipc.setHotkeyActivationDelay(ms); refreshConfig(); };
 
   return (
     <>
     <Well className="mb-7">
       <WellHeader>
-        <WellTitle>General</WellTitle>
+        <WellTitle>Dictation</WellTitle>
       </WellHeader>
       <WellCard>
         <WellItem>
-          <div className="flex items-center justify-between">
-            <span className="text-sm">Appearance</span>
-            <div className="flex items-center gap-1 rounded-full border border-input p-0.5">
-              {themeOptions.map(({ value, label, icon: Icon }) => (
-                <button
-                  key={value}
-                  onClick={() => onSetTheme(value)}
-                  className={cn(
-                    'flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors',
-                    currentTheme === value
-                      ? 'bg-secondary text-secondary-foreground'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </WellItem>
-
-        <WellItem>
-          <div className="flex items-center justify-between">
-            <div>
-              <span className="text-sm">Shortcut</span>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">Hold to Transcribe, shortcut to start/stop transcription</p>
-            </div>
-            <HotkeyEditor currentHotkey={config.hotkey} />
-          </div>
-        </WellItem>
-
-        <WellItem>
-          <div className="flex items-center justify-between">
-            <div>
-              <span className="text-sm">Command key</span>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">Hold and speak to ask the assistant instead of typing</p>
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-sm">Dictation shortcut</span>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">Hold to dictate and release to type it. Press twice to keep dictating hands-free.</p>
             </div>
             <HotkeyEditor
-              currentHotkey={config.commandHotkey ?? { names: ['RIGHT ALT'], label: 'Right ⌥' }}
-              onSave={async (hotkey) => {
-                await ipc.setFeatureSetting('commandHotkey', hotkey);
-                ipc.retryHotkey();
-                await refreshConfig();
-              }}
+              currentHotkey={config.hotkey}
+              taken={commandHotkey ? { hotkey: commandHotkey, label: 'assistant’s command key' } : undefined}
+              onSave={async (hotkey) => { await ipc.setHotkey(hotkey); ipc.retryHotkey(); await refreshConfig(); }}
             />
           </div>
         </WellItem>
 
         <WellItem>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
-              <span className="text-sm">Shortcut Activation delay</span>
+              <span className="text-sm">Hold delay</span>
               <p className="text-xs text-muted-foreground/60 mt-0.5">
-                Hold the Shortcut keys for this long before recording starts
+                How long to hold the shortcut before recording starts. Raise it if you start dictating by accident.
               </p>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 shrink-0">
             {activationDelay !== DEFAULT_ACTIVATION_DELAY && (
                 <button
-                  onClick={() => { ipc.setHotkeyActivationDelay(DEFAULT_ACTIVATION_DELAY); refreshConfig(); }}
-                  title="Reset to default (0ms)"
+                  onClick={() => setDelay(DEFAULT_ACTIVATION_DELAY)}
+                  title="Reset to no delay"
                   className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors ml-1"
                 >
                   <RotateCcw className="w-3 h-3" />
                 </button>
               )}
               <button
-                onClick={() => {
-                  const next = Math.max(MIN_DELAY, activationDelay - DELAY_STEP);
-                  ipc.setHotkeyActivationDelay(next);
-                  refreshConfig();
-                }}
+                onClick={() => setDelay(Math.max(MIN_DELAY, activationDelay - DELAY_STEP))}
                 disabled={activationDelay <= MIN_DELAY}
+                title="Shorter"
                 className="flex items-center justify-center w-7 h-7 rounded-md border border-input text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors disabled:opacity-30 disabled:pointer-events-none"
               >
                 <Minus className="w-3.5 h-3.5" />
               </button>
               <span className="text-sm font-mono w-14 text-center tabular-nums">
-                {activationDelay >= 1000 ? `${(activationDelay / 1000).toFixed(1)}s` : `${activationDelay}ms`}
+                {activationDelay === 0 ? 'None' : activationDelay >= 1000 ? `${(activationDelay / 1000).toFixed(1)}s` : `${activationDelay}ms`}
               </span>
               <button
-                onClick={() => {
-                  const next = Math.min(MAX_DELAY, activationDelay + DELAY_STEP);
-                  ipc.setHotkeyActivationDelay(next);
-                  refreshConfig();
-                }}
+                onClick={() => setDelay(Math.min(MAX_DELAY, activationDelay + DELAY_STEP))}
                 disabled={activationDelay >= MAX_DELAY}
+                title="Longer"
                 className="flex items-center justify-center w-7 h-7 rounded-md border border-input text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors disabled:opacity-30 disabled:pointer-events-none"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
-            
             </div>
           </div>
         </WellItem>
 
         <WellItem>
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
               <span className="text-sm">Microphone</span>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">{micLabel}</p>
+              <p className="text-xs text-muted-foreground/60 mt-0.5 truncate">{micLabel}</p>
             </div>
-            <Button variant="outline" size="sm" onClick={() => setMicDialogOpen(true)}>
+            <Button variant="outline" size="sm" className="shrink-0" onClick={() => setMicDialogOpen(true)}>
               Change
             </Button>
           </div>
         </WellItem>
-
       </WellCard>
     </Well>
 
@@ -445,7 +508,7 @@ export function GeneralSettings({ config, onSetTheme, refreshConfig }: GeneralSe
       open={micDialogOpen}
       onOpenChange={setMicDialogOpen}
       currentDeviceId={config.microphoneDeviceId || 'auto'}
-      onSelect={handleMicSelect}
+      onSelect={(deviceId) => ipc.setMicrophoneDeviceId(deviceId)}
     />
   </>
   );

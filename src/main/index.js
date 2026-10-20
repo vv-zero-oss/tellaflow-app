@@ -38,10 +38,12 @@ const { createMeetingNotes } = require('./meeting-notes');
 const macAutomation = require('./mac-automation');
 const { createJarvis } = require('./jarvis');
 const { createRewriter } = require('./jarvis/rewrite');
+const { createQuickCommands, QUICK_COMMANDS } = require('./jarvis/quick-commands');
 const osActions = require('./jarvis/desktop/os-actions');
-const { setPeekabooDownloadRoot, resolvePeekaboo } = require('./jarvis/desktop/peekaboo');
+const { setPeekabooDownloadRoot, peekabooDownloadDir, resolvePeekaboo } = require('./jarvis/desktop/peekaboo');
 const { installPeekaboo } = require('./jarvis/desktop/peekaboo-install');
-const { currentBbServer } = require('./jarvis/bb/supervisor');
+const { currentBbServer, stopBbServer } = require('./jarvis/bb/supervisor');
+const assistantRuntime = require('./jarvis/runtime');
 const { buildBbChromeScript } = require('./jarvis/bb/bb-chrome');
 const { formatTranscription } = require('./formatter');
 const { applyDictionary } = require('./dictionary');
@@ -189,6 +191,28 @@ let meetingDetector = null;
 let meetingCaptureWindow = null;
 let assistant = null;
 let rewriter = null;
+
+// The assistant is opt-in, and what it runs on (Node + bb) is a download
+// (jarvis/runtime.js). It is "ready" — command key live, bb allowed to start —
+// only when it is switched on AND downloaded. The disk check is cached: the
+// command key asks on every key event.
+let runtimeCache = null;
+let runtimeJob = { installing: false, progress: null, error: null, helperError: null };
+function runtimeStatus() { return (runtimeCache ??= assistantRuntime.runtimeStatus()); }
+function assistantReady() { return config.getAssistantEnabled() && !!runtimeStatus().launcher; }
+function assistantRuntimeView() {
+  const s = runtimeStatus();
+  return {
+    enabled: config.getAssistantEnabled(),
+    ready: assistantReady(),
+    state: s.state,
+    supported: s.supported,
+    installed: s.installed,
+    want: s.want,
+    ...runtimeJob,
+  };
+}
+function broadcastAssistantRuntime() { sendToMainWindow('assistant-runtime', assistantRuntimeView()); }
 let pendingChatUrl = null;   // a chat the island asked the Assistant page to show
 let autoLearn = null;
 let modelLoading = false;
@@ -378,7 +402,8 @@ function startAssistantFromVoice(request) {
 
 // The rewrite shortcut: the focused field's text, rewritten in place.
 function startRewrite() {
-  if (!rewriter) return;
+  // Switched off, the assistant (and its shortcut) isn't there at all.
+  if (!rewriter || !config.getAssistantEnabled()) return;
   // The app the user is typing in, read before anything of ours can come to
   // the front (as dictation does at key-down).
   let target = null;
@@ -453,7 +478,7 @@ function handleIslandAction(action) {
   }
   if (islandOwner === 'rewrite') {
     if (action === 'retry') { startRewrite(); return; }
-    if (action === 'open-settings') { islandRest(); showMainWindow(); sendToMainWindow('navigate', 'settings'); return; }
+    if (action === 'open-settings') { islandRest(); showMainWindow(); sendToMainWindow('navigate', 'settings/assistant'); return; }
     if (action === 'dismiss' || action === 'later' || action === 'cancel') { void rewriter?.cancel(); islandRest(); return; }
   }
   switch (action) {
@@ -620,26 +645,54 @@ function initCoreServices() {
   });
 
   setPeekabooDownloadRoot(path.join(userData, 'tools', 'peekaboo'));
+  assistantRuntime.setRuntimeRoot(path.join(userData, 'tools', 'assistant'));
+  runtimeCache = null;
+  // On is enough for the key to answer: pressed before the download is done,
+  // it says so (onStart) instead of silently doing nothing.
+  hotkey.setCommandKeyGate(() => config.getAssistantEnabled());
+  // e2e on Linux: a pretend desktop (scripts/e2e-fake-desktop.js), since
+  // Peekaboo is macOS-only. Never set outside the test run.
+  const fakeDesktop = process.env.TELLAFLOW_E2E === '1' && process.env.TELLAFLOW_E2E_DESKTOP === 'fake'
+    ? require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js'))
+    : null;
   assistant = createJarvis({
     island: {
       show: (state, opts) => island('assistant', state, opts),
       rest: () => { if (islandOwner === 'assistant') islandRest(); },
     },
     getSettings: () => config.getAssistantSettings(),
+    runtime: () => {
+      if (!config.getAssistantEnabled()) throw new Error('The assistant is turned off. Turn it on in Settings › Assistant.');
+      const s = runtimeStatus();
+      if (!s.launcher) throw new Error('The assistant isn’t downloaded yet. Open Settings › Assistant and press Download.');
+      return { node: s.node, launcher: s.launcher };
+    },
     // Where the user was when they pressed the key (read at key-down, before
     // the island or anything of ours could come to the front).
     getContext: async () => {
       const c = await peekRecordingContext();
       return c?.ctx ? { app: c.ctx.app, windowTitle: c.ctx.windowTitle } : null;
     },
-    // e2e on Linux: a pretend desktop (scripts/e2e-fake-desktop.js), since
-    // Peekaboo is macOS-only. Never set outside the test run.
-    os: process.env.TELLAFLOW_E2E === '1' && process.env.TELLAFLOW_E2E_DESKTOP === 'fake'
-      ? require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js'))
-      : osActions,
+    os: fakeDesktop || osActions,
+    // Instant commands ("take a screenshot", "pause the music"): done here,
+    // without the AI. Values reach osascript as argv, never as source.
+    quick: createQuickCommands(fakeDesktop?.quickRunners || {
+      exec: (file, args) => new Promise((resolve, reject) => {
+        require('child_process').execFile(file, args, { timeout: 60_000 }, (err, stdout, stderr) => {
+          if (err) reject(new Error(String(stderr || err.message).trim() || `${file} failed`));
+          else resolve(stdout);
+        });
+      }),
+      appleScript: (body, argv) => macAutomation.runAppleScript(body, argv),
+      jxa: (source, argv = []) => macAutomation.runOsascript(['-l', 'JavaScript', '-e', source, ...argv.map(String)]),
+      runningApps: () => macAutomation.listRunningApps(),
+      homeDir: app.getPath('home'),
+    }),
+    // A chat's report waits while the island is busy with something else.
+    islandFree: () => isResting() || islandOwner === 'assistant',
     workspaceDir: path.join(userData, 'assistant', 'workspace'),
     rewriteDir: path.join(userData, 'assistant', 'rewrite'),
-    rewriteEnabled: () => !!config.getCommandHotkey() && !!config.getRewriteHotkey(),
+    rewriteEnabled: () => assistantReady() && !!config.getRewriteHotkey(),
     record: (entry) => {
       if (entry.role !== 'mascot' || !entry.text) return;
       sendToMainWindow('assistant-transcript', entry);
@@ -649,7 +702,7 @@ function initCoreServices() {
     // (assistant-workspace-url), and the event covers a page already open.
     openChat: (url) => { pendingChatUrl = { url, at: Date.now() }; showMainWindow(); sendToMainWindow('navigate', 'assistant'); sendToMainWindow('assistant-open-chat', url); },
     openAccessibility: () => { osActions.requestAccessibility().catch(() => {}); },
-    openSettings: () => { showMainWindow(); sendToMainWindow('navigate', 'settings'); },
+    openSettings: () => { showMainWindow(); sendToMainWindow('navigate', 'settings/assistant'); },
     // Insert: the answer typed into the app the user was in when they pressed
     // the key — the same paste dictation uses.
     insertText: async (text) => {
@@ -675,7 +728,7 @@ function initCoreServices() {
         const p = list.find((x) => x.id === pick) || list.find((x) => x.status === 'unauthenticated' || x.status === 'expired');
         if (p?.loginCommand) cmd = p.loginCommand;
       } catch {}
-      if (process.platform !== 'darwin') { showMainWindow(); sendToMainWindow('navigate', 'settings'); return; }
+      if (process.platform !== 'darwin') { showMainWindow(); sendToMainWindow('navigate', 'settings/assistant'); return; }
       macAutomation.runAppleScript('tell application "Terminal"\nactivate\ndo script (item 1 of argv)\nend tell', [cmd])
         .catch((err) => console.error('[assistant] could not open Terminal for sign-in:', err.message));
     },
@@ -692,7 +745,7 @@ function initCoreServices() {
       show: (state, opts) => island('rewrite', state, opts),
       rest: () => { if (islandOwner === 'rewrite') islandRest(); },
     },
-    isAssistantOn: () => !!config.getCommandHotkey(),
+    isAssistantOn: () => assistantReady(),
     getSettings: () => config.getRewriteSettings(),
     capture: e2eField
       ? async () => {
@@ -790,7 +843,7 @@ function initCoreServices() {
       },
       // What reached the pretend desktop (TELLAFLOW_E2E_DESKTOP=fake).
       fakeDesktop: () => (process.env.TELLAFLOW_E2E_DESKTOP === 'fake'
-        ? (({ front, doc, acts }) => ({ front, doc, acts }))(require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js')).state)
+        ? (({ front, doc, acts, quick }) => ({ front, doc, acts, quick }))(require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js')).state)
         : null),
       learn: (corrections) => {
         const added = config.addLearnedEntries(corrections);
@@ -808,6 +861,8 @@ function initCoreServices() {
         startClickRecording: () => startClickRecording(),
         askMeeting: (info) => askToTranscribeMeeting(info),
         command: (request) => startAssistantFromVoice(request),
+        // The command key's press, before anything is recorded (onStart).
+        commandKeyDown: () => !commandKeyNotReady(),
         // Any assistant view, for the island gallery (scripts/e2e-island-assistant.mjs).
         show: (state, opts) => island('assistant', state, opts),
         // Same path as a real edit the watcher saw in another app.
@@ -868,7 +923,8 @@ function trayMenuState() {
     failedCount: journal ? journal.list({ status: 'failed' }).length : 0,
     update: { phase: status.phase, version: status.updateVersion },
     lastTranscript: lastDictation()?.text || '',
-    shortcuts: { dictate: config.getHotkey()?.label, command: config.getCommandHotkey()?.label || null, rewrite: config.getRewriteHotkey()?.label || null },
+    // The assistant's key is listed only while the assistant is on.
+    shortcuts: { dictate: config.getHotkey()?.label, command: config.getCommandHotkey()?.label || null, assistant: config.getAssistantEnabled(), rewrite: config.getRewriteHotkey()?.label || null },
     microphoneId: config.getMicrophoneDeviceId(),
     microphones: trayMicrophones,
     translation: {
@@ -897,13 +953,22 @@ function openPage(page) {
 }
 
 /** Paste the newest dictation into the app in front (menu item and ⌃⌘V). */
+let pastingLast = false;
 async function pasteLastTranscript() {
+  // ⌃⌘V auto-repeats while held, and the paste waits for ⌃⌘ to be let go:
+  // one press, one paste.
+  if (pastingLast) return;
   const entry = lastDictation();
   if (!entry?.text) return;
-  const front = await getFrontmostApp();
-  const target = isOwnApp(front) ? null : front;
-  pasteText(entry.text, target);
-  lastPaste = { app: target };
+  pastingLast = true;
+  try {
+    const front = await getFrontmostApp();
+    const target = isOwnApp(front) ? null : front;
+    lastPaste = { app: target };
+    await pasteText(entry.text, target);
+  } finally {
+    pastingLast = false;
+  }
 }
 
 function registerPasteLastShortcut() {
@@ -1184,7 +1249,7 @@ async function startApp() {
   // only for someone who uses the assistant: a warm is a (tiny) model call,
   // and nobody who only dictates should pay for one on every launch. Their
   // first command warms it on key-down (beginRecording) instead.
-  if (config.getAssistantUsed()) setTimeout(() => { assistant?.warm().catch(() => {}); }, 8000).unref?.();
+  if (assistantReady() && config.getAssistantUsed()) setTimeout(() => { if (assistantReady()) assistant?.warm().catch(() => {}); }, 8000).unref?.();
 
   startHotkeyListener();
   initFloatingBar();
@@ -1281,6 +1346,33 @@ function stopAnyActiveRecording() {
   }
 }
 
+// The command key pressed while the assistant is on but not downloaded (or
+// still downloading): say so on the island instead of listening. True when
+// the key should not start a recording.
+function commandKeyNotReady() {
+  if (assistantReady()) return false;
+  const downloading = runtimeJob.installing;
+  islandErrorAction = downloading ? null : 'settings/assistant';
+  // A setup card (a warning sign), not an error one: the error card draws a
+  // crossed-out microphone, which reads as a mic problem. 'retry' is what
+  // navigates to islandErrorAction; 'open-settings' would open mic prefs.
+  island('error', 'setup', {
+    content: {
+      notice: {
+        title: downloading ? 'The assistant is still downloading' : 'Download the assistant first',
+        body: downloading
+          ? 'Try again in a moment — Settings › Assistant shows how far along it is.'
+          : 'It’s turned on, but what it runs on isn’t downloaded yet. It’s one download, in Settings › Assistant.',
+        primary: downloading ? null : 'Open Settings',
+        primaryAction: 'retry',
+        secondary: 'Dismiss',
+        secondaryAction: 'dismiss',
+      },
+    },
+  });
+  return true;
+}
+
 function startHotkeyListener() {
   // Don't restart if already running — prevents orphaning an active recording
   if (hotkey.isRunning()) return;
@@ -1292,6 +1384,7 @@ function startHotkeyListener() {
         // Don't start hotkey recording if click recording is already active
         if (audioCaptureWindow && !audioCaptureWindow.isDestroyed()) return;
         if (micBlocked()) { hotkey.resetRecordingState(); return; }
+        if (purpose === 'command' && commandKeyNotReady()) { hotkey.resetRecordingState(); return; }
 
         // Capture the frontmost app SYNCHRONOUSLY and BEFORE createAudioCaptureWindow().
         // An async query races with window creation — on macOS, creating a new
@@ -2069,9 +2162,71 @@ function registerIPC() {
   });
   ipcMain.handle('assistant-reset', () => assistant.reset());
   ipcMain.handle('assistant-get-settings', () => config.getAssistantSettings());
-  ipcMain.handle('assistant-set-settings', (_, patch) => config.setAssistantSettings(patch || {}));
+  ipcMain.handle('assistant-set-settings', async (_, patch) => {
+    const was = config.getAssistantEnabled();
+    const next = config.setAssistantSettings(patch || {});
+    if (was !== next.enabled) {
+      // Off: nothing of the assistant keeps running — no island turn, no bb.
+      if (!next.enabled) {
+        if (islandOwner === 'assistant') islandRest();
+        await assistant?.dispose().catch(() => {});
+      }
+      broadcastAssistantRuntime();
+    }
+    return next;
+  });
+  // What the assistant runs on: downloaded on request (Settings › Assistant).
+  ipcMain.handle('assistant-runtime-status', () => assistantRuntimeView());
+  ipcMain.handle('assistant-runtime-install', async () => {
+    if (runtimeJob.installing) return { ok: false, error: 'Already downloading.' };
+    runtimeJob = { installing: true, progress: { phase: 'node', received: 0, total: null }, error: null, helperError: null };
+    broadcastAssistantRuntime();
+    try {
+      // A bb we started from the old copy must not run while it is replaced.
+      await assistant?.dispose().catch(() => {});
+      await assistantRuntime.installRuntime({
+        onProgress: (progress) => { runtimeJob.progress = progress; broadcastAssistantRuntime(); },
+      });
+      runtimeCache = null;
+      // Everything in one go: on a Mac, the desktop helper (Peekaboo) too.
+      // Optional — the assistant answers without it — so a failure is noted,
+      // not fatal; Settings offers it again.
+      if (process.platform === 'darwin') {
+        const helper = await resolvePeekaboo(true).catch(() => null);
+        if (helper && !helper.ok && !/macOS/i.test(helper.error ?? '')) {
+          try {
+            await installPeekaboo((received, total) => { runtimeJob.progress = { phase: 'helper', received, total }; broadcastAssistantRuntime(); });
+          } catch (err) { runtimeJob.helperError = String(err.message || err); }
+        }
+      }
+      runtimeJob = { ...runtimeJob, installing: false, progress: null };
+      broadcastAssistantRuntime();
+      return { ok: true };
+    } catch (err) {
+      console.error('[assistant] download failed:', err);
+      runtimeCache = null;
+      runtimeJob = { installing: false, progress: null, error: String(err.message || err), helperError: null };
+      broadcastAssistantRuntime();
+      return errorOf(err);
+    }
+  });
+  ipcMain.handle('assistant-runtime-remove', async () => {
+    if (runtimeJob.installing) return { ok: false, error: 'Still downloading.' };
+    try {
+      if (islandOwner === 'assistant') islandRest();
+      await assistant?.dispose().catch(() => {});
+      await stopBbServer().catch(() => {});
+      assistantRuntime.removeRuntime();
+      // And the desktop helper Download fetched with it.
+      const helperDir = peekabooDownloadDir();
+      if (helperDir) { fs.rmSync(helperDir, { recursive: true, force: true }); await resolvePeekaboo(true).catch(() => {}); }
+      return { ok: true };
+    } catch (err) { return errorOf(err); }
+    finally { runtimeCache = null; runtimeJob = { installing: false, progress: null, error: null, helperError: null }; broadcastAssistantRuntime(); }
+  });
   ipcMain.handle('rewrite-get-settings', () => config.getRewriteSettings());
   ipcMain.handle('rewrite-set-settings', (_, patch) => config.setRewriteSettings(patch || {}));
+  ipcMain.handle('assistant-quick-commands', () => QUICK_COMMANDS.map(({ say, does }) => ({ say, does })));
   // The desktop helper (Peekaboo), downloaded on request — pinned and checksummed.
   ipcMain.handle('assistant-install-helper', async () => {
     try {
@@ -2477,17 +2632,17 @@ function registerIPC() {
 
       const isModelMissing = err.message && err.message.includes('not found');
       const crashed = err instanceof WorkerCrashError;
-      islandErrorAction = isModelMissing ? 'settings' : job ? 'transcripts' : null;
+      islandErrorAction = isModelMissing ? 'models' : job ? 'transcripts' : null;
       island('error', 'error', {
         content: {
           notice: {
             title: isModelMissing ? 'No speech model yet' : 'Transcription failed',
             body: isModelMissing
-              ? `${err.message} Download one in Settings → Models.`
+              ? `${err.message} Download one on the Models page.`
               : job
                 ? `${crashed ? 'The speech engine crashed and restarted. ' : ''}Your audio is saved — retry it from Transcripts.`
                 : String(err.message || err),
-            primary: isModelMissing ? 'Open Settings' : job ? 'Open Transcripts' : null,
+            primary: isModelMissing ? 'Open Models' : job ? 'Open Transcripts' : null,
             secondary: 'Dismiss',
           },
         },

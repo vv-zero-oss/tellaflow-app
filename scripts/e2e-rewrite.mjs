@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 /**
- * The rewrite shortcut, end to end in the real app: real bb (started by the
- * app on its bundled Node, in a throwaway data folder), the real AI, the
- * island. The text field is a pretend one (TELLAFLOW_E2E_FIELD=fake) — ⌘A /
- * ⌘C / ⌘V are macOS-only — so each case sets the field, presses the shortcut
- * the way the hotkey does, and checks what was pasted back. Screenshots every
- * island state, then Settings › Rewrite text.
+ * The rewrite shortcut, end to end in the real app: the assistant switched on
+ * and its runtime downloaded (Node + bb, into a throwaway folder, or
+ * E2E_RUNTIME_DIR to reuse one), real bb, the real AI, the island. The text
+ * field is a pretend one (TELLAFLOW_E2E_FIELD=fake) — ⌘A / ⌘C / ⌘V and
+ * Accessibility are macOS-only — so each case sets the field (and what is
+ * selected in it), presses the shortcut the way the hotkey does, and checks
+ * what was pasted back: over the selection, or the whole field. Screenshots
+ * every island state, then Settings › Assistant › Rewrite text.
  *
  *   xvfb-run -a node scripts/e2e-rewrite.mjs [outDir]
  *
- * Needs what scripts/e2e-assistant.mjs needs. Env: E2E_PROVIDER (default
- * claude-code).
+ * Needs network (the download), a signed-in `claude`, and the Electron setup
+ * in CLAUDE.md. Env: E2E_PROVIDER (default claude-code), E2E_RUNTIME_DIR.
  */
 import { _electron as electron } from 'playwright-core';
 import { spawn } from 'child_process';
@@ -24,6 +26,9 @@ const OUT = path.resolve(process.argv[2] || path.join(ROOT, 'e2e-rewrite'));
 fs.mkdirSync(OUT, { recursive: true });
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-rewrite-ud-'));
 const bbData = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-rewrite-bb-'));
+// What the assistant runs on (Node + bb), downloaded once and reused across
+// runs when E2E_RUNTIME_DIR names a folder to keep it in.
+const runtimeDir = process.env.E2E_RUNTIME_DIR || path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tf-rewrite-rt-')), 'assistant');
 
 const results = [];
 const check = (name, ok, detail = '') => { results.push({ name, ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`); };
@@ -98,6 +103,7 @@ const app = await electron.launch({
     TELLAFLOW_E2E: '1',
     TELLAFLOW_E2E_FIELD: 'fake',
     TELLAFLOW_BB_DATA_DIR: bbData,
+    TELLAFLOW_ASSISTANT_RUNTIME_DIR: runtimeDir,
     TELLAFLOW_BB_SERVER_PORT: '38986',
     TELLAFLOW_BB_DAEMON_PORT: '38987',
     ELECTRON_DISABLE_SECURITY_WARNINGS: '1',
@@ -133,7 +139,13 @@ try {
   const main = await waitFor(() => app.windows().find((w) => w.url().includes('index.html')), { label: 'main window' });
   await main.waitForLoadState('domcontentloaded');
   await main.setViewportSize({ width: 1076, height: 900 });
-  await main.evaluate((p) => window.tellaflow.assistantSetSettings({ provider: p, screenVision: false }), process.env.E2E_PROVIDER || 'claude-code');
+  // The assistant is opt-in: switch it on and download what it runs on.
+  await main.evaluate((p) => window.tellaflow.assistantSetSettings({ enabled: true, provider: p, screenVision: false }), process.env.E2E_PROVIDER || 'claude-code');
+  if ((await main.evaluate(() => window.tellaflow.assistantRuntimeStatus())).state !== 'installed') {
+    const r = await main.evaluate(() => window.tellaflow.assistantRuntimeInstall());
+    if (!r.ok) throw new Error(`assistant download failed: ${r.error}`);
+  }
+  check('the assistant is on and downloaded', (await main.evaluate(() => window.tellaflow.assistantRuntimeStatus())).ready === true);
 
   for (const c of CASES) {
     await main.evaluate((s) => window.tellaflow.rewriteSetSettings(s), { style: c.style, instructions: c.instructions ?? '' });
@@ -163,25 +175,21 @@ try {
     await sleep(600);
   }
 
-  // The assistant switched off (no command key): the shortcut says so.
-  await main.evaluate(() => window.tellaflow.setFeatureSetting('commandHotkey', null));
+  // The assistant switched off: the shortcut isn't there — nothing shows, the
+  // field is left alone.
+  await main.evaluate(() => window.tellaflow.assistantSetSettings({ enabled: false }));
   await T((_, v) => globalThis.__tellaflowTest.rewrite.setField(v), MESSY);
   await T(() => globalThis.__tellaflowTest.rewrite.press());
-  const off = await waitFor(async () => { const v = await view(); return v?.state === 'setup' ? v : null; }, { label: 'assistant-off card', timeout: 5000 }).catch(() => null);
-  await shot('assistant-off-setup', 400);
-  check('assistant off: asks to turn it on, field untouched', !!off && (await field()).replaced === 0, off?.content?.notice?.title ?? 'no card');
+  await sleep(1500);
+  const offView = await view();
+  check('assistant off: the shortcut does nothing', (await field()).replaced === 0 && !['thinking', 'setup', 'done', 'error'].includes(offView?.state), offView?.state ?? 'none');
 
-  // Settings › Rewrite text, off and then on (with Custom's instructions).
-  await T(() => globalThis.__tellaflowTest.navigate('settings'));
-  await sleep(800);
-  await main.locator('text=Rewrite shortcut').first().scrollIntoViewIfNeeded();
-  await sleep(1200);
-  await main.screenshot({ path: path.join(OUT, 'settings-rewrite-assistant-off.png') });
-  await main.evaluate(() => window.tellaflow.setFeatureSetting('commandHotkey', { names: ['RIGHT ALT'], label: 'Right ⌥' }));
+  // Settings › Assistant › Rewrite text (with Custom's instructions).
+  await main.evaluate(() => window.tellaflow.assistantSetSettings({ enabled: true }));
   await main.evaluate(() => window.tellaflow.rewriteSetSettings({ style: 'formal' }));
-  await T(() => globalThis.__tellaflowTest.navigate('home'));
+  await T(() => globalThis.__tellaflowTest.navigate('transcripts'));
   await sleep(500);
-  await T(() => globalThis.__tellaflowTest.navigate('settings'));
+  await T(() => globalThis.__tellaflowTest.navigate('settings/assistant'));
   await sleep(800);
   await main.locator('text=Rewrite shortcut').first().scrollIntoViewIfNeeded();
   await sleep(1200);

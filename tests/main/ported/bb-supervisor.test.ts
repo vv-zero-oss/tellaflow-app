@@ -1,6 +1,6 @@
 // Ported from canvas (bb-supervisor.test.ts) with the code it tests; paths and names adjusted.
 import { describe, it, expect, beforeEach, vi } from "vitest"
-import { existsSync, readFileSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import {
@@ -158,19 +158,15 @@ describe("the launch line", () => {
 
 describe("the bundled bb", () => {
   it("is the version this app pins", () => {
-    // The dependency and the pin are two places one number is written, and the
-    // supervisor's fallback would quietly download a different bb than the one
-    // in node_modules if they drifted.
-    const manifest = JSON.parse(
-      readFileSync(path.resolve(here, "../../../package.json"), "utf8")
-    ) as { dependencies: Record<string, string> }
-    expect(manifest.dependencies["bb-app"]).toBe(BB_APP_VERSION)
-  })
-
-  it("resolves the launcher that ships in node_modules", () => {
-    const launcher = bundledLauncher()
-    expect(launcher).not.toBeNull()
-    expect(existsSync(launcher!)).toBe(true)
+    // Tellaflow: bb is not a dependency of the app but a download
+    // (src/main/jarvis/runtime.js) from resources/assistant-runtime's
+    // lockfile. That lockfile and the pin are two places one number is
+    // written, and the supervisor's fallback would quietly download a
+    // different bb than the one Settings installs if they drifted.
+    const lock = JSON.parse(
+      readFileSync(path.resolve(here, "../../../resources/assistant-runtime/package-lock.json"), "utf8")
+    ) as { packages: Record<string, { version: string }> }
+    expect(lock.packages["node_modules/bb-app"].version).toBe(BB_APP_VERSION)
   })
 
   it("reads a packaged app's unpacked copy, since bb cannot run from inside an asar", () => {

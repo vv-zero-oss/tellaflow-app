@@ -48,7 +48,7 @@ function microphoneMenu({ microphoneId, microphones }, actions) {
   if (id !== 'auto' && !devices.some((d) => d.deviceId === id)) {
     items.push({ label: 'Selected microphone (not connected)', type: 'radio', checked: true, enabled: false });
   }
-  items.push({ type: 'separator' }, { label: 'Microphone Settings…', click: () => actions.openPage('settings') });
+  items.push({ type: 'separator' }, { label: 'Microphone Settings…', click: () => actions.openPage('settings/dictation') });
   return items;
 }
 
@@ -85,19 +85,22 @@ function shortcutsMenu({ shortcuts }, actions) {
   const s = shortcuts || {};
   return [
     { label: 'Dictate', sublabel: s.dictate || 'fn', enabled: false },
-    { label: 'Ask the assistant', sublabel: s.command || 'Off', enabled: false },
-    // Rewriting runs on the assistant's AI: off with it.
-    { label: 'Rewrite text', sublabel: (s.command && s.rewrite) || 'Off', enabled: false },
+    // Only while the assistant is on (Settings › General › Beta features).
+    ...(s.assistant ? [
+      { label: 'Ask the assistant', sublabel: s.command || 'Off', enabled: false },
+      // Rewriting runs on the assistant's AI.
+      { label: 'Rewrite text', sublabel: s.rewrite || 'Off', enabled: false },
+    ] : []),
     { label: 'Paste last transcript', sublabel: '⌃⌘V', enabled: false },
     { type: 'separator' },
-    { label: 'Change Shortcuts…', click: () => actions.openPage('settings') },
+    { label: 'Change Shortcuts…', click: () => actions.openPage('settings/dictation') },
   ];
 }
 
 /**
  * @param {object} state
  *   recording, meeting: { enabled, active, app }, failedCount,
- *   update: { phase, version }, lastTranscript, shortcuts: { dictate, command, rewrite },
+ *   update: { phase, version }, lastTranscript, shortcuts: { dictate, command, assistant, rewrite },
  *   microphoneId, microphones: [{ deviceId, label }],
  *   translation: { available, unavailableReason, enabled, language }
  * @param {object} actions

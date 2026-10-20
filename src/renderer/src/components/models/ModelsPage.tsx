@@ -223,7 +223,12 @@ export function ModelsPage({ config, setModel, setTranslationEnabled, setTransla
   const dropdownValue = engine === 'parakeet'
     ? (parakeetVariant === 'unified' ? PARAKEET_UNIFIED_KEY : PARAKEET_KEY)
     : (config.model || 'small');
-  const activeMeta = MODEL_META[dropdownValue];
+  // The configured model may not be on disk (nothing downloaded yet, or it was
+  // deleted): then the select shows its placeholder instead of a blank box.
+  const dropdownAvailable = dropdownValue === PARAKEET_KEY ? parakeet.status.available
+    : dropdownValue === PARAKEET_UNIFIED_KEY ? parakeetUnified.status.available
+    : whisperAvailable.some(([key]) => key === dropdownValue);
+  const activeMeta = dropdownAvailable ? MODEL_META[dropdownValue] : undefined;
 
   // Parakeet is English only; Whisper turbo was trained without translation.
   const noTranslation = engine === 'parakeet' || config.model === 'turbo';
@@ -273,9 +278,10 @@ export function ModelsPage({ config, setModel, setTranslationEnabled, setTransla
                           </p>
                         )}
                       </div>
-                      <Select value={dropdownValue} onValueChange={handleModelSelect}>
+                      <Select value={dropdownAvailable ? dropdownValue : ''} onValueChange={handleModelSelect}>
                         <SelectTrigger className="w-auto min-w-[210px] h-9 text-sm shrink-0">
-                          <SelectValue />
+                          {/* Nothing downloaded yet: say so rather than an empty box. */}
+                          <SelectValue placeholder="No model downloaded yet" />
                         </SelectTrigger>
                         <SelectContent>
                           {whisperAvailable.map(([key, info]) => (

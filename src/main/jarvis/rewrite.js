@@ -104,7 +104,7 @@ function doneMessage(style) {
 /**
  * @param {object} deps
  * @param {{ show(state: string, opts?: object): void, rest(): void }} deps.island
- * @param {() => boolean} deps.isAssistantOn            the command key is set
+ * @param {() => boolean} deps.isAssistantOn            switched on and downloaded
  * @param {() => { style: string, instructions: string }} deps.getSettings
  * @param {() => Promise<{ text: string, app: string|null, scope: 'selection'|'all' }|null>} deps.capture
  *        the selection, or with none the whole focused field
@@ -134,8 +134,8 @@ function createRewriter(deps) {
         deps.island.show('setup', {
           content: {
             notice: {
-              title: 'Turn on the assistant',
-              body: 'Rewriting text uses the assistant’s AI. Set a command key in Settings › General to turn it on.',
+              title: 'Download the assistant first',
+              body: 'Rewriting text runs on the assistant’s AI, and what it runs on isn’t downloaded yet. It’s one download, in Settings › Assistant.',
               primary: 'Open Settings',
               primaryAction: 'open-settings',
               secondary: 'Later',

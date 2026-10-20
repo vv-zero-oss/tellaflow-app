@@ -48,6 +48,9 @@ exports.isApproval = isApproval;
 exports.toolFromItem = toolFromItem;
 exports.createMascotThreads = createMascotThreads;
 const model_choice_1 = require("./model-choice");
+/** How long creating a thread may take: the first one on a bb that has just
+ *  started is slow (Tellaflow measured 10 s+ in a cold container). */
+const THREAD_CREATE_TIMEOUT_MS = 90_000;
 /** No event of any kind for this long ends the turn as a timeout. An
  *  INACTIVITY window, so a long tool loop that keeps emitting is never cut. */
 exports.MASCOT_TURN_IDLE_MS = 45_000;
@@ -58,8 +61,10 @@ exports.MASCOT_WAIT_SLICE_MS = 250;
 /** Past this the thread is archived after the turn and the next one starts
  *  fresh (re-seeded from the renderer's transcript). The mascot's context is
  *  per-turn state plus a short conversation, so a thread this full is carrying
- *  mostly stale boards. */
-exports.MASCOT_ROTATE_TOKENS = 150_000;
+ *  mostly stale boards. Tellaflow: 80k, not canvas's 150k — every turn carries
+ *  a desktop element map, and time to first token grows with the context; the
+ *  replacement thread is warmed at once (`onRotate`), so rotating is cheap. */
+exports.MASCOT_ROTATE_TOKENS = 80_000;
 /** Replies are two sentences and an action block; deep reasoning only buys
  *  silence in front of a character. The user's provider and model are kept. */
 exports.MASCOT_REASONING_LEVEL = "low";
@@ -157,7 +162,12 @@ function createMascotThreads(deps) {
         let lastError = null;
         for (const attempt of attempts) {
             try {
-                const id = (await client.createThread({ ...base, ...(attempt ? { execution: attempt } : {}) })).id;
+                // Tellaflow: a cold bb takes well over the client's default 10 s
+                // to make its first thread (it resolves the provider's
+                // environment first). Aborting it there fell through to "bb
+                // default" — a provider the user may not have — while the
+                // abandoned create kept provisioning and failed the next turn.
+                const id = (await client.createThread({ ...base, ...(attempt ? { execution: attempt } : {}), timeoutMs: THREAD_CREATE_TIMEOUT_MS })).id;
                 // Said once per thread: which model the mascot is really talking on is
                 // the first question when it answers slowly or oddly.
                 log("mascot thread created", { threadId: id, provider: attempt?.providerId ?? "bb default", model: attempt?.model ?? null });
@@ -427,6 +437,12 @@ function createMascotThreads(deps) {
                             threads.delete(key);
                             void client.archiveThread(threadId).catch(() => { });
                             log("rotated", { cwd: key, threadId, usedTokens: record.usedTokens });
+                            // Tellaflow: warm the replacement now, so the next
+                            // utterance is not the one that pays the cold start.
+                            try {
+                                deps.onRotate?.(key);
+                            }
+                            catch { }
                         }
                         return;
                     }
@@ -451,5 +467,13 @@ function createMascotThreads(deps) {
             }
         }
     }
-    return { warm, turn, stop, reset };
+    /** Tellaflow: whether `threadId` is one of these hidden threads — the
+     *  island bridge treats what they say as part of the turn in flight. */
+    function owns(threadId) {
+        for (const record of threads.values())
+            if (record.threadId === threadId)
+                return true;
+        return active?.threadId === threadId;
+    }
+    return { warm, turn, stop, reset, owns };
 }

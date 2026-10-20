@@ -6,9 +6,10 @@ import { HomePage } from '@/components/home/HomePage';
 import { ModelsPage } from '@/components/models/ModelsPage';
 import { SnippetsPage } from '@/components/snippets/SnippetsPage';
 import { DictionaryPage } from '@/components/dictionary/DictionaryPage';
-import { SettingsPage } from '@/components/settings/SettingsPage';
+import { SettingsPage, isSettingsTab, type SettingsTab } from '@/components/settings/SettingsPage';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
 import { AssistantPage } from '@/components/assistant/AssistantPage';
+import { AssistantNotReady } from '@/components/assistant/AssistantDownload';
 import { ipc } from '@/lib/ipc';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useHistory } from '@/hooks/use-history';
@@ -16,6 +17,7 @@ import { useStatus } from '@/hooks/use-status';
 import { useModelLoad } from '@/hooks/use-model-load';
 import { useConfig } from '@/hooks/use-config';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useAssistantRuntime } from '@/hooks/use-assistant-runtime';
 
 const pageVariants = {
   initial: { opacity: 0, y: 6 },
@@ -30,9 +32,24 @@ export default function App() {
   const modelLoad = useModelLoad();
   const appConfig = useConfig();
   const { mic, accessibility, needsRestart, restartApp } = usePermissions();
+  const { runtime: assistantRuntime, install: installAssistant } = useAssistantRuntime();
+  const assistantEnabled = !!assistantRuntime?.enabled;
 
   // Main process can switch pages (voice assistant, tray "Needs attention").
-  useEffect(() => ipc?.onNavigate?.((p) => setPage(p)), []);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+  // A page, or 'settings/<tab>' for one tab of Settings (the menubar menu,
+  // the island, the assistant's own links).
+  const navigate = (target: string) => {
+    const [p, sub] = target.split('/');
+    if (p === 'settings' && isSettingsTab(sub)) setSettingsTab(sub);
+    setPage(p);
+  };
+  useEffect(() => ipc?.onNavigate?.((p) => navigate(p)), []);
+
+  // The assistant switched off: its page goes with it.
+  useEffect(() => {
+    if (assistantRuntime && !assistantRuntime.enabled && page === 'assistant') setPage('transcripts');
+  }, [assistantRuntime, page]);
 
   return (
     <div className="flex h-screen">
@@ -43,6 +60,7 @@ export default function App() {
         isError={isError}
         isLoading={isLoading}
         loadProgress={modelLoad.loading ? modelLoad.progress : null}
+        showAssistant={assistantEnabled}
       />
       <div className="flex-1 p-3 flex h-screen flex-col overflow-hidden relative">
       <main className="flex-1 main-panel rounded-lg flex flex-col overflow-hidden relative">
@@ -66,7 +84,7 @@ export default function App() {
                 hotkey={appConfig.config.hotkey}
                 missingMic={!mic}
                 missingAccessibility={!accessibility}
-                onGoToSettings={() => setPage('settings')}
+                onGoToSettings={() => navigate('settings/permissions')}
                 onGoToDashboard={() => setPage('dashboard')}
               />
             </motion.div>
@@ -139,7 +157,9 @@ export default function App() {
               transition={{ duration: 0.15, ease: 'easeOut' }}
               className="flex flex-col flex-1 overflow-hidden"
             >
-              <AssistantPage onOpenSettings={() => setPage('settings')} />
+              {assistantRuntime?.ready
+                ? <AssistantPage onOpenSettings={() => navigate('settings/assistant')} />
+                : assistantRuntime && <AssistantNotReady runtime={assistantRuntime} onInstall={installAssistant} />}
             </motion.div>
           )}
           {page === 'settings' && !appConfig.loading && (
@@ -154,6 +174,8 @@ export default function App() {
             >
               <SettingsPage
                 visible={page === 'settings'}
+                tab={settingsTab}
+                onTabChange={setSettingsTab}
                 config={appConfig.config}
                 setTheme={appConfig.setTheme}
                 refreshConfig={appConfig.refresh}

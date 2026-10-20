@@ -105,12 +105,12 @@ describe('rewriter', () => {
     expect(prompts[0]).not.toMatch(/SCOPE/);
   });
 
-  it('needs the assistant on, and never reads the field otherwise', async () => {
+  it('needs the assistant downloaded, and never reads the field otherwise', async () => {
     const { r, field, shown, prompts } = setup({ assistantOn: false });
     expect(await r.run()).toMatchObject({ ok: false, reason: 'assistant-off' });
     expect(prompts).toEqual([]);
     expect(field.replaced).toEqual([]);
-    expect(shown.at(-1)).toMatchObject({ state: 'setup', content: { notice: { title: 'Turn on the assistant', primaryAction: 'open-settings' } } });
+    expect(shown.at(-1)).toMatchObject({ state: 'setup', content: { notice: { title: 'Download the assistant first', primaryAction: 'open-settings' } } });
   });
 
   it('leaves an empty field alone', async () => {

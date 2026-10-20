@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
@@ -10,26 +10,45 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { GeneralSettings } from './GeneralSettings';
+import { GeneralSettings, DictationSettings } from './GeneralSettings';
 import { PermissionsSettings } from './PermissionsSettings';
-import { SystemSettings } from './SystemSettings';
-import { SmartFeaturesSettings } from './SmartFeaturesSettings';
-import { AssistantSettings } from './AssistantSettings';
+import { IslandSettings } from './SystemSettings';
+import { SmartDictationSettings, MeetingSettings, RetentionRow } from './SmartFeaturesSettings';
+import { AssistantSettings, BetaFeatures } from './AssistantSettings';
 import { RewriteSettings } from './RewriteSettings';
 import { UpdateRow } from './UpdateRow';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useAssistantRuntime } from '@/hooks/use-assistant-runtime';
 import type { AppConfig, Theme } from '@/lib/ipc';
+import { cn } from '@/lib/utils';
 import { Check } from 'lucide-react';
+
+/** Settings' tabs, in order. 'assistant' exists only while the assistant is on. */
+export const SETTINGS_TABS = [
+  { id: 'general', label: 'General' },
+  { id: 'dictation', label: 'Dictation' },
+  { id: 'meetings', label: 'Meetings' },
+  { id: 'assistant', label: 'Assistant' },
+  { id: 'permissions', label: 'Permissions' },
+  { id: 'data', label: 'Data & privacy' },
+  { id: 'about', label: 'About' },
+] as const;
+export type SettingsTab = (typeof SETTINGS_TABS)[number]['id'];
+export function isSettingsTab(v: unknown): v is SettingsTab {
+  return SETTINGS_TABS.some((t) => t.id === v);
+}
 
 interface SettingsPageProps {
   visible: boolean;
+  tab: SettingsTab;
+  onTabChange: (tab: SettingsTab) => void;
   config: AppConfig;
   setTheme: (theme: Theme) => void;
   refreshConfig: () => Promise<void>;
   onClearHistory: () => void;
 }
 
-type ResetKey = 'transcripts' | 'whisperModels' | 'snippets' | 'dictionary' | 'permissions';
+type ResetKey = 'transcripts' | 'whisperModels' | 'snippets' | 'dictionary' | 'permissions' | 'assistant';
 
 const RESET_OPTIONS: { key: ResetKey; label: string; description: string }[] = [
   { key: 'transcripts', label: 'Transcripts', description: 'All recorded transcription history' },
@@ -37,7 +56,11 @@ const RESET_OPTIONS: { key: ResetKey; label: string; description: string }[] = [
   { key: 'snippets', label: 'Snippets', description: 'All custom text expansion snippets' },
   { key: 'dictionary', label: 'Dictionary', description: 'All custom word replacements' },
   { key: 'permissions', label: 'Permissions', description: 'Reset permission grants and onboarding state' },
+  { key: 'assistant', label: 'Assistant', description: 'Turn the assistant off and delete its download' },
 ];
+const NO_RESET: Record<ResetKey, boolean> = {
+  transcripts: false, whisperModels: false, snippets: false, dictionary: false, permissions: false, assistant: false,
+};
 
 function ResetCheckbox({
   checked,
@@ -84,6 +107,8 @@ function ResetCheckbox({
 
 export function SettingsPage({
   visible,
+  tab: requestedTab,
+  onTabChange,
   config,
   setTheme,
   refreshConfig,
@@ -92,13 +117,15 @@ export function SettingsPage({
   const { mic, accessibility, screen, needsRestart, grantMic, grantAccessibility, grantScreen, retryHotkey, restartApp, startPolling, stopPolling, refresh: refreshPerms } = usePermissions();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
-  const [resetSelections, setResetSelections] = useState<Record<ResetKey, boolean>>({
-    transcripts: false,
-    whisperModels: false,
-    snippets: false,
-    dictionary: false,
-    permissions: false,
-  });
+  const [resetSelections, setResetSelections] = useState<Record<ResetKey, boolean>>(NO_RESET);
+  const { runtime: assistantRuntime, setEnabled: setAssistantEnabled, remove: removeAssistant } = useAssistantRuntime();
+  const assistantOn = !!assistantRuntime?.enabled;
+  // The Assistant tab while the assistant is off (a stale link, or it was just
+  // turned off) falls back to General, where its switch is.
+  const tab: SettingsTab = requestedTab === 'assistant' && assistantRuntime && !assistantOn ? 'general' : requestedTab;
+  const tabs = SETTINGS_TABS.filter((t) => t.id !== 'assistant' || assistantOn);
+  // Reset offers the assistant only when there is something of it to reset.
+  const resetOptions = RESET_OPTIONS.filter((o) => o.key !== 'assistant' || (assistantRuntime && (assistantRuntime.enabled || assistantRuntime.state !== 'missing')));
   const [resetting, setResetting] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [appVersion, setAppVersion] = useState<string>('');
@@ -128,18 +155,12 @@ export function SettingsPage({
     setConfirmOpen(false);
   };
 
-  const allSelected = RESET_OPTIONS.every((o) => resetSelections[o.key]);
-  const someSelected = RESET_OPTIONS.some((o) => resetSelections[o.key]);
+  const allSelected = resetOptions.every((o) => resetSelections[o.key]);
+  const someSelected = resetOptions.some((o) => resetSelections[o.key]);
 
   const toggleAll = () => {
     const next = !allSelected;
-    setResetSelections({
-      transcripts: next,
-      whisperModels: next,
-      snippets: next,
-      dictionary: next,
-      permissions: next,
-    });
+    setResetSelections(Object.fromEntries(resetOptions.map((o) => [o.key, next])) as Record<ResetKey, boolean>);
   };
 
   const toggleOne = (key: ResetKey, value: boolean) => {
@@ -147,13 +168,7 @@ export function SettingsPage({
   };
 
   const openResetModal = () => {
-    setResetSelections({
-      transcripts: false,
-      whisperModels: false,
-      snippets: false,
-      dictionary: false,
-        permissions: false,
-    });
+    setResetSelections(NO_RESET);
     setResetOpen(true);
   };
 
@@ -182,6 +197,10 @@ export function SettingsPage({
       if (resetSelections.permissions) {
         await window.tellaflow.resetPermissions();
       }
+      if (resetSelections.assistant) {
+        await setAssistantEnabled(false);
+        await removeAssistant();
+      }
       window.dispatchEvent(new CustomEvent('tellaflow:data-reset', {
         detail: { ...resetSelections },
       }));
@@ -191,51 +210,79 @@ export function SettingsPage({
     }
   };
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Each tab opens at its top.
+  useEffect(() => { scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]')?.scrollTo({ top: 0 }); }, [tab]);
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <div className="px-7 pt-12 pb-4 [-webkit-app-region:drag]">
+      <div className="px-7 pt-12 pb-3 [-webkit-app-region:drag]">
         <h2 className="text-xl font-bold tracking-tight">Settings</h2>
       </div>
+      <div className="px-7 pb-3 border-b border-border/60 [-webkit-app-region:no-drag]">
+        <div role="tablist" aria-label="Settings" className="flex flex-wrap gap-1" data-testid="settings-tabs">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => onTabChange(t.id)}
+              className={cn(
+                'rounded-full px-3 py-1 text-sm font-medium transition-colors',
+                tab === t.id ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      <ScrollArea className="flex-1">
-        <div className="px-7 py-6">
-        <PermissionsSettings
-            mic={mic}
-            accessibility={accessibility}
-            screen={screen}
-            needsRestart={needsRestart}
-            onGrantMic={grantMic}
-            onGrantAccessibility={grantAccessibility}
-            onGrantScreen={grantScreen}
-            onRecheck={handleRecheck}
-            onRestart={restartApp}
-          />
-           <GeneralSettings
-            config={config}
-            onSetTheme={setTheme}
-            refreshConfig={refreshConfig}
-          />
-          <SystemSettings
-            config={config}
-            refreshConfig={refreshConfig}
-          />
-          <SmartFeaturesSettings
-            config={config}
-            refreshConfig={refreshConfig}
-          />
-          <AssistantSettings />
-          <RewriteSettings config={config} refreshConfig={refreshConfig} />
-         
-
-         
-         
+      <ScrollArea className="flex-1" ref={scrollRef}>
+        <div className="px-7 py-6" role="tabpanel">
+          {tab === 'general' && (
+            <>
+              <GeneralSettings config={config} onSetTheme={setTheme} refreshConfig={refreshConfig} />
+              <BetaFeatures onOpenAssistant={() => onTabChange('assistant')} />
+            </>
+          )}
+          {tab === 'dictation' && (
+            <>
+              <DictationSettings config={config} refreshConfig={refreshConfig} commandHotkey={assistantOn ? config.commandHotkey ?? null : null} />
+              <IslandSettings config={config} refreshConfig={refreshConfig} />
+              <SmartDictationSettings config={config} refreshConfig={refreshConfig} />
+            </>
+          )}
+          {tab === 'meetings' && <MeetingSettings config={config} refreshConfig={refreshConfig} />}
+          {tab === 'assistant' && assistantOn && (
+            <>
+              <AssistantSettings config={config} refreshConfig={refreshConfig} onTurnedOff={() => onTabChange('general')} />
+              <RewriteSettings config={config} refreshConfig={refreshConfig} />
+            </>
+          )}
+          {tab === 'permissions' && (
+            <PermissionsSettings
+              mic={mic}
+              accessibility={accessibility}
+              screen={screen}
+              needsRestart={needsRestart}
+              showScreen={assistantOn}
+              onGrantMic={grantMic}
+              onGrantAccessibility={grantAccessibility}
+              onGrantScreen={grantScreen}
+              onRecheck={handleRecheck}
+              onRestart={restartApp}
+            />
+          )}
+          {tab === 'data' && (
           <Well className="mb-7">
             <WellHeader>
-              <WellTitle>Data</WellTitle>
+              <WellTitle>Your data</WellTitle>
             </WellHeader>
             <WellCard>
+              <RetentionRow config={config} refreshConfig={refreshConfig} />
               <WellItem>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-4">
                   <div>
                     <span className="text-sm">Clear all transcriptions</span>
                     <p className="text-xs text-muted-foreground mt-0.5">
@@ -245,7 +292,7 @@ export function SettingsPage({
                   <Button
                     variant="outline"
                     size="sm"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    className="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
                     onClick={() => setConfirmOpen(true)}
                   >
                     Clear all
@@ -253,17 +300,17 @@ export function SettingsPage({
                 </div>
               </WellItem>
               <WellItem>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-4">
                   <div>
                     <span className="text-sm">Reset app</span>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Selectively clear models, history, snippets and more
+                      Choose what to clear: models, history, snippets and more
                     </p>
                   </div>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    className="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
                     onClick={openResetModal}
                   >
                     Reset…
@@ -272,7 +319,9 @@ export function SettingsPage({
               </WellItem>
             </WellCard>
           </Well>
+          )}
 
+          {tab === 'about' && (
           <Well>
             <WellHeader>
               <WellTitle>About</WellTitle>
@@ -318,6 +367,7 @@ export function SettingsPage({
               </WellItem>
             </WellCard>
           </Well>
+          )}
         </div>
       </ScrollArea>
 
@@ -367,7 +417,7 @@ export function SettingsPage({
               />
             </div>
 
-            {RESET_OPTIONS.map((opt) => (
+            {resetOptions.map((opt) => (
               <div key={opt.key} className="py-1">
                 <ResetCheckbox
                   checked={resetSelections[opt.key]}

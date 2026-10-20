@@ -1,74 +1,193 @@
-const { clipboard } = require('electron');
 const { execFile } = require('child_process');
 
+// How long the target app gets to read the clipboard after Cmd+V has been
+// delivered before the user's own clipboard goes back. Apps handle the
+// keystroke asynchronously, so "osascript returned" is not "pasted" yet.
 const RESTORE_DELAY_MS = 600;
+// An app that hangs on activate must not hold every later paste hostage.
+const SCRIPT_TIMEOUT_MS = 5000;
 
-// Each paste captures the clipboard state at call time. We track the
-// ORIGINAL pre-first-paste value so back-to-back recordings don't
-// overwrite it with a transcription string.
-let _restoreTimer = null;
-let _originalClipboard = null;
+const PASTE_KEY = 'tell application "System Events" to keystroke "v" using command down';
+const UNDO_KEY = 'tell application "System Events" to keystroke "z" using command down';
+// Replace everything in the field (the rewrite shortcut with nothing selected).
+const SELECT_ALL_PASTE_KEY = 'tell application "System Events"\nkeystroke "a" using command down\ndelay 0.05\nkeystroke "v" using command down\nend tell';
+const COPY_KEY = 'tell application "System Events" to keystroke "c" using command down';
+const SELECT_ALL_COPY_KEY = 'tell application "System Events"\nkeystroke "a" using command down\ndelay 0.05\nkeystroke "c" using command down\nend tell';
+
+// Strip characters that would break the osascript string literal. Names come
+// from System Events, so this is a safety measure, not a user-input concern.
+function sanitizeApp(name) {
+  return name ? name.replace(/[\\"'\n\r]/g, '') : null;
+}
+
+// Keys the user is still holding combine with our synthetic keystroke: after
+// ⌃⌘V (Paste Last Transcript) a held ⌃⌘ turns Cmd+V into ⌃⌘V again — our own
+// shortcut, not a paste — and a held ⌥ or ⇧ turns it into "move" in Finder or
+// "paste and match style". So wait for ⇧⌃⌥⌘ to be released first. They are
+// bits 17–20 of NSEvent.modifierFlags (AppleScript has no bitwise ops, hence
+// div/mod). Still held after MODIFIER_WAIT_TICKS × 20 ms → fail, which leaves
+// the text on the clipboard to paste by hand.
+const MODIFIER_WAIT_TICKS = 150;
+const WAIT_FOR_MODIFIERS = [
+  'set waited to 0',
+  'repeat while ((current application\'s NSEvent\'s modifierFlags()) div 131072) mod 16 > 0',
+  `if waited >= ${MODIFIER_WAIT_TICKS} then error "Modifier keys are still held down" number 1`,
+  'delay 0.02',
+  'set waited to waited + 1',
+  'end repeat',
+].join('\n');
+
+// Re-activate the target before the keystroke so it lands in the right field
+// whatever stole focus meanwhile. With no target, the keystroke goes to the
+// frontmost window (best effort).
+function keystrokeScript(key, targetApp) {
+  const safeTarget = sanitizeApp(targetApp);
+  return [
+    'use framework "AppKit"',
+    'use scripting additions',
+    ...(safeTarget ? [`tell application "${safeTarget}" to activate`, 'delay 0.15'] : []),
+    WAIT_FOR_MODIFIERS,
+    key,
+  ].join('\n');
+}
+
+function runOsascript(script) {
+  return new Promise((resolve, reject) => {
+    execFile('osascript', ['-e', script], { timeout: SCRIPT_TIMEOUT_MS }, (err) => (err ? reject(err) : resolve()));
+  });
+}
 
 /**
- * Paste text into the target app.
- * Always re-activates `targetApp` before simulating Cmd+V so the keystroke
- * lands in the correct text field regardless of what stole focus during
- * recording (hidden BrowserWindow creation, notifications, etc.).
+ * Everything on the clipboard that we can put back: plain text, rich text,
+ * HTML, an image, a bookmark, and a file copied in Finder. Reading only the
+ * text would turn a copied image or file into an empty clipboard.
  */
-function pasteText(text, targetApp = null, { selectAll = false } = {}) {
-  // Capture original clipboard only for the first paste in a sequence;
-  // subsequent rapid pastes keep the same restore target so back-to-back
-  // recordings never permanently overwrite the user's pre-recording clipboard.
-  if (_restoreTimer) {
-    clearTimeout(_restoreTimer);
-    _restoreTimer = null;
-    // _originalClipboard already holds the pre-sequence value — don't overwrite
-  } else {
-    _originalClipboard = clipboard.readText();
+function snapshotClipboard(cb) {
+  const formats = cb.availableFormats();
+  const snap = { formats };
+  if (!formats.length) return snap;
+  const text = cb.readText();
+  if (text) snap.text = text;
+  if (formats.includes('text/html')) {
+    const html = cb.readHTML();
+    if (html) snap.html = html;
+  }
+  if (formats.includes('text/rtf')) {
+    const rtf = cb.readRTF();
+    if (rtf) snap.rtf = rtf;
+  }
+  if (formats.some((f) => f.startsWith('image/'))) {
+    const image = cb.readImage();
+    if (image && !image.isEmpty()) snap.image = image;
+  }
+  if (process.platform === 'darwin') {
+    try {
+      const fileUrl = cb.readBuffer('public.file-url');
+      if (fileUrl && fileUrl.length) snap.fileUrl = fileUrl;
+    } catch {}
+  }
+  return snap;
+}
+
+function restoreClipboard(cb, snap) {
+  if (!snap.formats.length) { cb.clear(); return; }
+  // A Finder file copy is only pasteable as a file through its file URL.
+  if (snap.fileUrl) { cb.writeBuffer('public.file-url', snap.fileUrl); return; }
+  const data = {};
+  for (const key of ['text', 'html', 'rtf', 'image']) if (snap[key] !== undefined) data[key] = snap[key];
+  if (Object.keys(data).length) cb.write(data);
+  else cb.clear();
+}
+
+/**
+ * Pasting goes through the clipboard: put our text on it, press Cmd+V, then
+ * put the user's clipboard back. The edge cases this handles:
+ *
+ * - The keystroke lands after activate + delay + osascript start-up, so the
+ *   restore waits for the script to finish (plus RESTORE_DELAY_MS). Restoring
+ *   on a fixed timer from the moment we wrote raced it: a slow activate meant
+ *   Cmd+V pasted the user's old clipboard instead of our text.
+ * - Pastes are serialized. A second paste writing the clipboard while the
+ *   first's Cmd+V is still in flight would paste the wrong text into the
+ *   first app.
+ * - Back-to-back pastes restore the clipboard from before the first one, once,
+ *   after the last one — never a transcript.
+ * - If the clipboard no longer holds our text at restore time, the user (or
+ *   another app) copied something meanwhile: that is kept, not overwritten.
+ * - Modifier keys still held (⌃⌘ from ⌃⌘V) are waited out before Cmd+V; see
+ *   WAIT_FOR_MODIFIERS.
+ * - If the keystroke failed (no Accessibility, script timed out, modifiers
+ *   never released), our text is left on the clipboard so the user can paste
+ *   it by hand.
+ * - Non-text clipboards (images, rich text, Finder files) and an empty
+ *   clipboard are restored as they were.
+ */
+function createPaster({ clipboard: cb, runScript = runOsascript, restoreDelayMs = RESTORE_DELAY_MS, wait } = {}) {
+  const sleep = wait || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  let queue = Promise.resolve();
+  let pending = 0;
+  // The clipboard from before the current burst of pastes, and the text we
+  // last wrote (to tell whether anyone has copied over it since).
+  let original = null;
+  let ours = null;
+
+  async function pasteOne(text, targetApp, { selectAll = false } = {}) {
+    if (original === null) original = snapshotClipboard(cb);
+    cb.writeText(text);
+    ours = text;
+
+    if (!sanitizeApp(targetApp)) console.warn('pasteText: no target app known — pasting into current frontmost window.');
+    let pasted = true;
+    try {
+      await runScript(keystrokeScript(selectAll ? SELECT_ALL_PASTE_KEY : PASTE_KEY, targetApp));
+    } catch (err) {
+      pasted = false;
+      console.error('Failed to simulate paste:', err.message);
+    }
+    await sleep(restoreDelayMs);
+
+    // Another paste is queued: it keeps the same original and restores it.
+    if (pending > 1) return pasted;
+    const snap = original;
+    original = null;
+    if (!pasted) return pasted;
+    if (cb.readText() !== ours) return pasted;
+    restoreClipboard(cb, snap);
+    return pasted;
   }
 
-  clipboard.writeText(text);
-
-  // EC3 — sanitize app name: strip characters that would break the osascript
-  // string literal (quotes, newlines). Names come from System Events so this
-  // is a safety measure rather than a user-input concern.
-  const safeTarget = targetApp ? targetApp.replace(/[\\"'\n\r]/g, '') : null;
-
-  // selectAll: replace everything in the field (the rewrite shortcut).
-  const pasteScript = selectAll
-    ? 'tell application "System Events"\nkeystroke "a" using command down\ndelay 0.05\nkeystroke "v" using command down\nend tell'
-    : 'tell application "System Events" to keystroke "v" using command down';
-
-  // EC4 — if no target is known, paste without activation (best-effort).
-  // This avoids sending Cmd+V into a random Electron window.
-  const script = safeTarget
-    ? `tell application "${safeTarget}" to activate\ndelay 0.15\n${pasteScript}`
-    : pasteScript;
-
-  if (!safeTarget) {
-    console.warn('pasteText: no target app known — pasting into current frontmost window.');
+  function pasteText(text, targetApp = null, opts) {
+    pending++;
+    const run = queue.then(() => pasteOne(text, targetApp, opts)).finally(() => { pending--; });
+    queue = run.catch(() => {});
+    return run;
   }
 
-  execFile('osascript', ['-e', script], (err) => {
-    if (err) console.error('Failed to simulate paste:', err.message);
-  });
+  return { pasteText };
+}
 
-  _restoreTimer = setTimeout(() => {
-    if (_originalClipboard !== null) clipboard.writeText(_originalClipboard);
-    _originalClipboard = null;
-    _restoreTimer = null;
-  }, RESTORE_DELAY_MS);
+// Electron's clipboard, required on first paste rather than at load: the unit
+// tests load this module with their own clipboard, and CI installs without the
+// Electron binary (requiring 'electron' there throws).
+let paster = null;
+function appPaster() {
+  if (!paster) paster = createPaster({ clipboard: require('electron').clipboard });
+  return paster;
+}
+
+/**
+ * Paste text into the target app (re-activated first). Resolves to whether
+ * the Cmd+V keystroke was delivered; callers may ignore the promise.
+ * `selectAll` presses ⌘A first, so the text replaces the whole field.
+ */
+function pasteText(text, targetApp = null, opts) {
+  return appPaster().pasteText(text, targetApp, opts);
 }
 
 /** Undo the last paste: re-activate the app it went into and press Cmd+Z. */
 function undoPaste(targetApp = null) {
-  const safeTarget = targetApp ? targetApp.replace(/[\\"'\n\r]/g, '') : null;
-  const undoScript = 'tell application "System Events" to keystroke "z" using command down';
-  const script = safeTarget
-    ? `tell application "${safeTarget}" to activate\ndelay 0.15\n${undoScript}`
-    : undoScript;
-  execFile('osascript', ['-e', script], (err) => {
-    if (err) console.error('Failed to simulate undo:', err.message);
+  runOsascript(keystrokeScript(UNDO_KEY, targetApp)).catch((err) => {
+    console.error('Failed to simulate undo:', err.message);
   });
 }
 
@@ -97,55 +216,50 @@ end tell
 return "unknown"
 `;
 
-function osa(script, timeout = 3000) {
+function readOsascript(script, timeout) {
   return new Promise((resolve, reject) => {
     execFile('osascript', ['-e', script], { timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))));
   });
 }
 
-/** Press keys in System Events and read what landed on the clipboard. */
-async function copyWith(keys, safeTarget) {
-  clipboard.clear();
-  const body = `tell application "System Events"\n${keys}\nend tell`;
-  await osa(safeTarget ? `tell application "${safeTarget}" to activate\ndelay 0.1\n${body}` : body);
-  for (const t0 = Date.now(); Date.now() - t0 < COPY_WAIT_MS;) {
-    const text = clipboard.readText();
-    if (text) return text;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  return '';
-}
-
-const COPY = 'keystroke "c" using command down';
-const SELECT_ALL_COPY = 'keystroke "a" using command down\ndelay 0.05\nkeystroke "c" using command down';
-
 /**
  * The text to rewrite in the focused field: { text, app, scope }.
  * What the user selected (scope 'selection'); with nothing selected, the
- * whole field (scope 'all', selected with ⌘A so the paste replaces it).
- * The selection is read through Accessibility first; an app that doesn't
- * expose it is asked with ⌘C (an empty copy means nothing is selected). The
- * clipboard is put back afterwards.
+ * whole field (scope 'all', so the paste selects all first). The selection is
+ * read through Accessibility first; an app that doesn't expose it is asked
+ * with ⌘C (an empty copy means nothing is selected). The user's clipboard is
+ * put back as it was.
  */
 async function copyForRewrite(targetApp = null) {
-  const safeTarget = targetApp ? targetApp.replace(/[\\"'\n\r]/g, '') : null;
+  const app = sanitizeApp(targetApp);
   let selection = null; // null: the app didn't say
   try {
-    const out = (await osa(SELECTED_TEXT_SCRIPT, 2000)).replace(/\n$/, '');
-    if (out.startsWith('ok\n') || out === 'ok') selection = out.slice(3);
+    const out = (await readOsascript(SELECTED_TEXT_SCRIPT, 2000)).replace(/\n$/, '');
+    if (out === 'ok' || out.startsWith('ok\n')) selection = out.slice(3);
   } catch {}
-  if (selection) return { text: selection, app: safeTarget, scope: 'selection' };
+  if (selection) return { text: selection, app, scope: 'selection' };
 
-  const original = clipboard.readText();
+  const cb = require('electron').clipboard;
+  const original = snapshotClipboard(cb);
+  const copyWith = async (key) => {
+    cb.clear();
+    await runOsascript(keystrokeScript(key, app));
+    for (const t0 = Date.now(); Date.now() - t0 < COPY_WAIT_MS;) {
+      const text = cb.readText();
+      if (text) return text;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return '';
+  };
   try {
     if (selection === null) {
-      const copied = await copyWith(COPY, safeTarget);
-      if (copied) return { text: copied, app: safeTarget, scope: 'selection' };
+      const copied = await copyWith(COPY_KEY);
+      if (copied) return { text: copied, app, scope: 'selection' };
     }
-    return { text: await copyWith(SELECT_ALL_COPY, safeTarget), app: safeTarget, scope: 'all' };
+    return { text: await copyWith(SELECT_ALL_COPY_KEY), app, scope: 'all' };
   } finally {
-    clipboard.writeText(original);
+    restoreClipboard(cb, original);
   }
 }
 
-module.exports = { pasteText, undoPaste, copyForRewrite };
+module.exports = { pasteText, undoPaste, copyForRewrite, createPaster, snapshotClipboard, restoreClipboard, keystrokeScript };
