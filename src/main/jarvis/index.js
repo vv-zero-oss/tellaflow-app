@@ -37,6 +37,7 @@ const { isOsAction, TERMINAL_ACTIONS } = require('./mascot-actions');
 const { runMascotActions } = require('./mascot-dispatch');
 const { buildMascotStanding, buildMascotTurn } = require('./mascot-prompt');
 const loopParts = require('./desktop-loop');
+const { buildRewriteStanding } = require('./rewrite');
 
 /** Turns of conversation kept for re-seeding a rotated thread. */
 const MAX_TRANSCRIPT = 40;
@@ -91,6 +92,8 @@ function confirmCard(action, seen, reason) {
  * @param {() => Promise<object|null>} [deps.getContext]   where the user was when they pressed the key
  * @param {object} deps.os                                   desktop/os-actions.js (or a fake)
  * @param {string} deps.workspaceDir                         the folder the assistant's bb project lives in
+ * @param {string} [deps.rewriteDir]                         the rewrite thread's own bb project (default: beside the workspace)
+ * @param {() => boolean} [deps.rewriteEnabled]              warm the rewrite thread too
  * @param {(entry: object) => void} [deps.record]            transcript lines, for history and the page
  * @param {(threadUrl: string) => void} [deps.openChat]      show a bb chat on the Assistant page
  * @param {() => void} [deps.openAccessibility]              System Settings › Accessibility
@@ -168,6 +171,80 @@ function createJarvis(deps) {
     log: (m, d) => log(m, d ?? ''),
   });
 
+  // ── The rewrite thread ───────────────────────────────────────────────────
+  // Rewrites (jarvis/rewrite.js) run on a hidden thread of their own, in a bb
+  // project of their own: the assistant's conversation never sees them, and
+  // the Assistant page (which frames the workspace project) never lists them.
+  const rewriteListeners = new Map(); // turnId → fn
+  const rewriteWaits = new Set();     // settles each rewrite in flight on a stop
+  const emitRewrite = (event) => rewriteListeners.get(event.turnId)?.(event);
+  const rewriteThreads = deps.bb?.createRewriteThreads ? deps.bb.createRewriteThreads(emitRewrite) : createMascotThreads({
+    client: async () => (await ensureServer()).client,
+    resolve: async (cwd) => {
+      const server = await ensureServer();
+      return projectMap(server.client).resolve(cwd);
+    },
+    modelChoice,
+    fallbackCwd: () => rewriteDir(),
+    emit: emitRewrite,
+    log: (m, d) => log(`rewrite: ${m}`, d ?? ''),
+  });
+  let nextRewrite = 1;
+  const REWRITE_RETRY_MS = deps.rewriteRetryMs ?? 2000;
+
+  function rewriteDir() {
+    const dir = deps.rewriteDir || path.join(path.dirname(deps.workspaceDir), 'rewrite');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+    return dir;
+  }
+
+  /** bb errors that pass: a cold provider, a thread still provisioning. */
+  const TRANSIENT_REWRITE = /\b(503|409)\b|Provisioning thread failed|Environment unavailable|operation was aborted|not ready/i;
+
+  /** One rewrite: the prompt in, the whole answer out. A newer one stops it.
+   *  A rewrite carries no conversation, so a failed thread is dropped (the
+   *  next one starts clean) and a transient bb error is tried again. */
+  async function rewrite(prompt, onWaking) {
+    let outcome = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await new Promise((r) => setTimeout(r, REWRITE_RETRY_MS));
+      outcome = await rewriteOnce(prompt, onWaking);
+      if (outcome.ok || outcome.message === 'stopped') return outcome;
+      log('rewrite failed:', outcome.message);
+      await rewriteThreads.reset().catch(() => {});
+      if (!TRANSIENT_REWRITE.test(outcome.message || '')) return outcome;
+    }
+    return outcome;
+  }
+
+  async function rewriteOnce(prompt, onWaking) {
+    const turnId = `r${nextRewrite++}`;
+    const finished = new Promise((resolve) => {
+      rewriteListeners.set(turnId, (event) => {
+        if (event.kind === 'waking') onWaking?.();
+        else if (event.kind === 'done') resolve({ ok: true, text: event.text });
+        else if (event.kind === 'error') resolve({ ok: false, message: event.message });
+        else if (event.kind === 'question') resolve({ ok: false, message: 'The AI asked a question instead of rewriting.' });
+      });
+    });
+    rewriteThreads.turn({ turnId, cwd: rewriteDir(), standing: buildRewriteStanding(), prompt }).catch((err) => {
+      rewriteListeners.get(turnId)?.({ turnId, kind: 'error', message: String(err?.message || err) });
+    });
+    // A stopped turn is silent, so a stop settles the wait from here.
+    let settle;
+    const stopped = new Promise((resolve) => { settle = resolve; rewriteWaits.add(resolve); });
+    const outcome = await Promise.race([finished, stopped]);
+    rewriteListeners.delete(turnId);
+    rewriteWaits.delete(settle);
+    return outcome;
+  }
+
+  async function stopRewrite() {
+    for (const settle of rewriteWaits) settle({ ok: false, message: 'stopped' });
+    rewriteWaits.clear();
+    await rewriteThreads.stop().catch(() => {});
+  }
+
   /** Start bb and make the thread before the user's first words arrive: a cold
    *  thread is ~14 s to its first token, a warm one ~1.5 s (canvas measured). */
   async function warm() {
@@ -185,6 +262,12 @@ function createJarvis(deps) {
     }
     const r = await warming;
     if (!r.ok) log('warm failed:', r.error);
+    // After the assistant's own thread, never beside it: two threads made at
+    // once is what bb refuses.
+    if (deps.rewriteEnabled?.()) {
+      const rw = await rewriteThreads.warm(rewriteDir(), buildRewriteStanding());
+      if (!rw.ok) log('rewrite warm failed:', rw.error);
+    }
     return r;
   }
 
@@ -790,10 +873,12 @@ function createJarvis(deps) {
     await stop();
     transcript.length = 0;
     await threads.reset().catch(() => {});
+    await rewriteThreads.reset().catch(() => {});
   }
 
   async function dispose() {
     await stop();
+    await stopRewrite();
     await stopBbServer().catch(() => {});
   }
 
@@ -801,6 +886,8 @@ function createJarvis(deps) {
     ask,
     stop,
     warm,
+    rewrite,
+    stopRewrite,
     action,
     status,
     providers,

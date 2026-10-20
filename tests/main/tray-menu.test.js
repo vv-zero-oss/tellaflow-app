@@ -108,5 +108,9 @@ describe('tray menu', () => {
     expect(find(sc, 'Dictate').sublabel).toBe('fn');
     expect(find(sc, 'Ask the assistant').sublabel).toBe('Off');
     expect(find(sc, 'Paste last transcript').sublabel).toBe('⌃⌘V');
+    // Rewriting needs the assistant: off while the command key is.
+    expect(find(sc, 'Rewrite text').sublabel).toBe('Off');
+    const on = find(buildTrayTemplate({ shortcuts: { dictate: 'fn', command: 'Right ⌥', rewrite: '⌃⌥F' } }, actions()), 'Shortcuts').submenu;
+    expect(find(on, 'Rewrite text').sublabel).toBe('⌃⌥F');
   });
 });

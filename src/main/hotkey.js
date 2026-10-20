@@ -4,6 +4,10 @@ let listener = null;
 let onRecordStart = null;
 let onRecordStop = null;
 let onEnterHandsFree = null;
+let onRewriteCombo = null;
+// The rewrite shortcut was pressed: it fires once every key of it is up, so
+// its modifiers are not still held when the rewrite presses ⌘A / ⌘C.
+let rewriteArmed = false;
 let isRecording = false;
 let isWaitingForActivation = false;
 let activationTimer = null;
@@ -72,7 +76,7 @@ function finishHandsFree() {
   if (onRecordStop) onRecordStop({ cancelled: false });
 }
 
-function start({ onStart, onStop, onHandsFree }) {
+function start({ onStart, onStop, onHandsFree, onRewrite }) {
   // Stop any existing listener before starting a new one
   if (listener) {
     try { listener.kill(); } catch {}
@@ -84,6 +88,8 @@ function start({ onStart, onStop, onHandsFree }) {
   onRecordStart = onStart;
   onRecordStop = onStop;
   onEnterHandsFree = onHandsFree;
+  onRewriteCombo = onRewrite;
+  rewriteArmed = false;
   restartCount = 0;
 
   let GlobalKeyboardListener;
@@ -123,7 +129,7 @@ function start({ onStart, onStop, onHandsFree }) {
         }
         const delay = Math.min(500 * restartCount, 5000);
         console.warn(`keyspy native process exited (code ${code}), restart ${restartCount}/${MAX_RESTARTS} in ${delay}ms...`);
-        setTimeout(() => start({ onStart, onStop, onHandsFree }), delay);
+        setTimeout(() => start({ onStart, onStop, onHandsFree, onRewrite }), delay);
       },
     },
   });
@@ -135,7 +141,24 @@ function start({ onStart, onStop, onHandsFree }) {
       return;
     }
 
+    if (rewriteArmed && e.state === 'UP') {
+      const rk = config.getRewriteHotkey();
+      if (!rk || rk.names.every((n) => n === e.name || !down[n])) {
+        rewriteArmed = false;
+        if (onRewriteCombo) onRewriteCombo();
+      }
+      return;
+    }
+
     if (e.state === 'DOWN') {
+      // The rewrite shortcut, when nothing is being recorded (and it isn't
+      // also the dictation or command key — those win).
+      if (!isRecording && !isWaitingForActivation && matchesHotkey(e, down, config.getRewriteHotkey())
+        && !matchesHotkey(e, down, hotkeyFor('dictation')) && !matchesHotkey(e, down, hotkeyFor('command'))) {
+        rewriteArmed = true;
+        return;
+      }
+
       // The dictation key wins if both keys are set to the same thing.
       const pressed = matchesHotkey(e, down, hotkeyFor('dictation'))
         ? 'dictation'

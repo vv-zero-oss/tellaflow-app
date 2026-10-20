@@ -40,6 +40,7 @@ export interface AppConfig {
   meetingBrowserDetection?: boolean;
   audioRetentionDays?: number;
   commandHotkey?: HotkeyConfig | null;
+  rewriteHotkey?: HotkeyConfig | null;
   islandPlacement?: 'left' | 'bottom' | 'right';
   islandMaterial?: 'translucent' | 'opaque';
 }
@@ -48,6 +49,7 @@ export type FeatureSettingKey =
   | 'islandPlacement'
   | 'islandMaterial'
   | 'commandHotkey'
+  | 'rewriteHotkey'
   | 'autoLearnEnabled'
   | 'contextAwarenessEnabled'
   | 'meetingNotesEnabled'
@@ -94,6 +96,15 @@ export interface AssistantSettings {
   desktopActions: boolean;
   /** A picture of the screen goes with each request. */
   screenVision: boolean;
+}
+
+/** How the rewrite shortcut rewrites (src/main/jarvis/rewrite.js REWRITE_STYLES). */
+export type RewriteStyle = 'grammar' | 'formal' | 'casual' | 'concise' | 'custom';
+
+export interface RewriteSettings {
+  style: RewriteStyle;
+  /** The user's own instructions, for the 'custom' style. */
+  instructions: string;
 }
 
 /** One of bb's providers and whether it can run here. */
@@ -355,6 +366,8 @@ interface TellaflowAPI {
   assistantStyleFrame: (options: { theme: 'light' | 'dark'; tokens: Record<string, string> }) => Promise<{ ok: boolean; applied?: number; error?: string }>;
   assistantGetSettings: () => Promise<AssistantSettings>;
   assistantSetSettings: (patch: Partial<AssistantSettings>) => Promise<AssistantSettings>;
+  rewriteGetSettings: () => Promise<RewriteSettings>;
+  rewriteSetSettings: (patch: Partial<RewriteSettings>) => Promise<RewriteSettings>;
   assistantInstallHelper: () => Promise<{ ok: boolean; error?: string }>;
   assistantRequestAccessibility: () => Promise<{ granted: boolean }>;
   assistantDesktopStatus: () => Promise<AssistantDesktopStatus>;

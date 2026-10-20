@@ -15,6 +15,7 @@ import { PermissionsSettings } from './PermissionsSettings';
 import { SystemSettings } from './SystemSettings';
 import { SmartFeaturesSettings } from './SmartFeaturesSettings';
 import { AssistantSettings } from './AssistantSettings';
+import { RewriteSettings } from './RewriteSettings';
 import { UpdateRow } from './UpdateRow';
 import { usePermissions } from '@/hooks/use-permissions';
 import type { AppConfig, Theme } from '@/lib/ipc';
@@ -223,6 +224,7 @@ export function SettingsPage({
             refreshConfig={refreshConfig}
           />
           <AssistantSettings />
+          <RewriteSettings config={config} refreshConfig={refreshConfig} />
          
 
          
