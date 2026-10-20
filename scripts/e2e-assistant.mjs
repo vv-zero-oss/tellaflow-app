@@ -48,6 +48,10 @@ const CASES = [
   { id: 'instant-screenshot', request: 'Take a screenshot', expect: (v, t, d) => /Screenshot saved/.test(t) && ran(d, 'screencapture'), fast: true },
   { id: 'instant-music', request: 'Pause the music', expect: (v, t, d) => /Paused Spotify/.test(t) && ran(d, 'osascript'), fast: true },
   { id: 'instant-open', request: 'Open Safari', expect: (v, t, d) => /Opened Safari/.test(t) && ran(d, 'open'), fast: true },
+  // Mixed requests: every step instant, or the instant part first and only
+  // the rest to the AI.
+  { id: 'mixed-instant', request: 'Open Safari and go to github.com', expect: (v, t, d) => /Opened Safari\. Opened github\.com\./.test(t) && d.quick.some((c) => c[1] === 'https://github.com'), fast: 'open-url' },
+  { id: 'mixed-ai', request: 'Open Notes and tell me what 12 times 12 is', expect: (v, t, d) => /^Opened Notes\./.test(t) && /144/.test(t) && d.quick.some((c) => c[2] === 'Notes') },
   { id: 'answer', request: 'What is 15 percent of 240? Answer in one short sentence.', expect: (v, t) => /36/.test(t) },
   // A question that needs a lookup is answered here, by the island's own
   // thread with its tools — not handed to a chat.
@@ -159,7 +163,7 @@ try {
         const d = await desk();
         const dd = d ? { ...d, quick: (d.quick ?? []).slice(quickBefore) } : {};
         check(`${c.id}: "${c.request}"`, !!c.expect(v, reply?.text ?? '', dd), `${st}: ${JSON.stringify(reply?.text ?? v?.content?.notice ?? '')} · first words ${firstWordsMs ?? '—'} ms · ${Math.round((Date.now() - t0) / 1000)} s`);
-        if (c.fast) check(`${c.id}: answered in under a second, without the AI`, firstWordsMs !== null && firstWordsMs < 1000 && mainLogs.join('').includes(`instant command { id: '${c.request.includes('screenshot') ? 'screenshot' : c.request.includes('music') ? 'media' : 'open-app'}'`), `${firstWordsMs} ms to the answer`);
+        if (c.fast) check(`${c.id}: answered in under a second, without the AI`, firstWordsMs !== null && firstWordsMs < 1000 && mainLogs.join('').includes(`instant command { id: '${typeof c.fast === 'string' ? c.fast : c.request.includes('screenshot') ? 'screenshot' : c.request.includes('music') ? 'media' : 'open-app'}'`), `${firstWordsMs} ms to the answer`);
         break;
       }
       await sleep(120);

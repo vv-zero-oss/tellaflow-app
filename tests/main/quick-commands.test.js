@@ -1,7 +1,7 @@
 // Instant commands: what is matched (and what is left for the AI), and the
 // system calls each one makes.
 import { describe, it, expect } from 'vitest';
-import { matchQuickCommand, createQuickCommands, normalize, QUICK_COMMANDS } from '../../src/main/jarvis/quick-commands.js';
+import { matchQuickCommand, planQuickRequest, createQuickCommands, normalize, QUICK_COMMANDS } from '../../src/main/jarvis/quick-commands.js';
 
 describe('matchQuickCommand', () => {
   const cases = [
@@ -16,6 +16,8 @@ describe('matchQuickCommand', () => {
     ['switch to Slack', { id: 'open-app', app: 'Slack' }],
     ['open the notes app', { id: 'open-app', app: 'Notes' }],
     ['open music', { id: 'open-app', app: 'Music' }],
+    ['open textedit', { id: 'open-app', app: 'TextEdit' }],
+    ['open chrome', { id: 'open-app', app: 'Google Chrome' }],
     ['open downloads', { id: 'open-folder', folder: 'Downloads' }],
     ['open my documents folder', { id: 'open-folder', folder: 'Documents' }],
     ['go to github dot com', { id: 'open-url', url: 'https://github.com' }],
@@ -160,5 +162,50 @@ describe('createQuickCommands', () => {
     const q = createQuickCommands(runners({ platform: 'linux' }).deps);
     expect(q.match('take a screenshot')).toBeNull();
     expect(q.match('what time is it')).toMatchObject({ id: 'time' });
+  });
+});
+
+describe('planQuickRequest (mixed requests)', () => {
+  const ids = (p) => p && { steps: p.steps.map((s) => s.id + (s.app ? `:${s.app}` : s.command ? `:${s.command}` : s.url ? `:${s.url}` : '')), rest: p.rest };
+  const cases = [
+    ['Open Spotify and play my liked songs', { steps: ['open-app:Spotify'], rest: 'play my liked songs' }],
+    ['Open Safari and go to github.com', { steps: ['open-app:Safari', 'open-url:https://github.com'], rest: null }],
+    ['pause the music and lock my screen', { steps: ['media:pause', 'lock'], rest: null }],
+    ['take a screenshot and send it to Sam', { steps: ['screenshot'], rest: 'send it to sam' }],
+    ['Open Notes, then start a new note called groceries', { steps: ['open-app:Notes'], rest: 'start a new note called groceries' }],
+    ['what time is it and what is the weather in mumbai', { steps: ['time'], rest: 'what is the weather in mumbai' }],
+    ['Hey, open Safari, then go to youtube.com and search for lofi', { steps: ['open-app:Safari', 'open-url:https://youtube.com'], rest: 'search for lofi' }],
+    // A whole-utterance match wins: "and" inside a query is not a step break.
+    ['google salt and pepper', { steps: ['web-search'], rest: null }],
+    ['search youtube for rock and roll', { steps: ['web-search'], rest: null }],
+  ];
+  for (const [said, want] of cases) {
+    it(`"${said}"`, () => expect(ids(planQuickRequest(said))).toEqual(want));
+  }
+
+  it('aims "play" at the player it just opened', () => {
+    expect(planQuickRequest('open spotify and play').steps[1]).toEqual({ id: 'media', command: 'play', player: 'Spotify' });
+  });
+
+  // Only a LEADING run of instant clauses is taken: order matters.
+  for (const said of ['find the email from Sam and take a screenshot', 'open terminal and run ls', 'play my liked songs', 'summarize this page then lock my screen']) {
+    it(`leaves "${said}" whole to the AI`, () => expect(planQuickRequest(said)).toBeNull());
+  }
+
+  it('reads "github dot com" as an address but not a sentence that ends in one', () => {
+    expect(matchQuickCommand('go to github dot com')).toEqual({ id: 'open-url', url: 'https://github.com' });
+    expect(matchQuickCommand('open safari and go to github.com')).toBeNull();
+  });
+
+  it('off a Mac, the remainder starts at the first command it cannot run', () => {
+    const q = createQuickCommands(runners({ platform: 'linux' }).deps);
+    expect(q.plan('what time is it and open safari')).toEqual({ steps: [{ id: 'time' }], rest: 'open safari' });
+  });
+
+  it('sends "play" straight to the player it names', async () => {
+    const { calls, deps } = runners({ runningApps: async () => [] });
+    const q = createQuickCommands(deps);
+    expect(await q.run({ id: 'media', command: 'play', player: 'Spotify' })).toMatchObject({ ok: true, text: 'Playing Spotify.' });
+    expect(calls).toEqual([['as', 'tell application "Spotify" to play']]);
   });
 });

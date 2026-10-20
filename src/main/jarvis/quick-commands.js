@@ -82,9 +82,36 @@ function titleCase(s) {
   return s.replace(/\b([a-z])/g, (m) => m.toUpperCase());
 }
 
-/** A spoken domain: "github dot com" → "github.com". */
+/** Apps whose names title case gets wrong, or that people call by another
+ *  name. `open -a` ignores case, but the island and the AI read the name. */
+const APP_NAMES = {
+  textedit: 'TextEdit',
+  facetime: 'FaceTime',
+  'app store': 'App Store',
+  iphoto: 'iPhoto',
+  imovie: 'iMovie',
+  itunes: 'iTunes',
+  quicktime: 'QuickTime Player',
+  'quicktime player': 'QuickTime Player',
+  whatsapp: 'WhatsApp',
+  'vs code': 'Visual Studio Code',
+  vscode: 'Visual Studio Code',
+  chrome: 'Google Chrome',
+  'google chrome': 'Google Chrome',
+  chatgpt: 'ChatGPT',
+  linkedin: 'LinkedIn',
+  testflight: 'TestFlight',
+  'system information': 'System Information',
+};
+
+function appName(spoken) {
+  return APP_NAMES[spoken] ?? titleCase(spoken);
+}
+
+/** A spoken domain: "github dot com" → "github.com". Only "dot" joins words:
+ *  "safari and go to github.com" is a sentence, not one long address. */
 function spokenDomain(s) {
-  return s.replace(/\s+dot\s+/g, '.').replace(/\s+/g, '');
+  return s.replace(/\s+dot\s+/g, '.');
 }
 
 /**
@@ -166,9 +193,55 @@ function matchQuickCommand(text) {
     const words = what.split(' ');
     if (!what || words.length > 4 || NOT_AN_APP.test(what) || CLAUSE.test(what) || /[^a-z0-9 .&+'-]/.test(what)) return null;
     if (isDenylisted(what)) return null;
-    return { id: 'open-app', app: titleCase(what) };
+    return { id: 'open-app', app: appName(what) };
   }
   return null;
+}
+
+/**
+ * Where a spoken request splits into steps: "and", "then", "and then", a
+ * comma or a semicolon. Captured, so the remainder keeps its own wording.
+ */
+const STEP_BREAK = /(\s*,\s*(?:and\s+)?then\s+|\s*,?\s+and\s+then\s+|\s+then\s+|\s*,\s*and\s+|\s+and\s+|\s*;\s*|\s*,\s*)/;
+const PLAYERS = new Set(['Spotify', 'Music']);
+
+/**
+ * Plan a request as instant steps plus what is left for the AI.
+ *
+ * "Open Spotify and play my liked songs" → `{ steps: [open Spotify], rest:
+ * "play my liked songs" }`: the app opens at once and only the part that needs
+ * understanding waits for a model. Only a LEADING run of instant clauses is
+ * taken — "find Sam's email and take a screenshot" must screenshot after the
+ * AI's part, so it all goes to the AI. A whole-utterance match wins first, so
+ * "google salt and pepper" is one search, not a search and a stray "pepper".
+ *
+ * Returns `{ steps, rest }` (rest null when everything was instant) or null.
+ * `allowed(match)` drops commands this machine cannot run; the clause it
+ * stopped at then belongs to the rest.
+ */
+function planQuickRequest(text, allowed = () => true) {
+  const whole = matchQuickCommand(text);
+  if (whole) return allowed(whole) ? { steps: [whole], rest: null } : null;
+  const t = normalize(text);
+  if (!t || t.length > 400) return null;
+  const parts = t.split(STEP_BREAK); // clause, break, clause, break, …
+  if (parts.length < 3) return null;
+  const steps = [];
+  let i = 0;
+  for (; i < parts.length; i += 2) {
+    const m = matchQuickCommand(parts[i]);
+    if (!m || !allowed(m)) break;
+    // "Open Spotify and play": the player was just opened, so play goes to
+    // it even before it shows up as running.
+    if (m.id === 'media') {
+      const opened = [...steps].reverse().find((s) => s.id === 'open-app' && PLAYERS.has(s.app));
+      if (opened) m.player = opened.app;
+    }
+    steps.push(m);
+  }
+  if (steps.length === 0) return null;
+  const rest = i < parts.length ? parts.slice(i).join('').trim() : null;
+  return { steps, rest: rest || null };
 }
 
 /** "Screenshot 2026-10-20 at 14.03.09.png" — the name macOS gives its own. */
@@ -212,6 +285,11 @@ function createQuickCommands(deps) {
   /** Commands that need nothing of the OS run anywhere; the rest on a Mac. */
   const PORTABLE = new Set(['time', 'date']);
 
+  /** A request as instant steps plus the AI's remainder (planQuickRequest). */
+  function plan(text) {
+    return planQuickRequest(text, (m) => mac || PORTABLE.has(m.id));
+  }
+
   function match(text) {
     const m = matchQuickCommand(text);
     if (!m) return null;
@@ -219,8 +297,8 @@ function createQuickCommands(deps) {
     return m;
   }
 
-  async function media(command) {
-    const running = new Set((await (deps.runningApps?.() ?? Promise.resolve([])).catch(() => [])).map((n) => String(n)));
+  async function media(command, player) {
+    const running = player ? new Set([player]) : new Set((await (deps.runningApps?.() ?? Promise.resolve([])).catch(() => [])).map((n) => String(n)));
     const players = ['Spotify', 'Music'].filter((p) => running.has(p));
     if (players.length) {
       // A pause goes to every player (whichever is playing stops); the rest
@@ -288,7 +366,7 @@ function createQuickCommands(deps) {
           return { ok: true, text: `Searching ${m.engine === 'youtube' ? 'YouTube' : 'Google'} for “${m.query}”.` };
         }
         case 'media':
-          return { ok: true, text: await media(m.command) };
+          return { ok: true, text: await media(m.command, m.player) };
         case 'volume':
           return { ok: true, text: await volume(m) };
         case 'lock':
@@ -305,10 +383,10 @@ function createQuickCommands(deps) {
     }
   }
 
-  return { match, run };
+  return { match, plan, run };
 }
 
 /** Commands that put something on screen the island must not cover. */
 const HIDES_ISLAND = new Set(['screenshot', 'screenshot-area', 'screenshot-window']);
 
-module.exports = { QUICK_COMMANDS, HIDES_ISLAND, normalize, matchQuickCommand, createQuickCommands, screenshotName };
+module.exports = { QUICK_COMMANDS, HIDES_ISLAND, normalize, matchQuickCommand, planQuickRequest, createQuickCommands, screenshotName };

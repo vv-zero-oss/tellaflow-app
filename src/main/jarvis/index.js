@@ -226,7 +226,9 @@ function createJarvis(deps) {
   function showReply(gen, extra = {}) {
     if (gen !== generation || !active) return;
     const said = active.said.length ? active.said.join(' ') : '';
-    const text = [active.prose, said].filter(Boolean).join(active.prose && said ? '\n\n' : '');
+    // What instant steps already did ("Opened Spotify.") leads the AI's words.
+    const head = [active.lead, active.prose].filter(Boolean).join(' ');
+    const text = [head, said].filter(Boolean).join(head && said ? '\n\n' : '');
     island.show('reply', {
       content: {
         reply: {
@@ -253,7 +255,7 @@ function createJarvis(deps) {
     active.status = null;
     // A finished desktop task with no words of its own shows its summary.
     if (!active.prose && active.done) active.prose = active.done;
-    const text = [active.prose, ...active.said].join(' ');
+    const text = [active.lead, active.prose, ...active.said].filter(Boolean).join(' ');
     if (!text.trim()) { island.rest(); return; }
     active.answer = text;
     try { deps.saveAnswer?.({ request: active.request, text }); } catch {}
@@ -514,7 +516,7 @@ function createJarvis(deps) {
   async function runTurn(said, opts = {}) {
     const gen = generation;
     const live = isLive(gen);
-    let message = said;
+    let message = opts.message ?? said;
     if (loop && !opts.step && !opts.answer) {
       // Talking over a desktop task REDIRECTS it.
       message = `While you were working through the desktop task "${loop.goal}", the user said: "${said}". Do what they say now — carry on differently, or stop with end_turn if they want it stopped.`;
@@ -643,7 +645,7 @@ function createJarvis(deps) {
       : [];
     if (!live()) return;
 
-    const notes = describeResults(actions, results);
+    const notes = [...(opts.instantNotes ?? []), ...describeResults(actions, results)];
     // A native question is the turn's ask_user.
     let answer = null;
     if (active.question) {
@@ -805,50 +807,94 @@ function createJarvis(deps) {
     // Simple requests ("take a screenshot", "pause the music") are done here,
     // at once, without the AI. Not while a desktop task runs: there, anything
     // said is a redirect of the task.
+    // A mixed request ("open Spotify and play my liked songs") runs its
+    // instant part first and sends only the rest to the AI.
+    let partial = null;
     if (!loop && deps.quick && settings().instantCommands !== false) {
-      const match = deps.quick.match(text);
-      if (match && await runQuick(gen, text, match, source)) return;
+      const plan = quickPlan(text);
+      const done = plan ? await runQuick(gen, text, plan, source) : false;
       if (gen !== generation) return;
+      if (done === true) return;
+      if (done) partial = done;
     }
     // A new request while a task runs is handled inside runTurn as a redirect;
     // after a finished task it starts fresh.
-    active = { gen, request: text, prose: '', said: [], status: 'Thinking…', working: true, latch: false, source };
+    active = {
+      gen, request: text, prose: '', said: [], status: 'Thinking…', working: true, latch: false, source,
+      ...(partial ? { lead: partial.lead, ranOs: partial.ranOs } : {}),
+    };
     showReply(gen);
     try {
-      await runTurn(text);
+      await runTurn(text, partial ? { message: partial.message, instantNotes: partial.notes } : {});
     } catch (err) {
       log('turn failed:', err);
       showError(gen, String(err?.message || err));
     }
   }
 
+  /** The request as instant steps plus the AI's remainder, or null. */
+  function quickPlan(text) {
+    if (deps.quick.plan) return deps.quick.plan(text);
+    const match = deps.quick.match(text);
+    return match ? { steps: [match], rest: null } : null;
+  }
+
   /**
-   * An instant command (quick-commands.js). Returns false when it could not be
-   * done — an app `open` does not know — and the AI then takes the request.
-   * What it did goes into the transcript like any reply, so "and turn it up"
-   * next has the context it needs.
+   * Instant commands (quick-commands.js), in the order they were said.
+   *
+   * Returns true when the whole request is done; false when nothing could be
+   * done (an app `open` does not know) and the AI takes the request as said;
+   * or, when some steps ran and something is left — a remainder that needs
+   * the AI, or a step that failed — `{ lead, notes, message, ranOs }`: what to
+   * show before the AI's words, the transcript notes, and the AI's message,
+   * which says what is already done so it is not done twice.
    */
-  async function runQuick(gen, text, match, source) {
-    active = { gen, request: text, prose: '', said: [], status: null, working: true, latch: false, source, quick: match.id };
-    const t0 = Date.now();
-    if (HIDES_ISLAND.has(match.id)) {
-      // The screenshot is of the user's screen, not of our island over it.
-      island.rest();
-      await new Promise((r) => setTimeout(r, 400));
+  async function runQuick(gen, text, plan, source) {
+    active = { gen, request: text, prose: '', said: [], status: null, working: true, latch: false, source, quick: plan.steps[0].id };
+    const done = [];
+    for (const match of plan.steps) {
+      const t0 = Date.now();
+      if (HIDES_ISLAND.has(match.id)) {
+        // The screenshot is of the user's screen, not of our island over it.
+        island.rest();
+        await new Promise((r) => setTimeout(r, 400));
+        if (gen !== generation) return true;
+      }
+      const r = await deps.quick.run(match);
       if (gen !== generation) return true;
+      log('instant command', { id: match.id, ok: r.ok, ms: Date.now() - t0, ...(r.ok ? {} : { error: r.error }) });
+      if (!r.ok) break;
+      done.push({ match, r });
+      if (done.length < plan.steps.length) {
+        active.prose = done.map((d) => d.r.text).join(' ');
+        showReply(gen);
+      }
     }
-    const r = await deps.quick.run(match);
-    if (gen !== generation) return true;
-    log('instant command', { id: match.id, ok: r.ok, ms: Date.now() - t0, ...(r.ok ? {} : { error: r.error }) });
-    if (!r.ok) return false;
-    pushTranscript({ role: 'user', text, at: Date.now() });
-    pushTranscript({ role: 'mascot', text: r.text, actions: [`instant ${match.id} → done`], at: Date.now() });
-    active.prose = r.text;
-    active.working = false;
+    if (done.length === 0) return false;
+    const said = done.map((d) => d.r.text).join(' ');
+    const notes = done.map((d) => `instant ${d.match.id} → done${d.r.file ? ` (saved ${d.r.file})` : ''}`);
     // A confirmation of something done is not text to insert; an answer
     // (the time, the date) is.
-    if (match.id !== 'time' && match.id !== 'date') active.ranOs = true;
-    active.answer = r.text;
+    const ranOs = done.some((d) => d.match.id !== 'time' && d.match.id !== 'date');
+    const finished = done.length === plan.steps.length && !plan.rest;
+    if (!finished) {
+      const files = done.filter((d) => d.r.file).map((d) => ` The screenshot is saved at ${d.r.file}.`).join('');
+      const rest = done.length === plan.steps.length
+        ? `Now do only the rest: "${plan.rest}".`
+        : 'Now do only the rest of what they asked — everything not listed as done.';
+      return {
+        lead: said,
+        notes,
+        ranOs,
+        message: `The user said: "${text}". Tellaflow already did this part instantly, so do NOT do it again: ${said}${files} ${rest} The island already shows "${said}" before your words, so do not repeat it — say only what you did or found.`,
+      };
+    }
+    pushTranscript({ role: 'user', text, at: Date.now() });
+    pushTranscript({ role: 'mascot', text: said, actions: notes, at: Date.now() });
+    active.prose = said;
+    active.working = false;
+    if (ranOs) active.ranOs = true;
+    active.answer = said;
     showReply(gen, { autoRestMs: QUICK_REST_MS, done: true });
     scheduleDrain();
     return true;

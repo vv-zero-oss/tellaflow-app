@@ -363,3 +363,55 @@ describe('chats talking back on the island (the bridge)', () => {
     expect(shown).toEqual([]);
   });
 });
+
+describe('mixed requests', () => {
+  function planner(plans, failing = []) {
+    const ran = [];
+    return {
+      ran,
+      quick: {
+        plan: (t) => plans[t] ?? null,
+        match: () => null,
+        run: async (m) => { ran.push(m.id + (m.app ? `:${m.app}` : '')); return failing.includes(m.app) ? { ok: false, error: 'no such app' } : { ok: true, text: m.text } },
+      },
+    };
+  }
+
+  it('runs the instant part at once and sends only the rest to the AI', async () => {
+    const q = planner({ 'open spotify and play my liked songs': { steps: [{ id: 'open-app', app: 'Spotify', text: 'Opened Spotify.' }], rest: 'play my liked songs' } });
+    const { j, brain, shown } = setup({ replies: ['Playing your Liked Songs.'], extra: { quick: q.quick } });
+    await j.ask('open spotify and play my liked songs');
+    expect(q.ran).toEqual(['open-app:Spotify']);
+    expect(brain.prompts).toHaveLength(1);
+    expect(brain.prompts[0]).toMatch(/already did this part instantly, so do NOT do it again: Opened Spotify\. Now do only the rest: "play my liked songs"\./);
+    // The island leads with what was done, then the AI's words.
+    expect(shown.filter((s) => s.state === 'reply').at(-1).content.reply.text).toBe('Opened Spotify. Playing your Liked Songs.');
+    expect(j.transcript()).toMatchObject([
+      { role: 'user', text: 'open spotify and play my liked songs' },
+      { role: 'mascot', text: 'Playing your Liked Songs.', actions: ['instant open-app → done'] },
+    ]);
+  });
+
+  it('several instant steps and nothing left: no AI at all', async () => {
+    const q = planner({ 'open safari and go to github.com': { steps: [{ id: 'open-app', app: 'Safari', text: 'Opened Safari.' }, { id: 'open-url', text: 'Opened github.com.' }], rest: null } });
+    const { j, brain, shown } = setup({ replies: [], extra: { quick: q.quick } });
+    await j.ask('open safari and go to github.com');
+    expect(brain.prompts).toEqual([]);
+    expect(shown.filter((s) => s.state === 'reply').at(-1).content.reply).toMatchObject({ text: 'Opened Safari. Opened github.com.', done: true });
+  });
+
+  it('a step that fails hands everything not yet done to the AI', async () => {
+    const q = planner({ 'open safari and open fooapp': { steps: [{ id: 'open-app', app: 'Safari', text: 'Opened Safari.' }, { id: 'open-app', app: 'Fooapp', text: '' }], rest: null } }, ['Fooapp']);
+    const { j, brain } = setup({ replies: ['I could not find Fooapp.'], extra: { quick: q.quick } });
+    await j.ask('open safari and open fooapp');
+    expect(q.ran).toEqual(['open-app:Safari', 'open-app:Fooapp']);
+    expect(brain.prompts[0]).toMatch(/do NOT do it again: Opened Safari\. Now do only the rest of what they asked/);
+  });
+
+  it('the first step failing is the AI\'s whole request, as said', async () => {
+    const q = planner({ 'open fooapp and play': { steps: [{ id: 'open-app', app: 'Fooapp', text: '' }], rest: 'play' } }, ['Fooapp']);
+    const { j, brain } = setup({ replies: ['No Fooapp here.'], extra: { quick: q.quick } });
+    await j.ask('open fooapp and play');
+    expect(brain.prompts[0]).toMatch(/USER MESSAGE:\nopen fooapp and play\n/);
+  });
+});

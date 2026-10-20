@@ -36,10 +36,12 @@ module.exports = {
     homeDir: '/Users/e2e',
     exec: async (file, args) => {
       state.quick.push([file, ...args]);
-      if (file === 'open' && args[0] === '-a' && !['Safari', 'Notes', 'Spotify', 'Textedit', 'Calendar'].includes(args[1])) {
+      // Like LaunchServices, names match whatever their case.
+      const known = ['Safari', 'Notes', 'Spotify', 'TextEdit', 'Calendar'].find((n) => n.toLowerCase() === String(args[1]).toLowerCase());
+      if (file === 'open' && args[0] === '-a' && !known) {
         throw new Error(`Unable to find application named '${args[1]}'`);
       }
-      if (file === 'open' && args[0] === '-a') state.front = args[1];
+      if (file === 'open' && args[0] === '-a') state.front = known;
       return '';
     },
     appleScript: async (body, argv = []) => { state.quick.push(['osascript', body, ...argv]); return /return v/.test(body) ? '62' : ''; },

@@ -16,8 +16,10 @@ per action, password-field refusal, forced confirmations) through Peekaboo
 (`desktop/`); desktop tasks continue as a loop verified by a fresh look
 (`desktop-loop.js`). Simple requests ("take a screenshot", "open Safari",
 "pause the music", "volume up") never reach the AI: `quick-commands.js` matches
-whole utterances and runs them at once (anything with a clause more, or a
-denylisted app, falls through to bb). Questions that need a lookup (weather,
+whole utterances and runs them at once (a denylisted app falls through to
+bb). A mixed request is split (`planQuickRequest`): its LEADING instant
+clauses run at once ("open Spotify"), and only the rest ("play my liked
+songs") goes to bb, told what is already done. Questions that need a lookup (weather,
 facts) are answered by the island's own thread with its tools. Bigger jobs go
 to a visible bb chat, which the Assistant page frames; the chat talks back on
 the island through the **island bridge** — a bb plugin
