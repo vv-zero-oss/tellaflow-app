@@ -17,12 +17,35 @@ function sanitizeApp(name) {
   return name ? name.replace(/[\\"'\n\r]/g, '') : null;
 }
 
+// Keys the user is still holding combine with our synthetic keystroke: after
+// ⌃⌘V (Paste Last Transcript) a held ⌃⌘ turns Cmd+V into ⌃⌘V again — our own
+// shortcut, not a paste — and a held ⌥ or ⇧ turns it into "move" in Finder or
+// "paste and match style". So wait for ⇧⌃⌥⌘ to be released first. They are
+// bits 17–20 of NSEvent.modifierFlags (AppleScript has no bitwise ops, hence
+// div/mod). Still held after MODIFIER_WAIT_TICKS × 20 ms → fail, which leaves
+// the text on the clipboard to paste by hand.
+const MODIFIER_WAIT_TICKS = 150;
+const WAIT_FOR_MODIFIERS = [
+  'set waited to 0',
+  'repeat while ((current application\'s NSEvent\'s modifierFlags()) div 131072) mod 16 > 0',
+  `if waited >= ${MODIFIER_WAIT_TICKS} then error "Modifier keys are still held down" number 1`,
+  'delay 0.02',
+  'set waited to waited + 1',
+  'end repeat',
+].join('\n');
+
 // Re-activate the target before the keystroke so it lands in the right field
 // whatever stole focus meanwhile. With no target, the keystroke goes to the
 // frontmost window (best effort).
 function keystrokeScript(key, targetApp) {
   const safeTarget = sanitizeApp(targetApp);
-  return safeTarget ? `tell application "${safeTarget}" to activate\ndelay 0.15\n${key}` : key;
+  return [
+    'use framework "AppKit"',
+    'use scripting additions',
+    ...(safeTarget ? [`tell application "${safeTarget}" to activate`, 'delay 0.15'] : []),
+    WAIT_FOR_MODIFIERS,
+    key,
+  ].join('\n');
 }
 
 function runOsascript(script) {
@@ -88,8 +111,11 @@ function restoreClipboard(cb, snap) {
  *   after the last one — never a transcript.
  * - If the clipboard no longer holds our text at restore time, the user (or
  *   another app) copied something meanwhile: that is kept, not overwritten.
- * - If the keystroke failed (no Accessibility, script timed out), our text is
- *   left on the clipboard so the user can paste it by hand.
+ * - Modifier keys still held (⌃⌘ from ⌃⌘V) are waited out before Cmd+V; see
+ *   WAIT_FOR_MODIFIERS.
+ * - If the keystroke failed (no Accessibility, script timed out, modifiers
+ *   never released), our text is left on the clipboard so the user can paste
+ *   it by hand.
  * - Non-text clipboards (images, rich text, Finder files) and an empty
  *   clipboard are restored as they were.
  */
@@ -154,4 +180,4 @@ function undoPaste(targetApp = null) {
   });
 }
 
-module.exports = { pasteText, undoPaste, createPaster, snapshotClipboard, restoreClipboard };
+module.exports = { pasteText, undoPaste, createPaster, snapshotClipboard, restoreClipboard, keystrokeScript };

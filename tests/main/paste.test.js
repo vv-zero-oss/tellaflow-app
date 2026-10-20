@@ -105,3 +105,25 @@ describe('pasteText', () => {
     err.mockRestore();
   });
 });
+
+describe('keystrokeScript', () => {
+  it('waits for held modifiers after activating and before the keystroke', async () => {
+    const { keystrokeScript } = await import('../../src/main/paste.js');
+    const lines = keystrokeScript('KEY', 'Notes').split('\n');
+    expect(lines.slice(0, 2)).toEqual(['use framework "AppKit"', 'use scripting additions']);
+    const activate = lines.indexOf('tell application "Notes" to activate');
+    const wait = lines.findIndex((l) => l.startsWith('repeat while') && l.includes('modifierFlags()'));
+    expect(activate).toBeGreaterThan(0);
+    expect(wait).toBeGreaterThan(activate);
+    expect(lines.indexOf('KEY')).toBe(lines.length - 1);
+    expect(lines.some((l) => l.includes('error "Modifier keys are still held down"'))).toBe(true);
+  });
+
+  it('still waits for modifiers when there is no target app', async () => {
+    const { keystrokeScript } = await import('../../src/main/paste.js');
+    const script = keystrokeScript('KEY', null);
+    expect(script).not.toContain('activate');
+    expect(script).toContain('modifierFlags()');
+    expect(script.endsWith('\nKEY')).toBe(true);
+  });
+});
