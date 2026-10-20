@@ -37,7 +37,7 @@ const { createMeetingDetector } = require('./meeting-detector');
 const { createMeetingNotes } = require('./meeting-notes');
 const macAutomation = require('./mac-automation');
 const { createJarvis } = require('./jarvis');
-const { createRewriter, createDictationStyler } = require('./jarvis/rewrite');
+const { createRewriter } = require('./jarvis/rewrite');
 const osActions = require('./jarvis/desktop/os-actions');
 const { setPeekabooDownloadRoot, resolvePeekaboo } = require('./jarvis/desktop/peekaboo');
 const { installPeekaboo } = require('./jarvis/desktop/peekaboo-install');
@@ -189,7 +189,6 @@ let meetingDetector = null;
 let meetingCaptureWindow = null;
 let assistant = null;
 let rewriter = null;
-let styleDictation = null;
 let pendingChatUrl = null;   // a chat the island asked the Assistant page to show
 let autoLearn = null;
 let modelLoading = false;
@@ -260,8 +259,6 @@ function beginRecording() {
   // The command key: start bb and the assistant's thread while the user is
   // still talking — a cold thread is ~14 s to its first word, a warm one ~1.5 s.
   if (recordingPurpose === 'command') assistant?.warm().catch(() => {});
-  // A dictation about to be styled: make the rewrite thread while they talk.
-  else if (dictationStyleOn()) assistant?.warmRewrite().catch(() => {});
   autoLearn?.stop(true); // a new dictation ends any pending correction watch
   if (process.platform === 'darwin' && config.getContextAwarenessEnabled()) {
     recordingContextPromise = macAutomation.getFrontmostContext()
@@ -377,12 +374,6 @@ function startAssistantFromVoice(request) {
       console.error('[assistant] start failed:', err);
       island('error', 'error', { content: { notice: { title: 'Couldn’t start the assistant', body: String(err.message || err), primary: null, secondary: 'Dismiss' } } });
     });
-}
-
-/** Dictations go through the chosen style: the assistant is on, the user
- *  left "Style my dictation" on, and this isn't code being dictated. */
-function dictationStyleOn() {
-  return !!config.getCommandHotkey() && config.getRewriteSettings().dictation && !config.getProgrammingMode();
 }
 
 // The rewrite shortcut: the focused field's text, rewritten in place.
@@ -648,7 +639,7 @@ function initCoreServices() {
       : osActions,
     workspaceDir: path.join(userData, 'assistant', 'workspace'),
     rewriteDir: path.join(userData, 'assistant', 'rewrite'),
-    rewriteEnabled: () => !!config.getCommandHotkey() && (!!config.getRewriteHotkey() || config.getRewriteSettings().dictation),
+    rewriteEnabled: () => !!config.getCommandHotkey() && !!config.getRewriteHotkey(),
     record: (entry) => {
       if (entry.role !== 'mascot' || !entry.text) return;
       sendToMainWindow('assistant-transcript', entry);
@@ -714,16 +705,6 @@ function initCoreServices() {
     onReplaced: ({ app }) => { lastPaste = { app: app || rewriteTarget }; config.setAssistantUsed(true); },
   });
   rewriteE2eField = e2eField;
-
-  // Dictation in the chosen style, on the same rewrite thread. Code dictation
-  // (programming mode) is pasted as said.
-  styleDictation = createDictationStyler({
-    isOn: () => dictationStyleOn(),
-    getSettings: () => config.getRewriteSettings(),
-    complete: (prompt) => assistant.rewrite(prompt),
-    stop: () => assistant.stopRewrite(),
-    onWorking: (label) => island('dictation', 'thinking', { content: { thinkingText: `Polishing · ${label}` } }),
-  });
 
   meetingDetector = createMeetingDetector({
     probes: {
@@ -1192,7 +1173,6 @@ async function startApp() {
   // and nobody who only dictates should pay for one on every launch. Their
   // first command warms it on key-down (beginRecording) instead.
   if (config.getAssistantUsed()) setTimeout(() => { assistant?.warm().catch(() => {}); }, 8000).unref?.();
-  else if (dictationStyleOn()) setTimeout(() => { assistant?.warmRewrite().catch(() => {}); }, 8000).unref?.();
 
   startHotkeyListener();
   initFloatingBar();
@@ -2388,13 +2368,6 @@ function registerIPC() {
       if (job) pipeline.finishJob(job.id, { keepAudio: false });
       startAssistantFromVoice(text);
       return;
-    }
-
-    // In the chosen style (Formal, Casual, …) when that's on; as said if the
-    // AI is off, slow or failing.
-    if (styleDictation) {
-      const styled = await styleDictation(text).catch(() => null);
-      if (styled?.text) text = styled.text;
     }
 
     history.addEntry(text, job ? job.audioPath : null);

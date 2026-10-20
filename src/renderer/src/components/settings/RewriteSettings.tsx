@@ -17,10 +17,9 @@ export const REWRITE_STYLES: { id: RewriteStyle; label: string; description: str
 ];
 
 /**
- * Writing style: one style (Fix grammar, Formal, …) for every dictation, and a
- * shortcut that selects everything in the field you're typing in, has the
- * assistant's AI rewrite it in that style, and puts it back. Runs on the
- * assistant, so it is off while the command key is.
+ * Rewrite text: a shortcut that selects everything in the field you're typing
+ * in, has the assistant's AI rewrite it in the chosen style, and puts it back.
+ * Runs on the assistant, so it is off while the command key is.
  */
 export function RewriteSettings({ config, refreshConfig }: { config: AppConfig; refreshConfig: () => Promise<void> }) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -49,9 +48,37 @@ export function RewriteSettings({ config, refreshConfig }: { config: AppConfig; 
   return (
     <Well className="mb-7">
       <WellHeader>
-        <WellTitle>Writing style</WellTitle>
+        <WellTitle>Rewrite text</WellTitle>
       </WellHeader>
       <WellCard>
+        <WellItem>
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-sm">Rewrite shortcut</span>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">
+                {assistantOn
+                  ? 'Press in any text field: it selects all the text, rewrites it with AI, and pastes it back. ⌘Z undoes it.'
+                  : 'Uses the assistant’s AI. Set a Command key under General to turn it on.'}
+              </p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              {shortcut && (
+                <HotkeyEditor
+                  currentHotkey={shortcut}
+                  defaultHotkey={DEFAULT_REWRITE_HOTKEY}
+                  disabled={!assistantOn}
+                  onSave={(hk) => void setHotkey(hk)}
+                />
+              )}
+              <Switch
+                aria-label="Rewrite shortcut"
+                disabled={!assistantOn}
+                checked={assistantOn && !!shortcut}
+                onCheckedChange={(v) => void setHotkey(v ? DEFAULT_REWRITE_HOTKEY : null)}
+              />
+            </div>
+          </div>
+        </WellItem>
         <WellItem>
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
@@ -85,52 +112,6 @@ export function RewriteSettings({ config, refreshConfig }: { config: AppConfig; 
             </div>
           </WellItem>
         )}
-        <WellItem>
-          <div className="flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <span className="text-sm">Style my dictation</span>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">
-                {assistantOn
-                  ? 'Everything you dictate is pasted in this style. Adds a second or two; if the AI is slow or off, it’s pasted as you said it.'
-                  : 'Uses the assistant’s AI. Set a Command key under General to turn it on.'}
-              </p>
-            </div>
-            <Switch
-              aria-label="Style my dictation"
-              disabled={!assistantOn}
-              checked={assistantOn && settings.dictation}
-              onCheckedChange={(v) => void update({ dictation: v })}
-            />
-          </div>
-        </WellItem>
-        <WellItem>
-          <div className="flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <span className="text-sm">Rewrite shortcut</span>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">
-                {assistantOn
-                  ? 'Press in any text field: it selects all the text, rewrites it in this style, and pastes it back. ⌘Z undoes it.'
-                  : 'Uses the assistant’s AI. Set a Command key under General to turn it on.'}
-              </p>
-            </div>
-            <div className="flex items-center gap-3 shrink-0">
-              {shortcut && (
-                <HotkeyEditor
-                  currentHotkey={shortcut}
-                  defaultHotkey={DEFAULT_REWRITE_HOTKEY}
-                  disabled={!assistantOn}
-                  onSave={(hk) => void setHotkey(hk)}
-                />
-              )}
-              <Switch
-                aria-label="Rewrite shortcut"
-                disabled={!assistantOn}
-                checked={assistantOn && !!shortcut}
-                onCheckedChange={(v) => void setHotkey(v ? DEFAULT_REWRITE_HOTKEY : null)}
-              />
-            </div>
-          </div>
-        </WellItem>
       </WellCard>
     </Well>
   );

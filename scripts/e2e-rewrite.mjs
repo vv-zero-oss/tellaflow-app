@@ -5,12 +5,9 @@
  * island. The text field is a pretend one (TELLAFLOW_E2E_FIELD=fake) — ⌘A /
  * ⌘C / ⌘V are macOS-only — so each case sets the field, presses the shortcut
  * the way the hotkey does, and checks what was pasted back. Screenshots every
- * island state, then Settings › Writing style.
+ * island state, then Settings › Rewrite text.
  *
- * With a WAV it also dictates it twice through the real speech model — as
- * said, then in the Formal style — and checks the styled one is what landed.
- *
- *   xvfb-run -a node scripts/e2e-rewrite.mjs [outDir] [short.wav]
+ *   xvfb-run -a node scripts/e2e-rewrite.mjs [outDir]
  *
  * Needs what scripts/e2e-assistant.mjs needs. Env: E2E_PROVIDER (default
  * claude-code).
@@ -24,7 +21,6 @@ import { fileURLToPath } from 'url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.resolve(process.argv[2] || path.join(ROOT, 'e2e-rewrite'));
-const WAV = process.argv[3] ? path.resolve(process.argv[3]) : null;
 fs.mkdirSync(OUT, { recursive: true });
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-rewrite-ud-'));
 const bbData = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-rewrite-bb-'));
@@ -56,7 +52,7 @@ const CASES = [
     id: 'formal',
     style: 'formal',
     field: MESSY,
-    expect: (f) => f.replaced === 1 && /Thursday/.test(f.value) && !/\bu\b|\bcause\b|hey so/i.test(f.value),
+    expect: (f) => f.replaced === 1 && /Thursday/.test(f.value) && !/\bu\b|cause |hey so/i.test(f.value),
   },
   {
     id: 'casual',
@@ -157,36 +153,6 @@ try {
     await sleep(600);
   }
 
-  // Styled dictation: the same clip as said, then in Casual (it's a formal
-  // speech, so Formal would rightly leave it as it is).
-  if (WAV) {
-    await waitFor(() => main.locator('text=Ready').count(), { label: 'model Ready', timeout: 120_000 });
-    const history = () => T(() => globalThis.__tellaflowTest.history());
-    const dictate = async (n) => {
-      await T((_, p) => globalThis.__tellaflowTest.dictateWav(p), WAV);
-      const seen = [];
-      const t0 = Date.now();
-      for (;;) {
-        const v = await view();
-        const label = v?.state === 'thinking' ? v.content?.thinkingText : null;
-        if (label && !seen.includes(label)) { seen.push(label); await shot(`dictation-${n}-thinking`, 450); }
-        const h = await history();
-        if (h.length >= n) return { entry: h[0], seen, ms: Date.now() - t0 };
-        if (Date.now() - t0 > 120_000) throw new Error('timed out waiting for the dictation');
-        await sleep(100);
-      }
-    };
-    await main.evaluate(() => window.tellaflow.rewriteSetSettings({ style: 'casual', dictation: false }));
-    const plain = await dictate(1);
-    check('dictation, style off: pasted as said, no AI', plain.seen.length === 0, `${Math.round(plain.ms / 100) / 10} s: ${JSON.stringify(plain.entry.text)}`);
-    await main.evaluate(() => window.tellaflow.rewriteSetSettings({ style: 'casual', dictation: true }));
-    const styled = await dictate(2);
-    check('dictation, Casual: styled before it is pasted', styled.seen.includes('Polishing · Casual') && styled.entry.text !== plain.entry.text && styled.entry.text.length > 20,
-      `${Math.round(styled.ms / 100) / 10} s: ${JSON.stringify(styled.entry.text)}`);
-    summary.push(`dictation\n  as said: ${plain.entry.text}\n  casual:  ${styled.entry.text}`);
-    await sleep(800);
-  }
-
   // The assistant switched off (no command key): the shortcut says so.
   await main.evaluate(() => window.tellaflow.setFeatureSetting('commandHotkey', null));
   await T((_, v) => globalThis.__tellaflowTest.rewrite.setField(v), MESSY);
@@ -195,10 +161,10 @@ try {
   await shot('assistant-off-setup', 400);
   check('assistant off: asks to turn it on, field untouched', !!off && (await field()).replaced === 0, off?.content?.notice?.title ?? 'no card');
 
-  // Settings › Writing style, off and then on (with Custom's instructions).
+  // Settings › Rewrite text, off and then on (with Custom's instructions).
   await T(() => globalThis.__tellaflowTest.navigate('settings'));
   await sleep(800);
-  await main.locator('text=Style my dictation').first().scrollIntoViewIfNeeded();
+  await main.locator('text=Rewrite shortcut').first().scrollIntoViewIfNeeded();
   await sleep(1200);
   await main.screenshot({ path: path.join(OUT, 'settings-rewrite-assistant-off.png') });
   await main.evaluate(() => window.tellaflow.setFeatureSetting('commandHotkey', { names: ['RIGHT ALT'], label: 'Right ⌥' }));
@@ -207,7 +173,7 @@ try {
   await sleep(500);
   await T(() => globalThis.__tellaflowTest.navigate('settings'));
   await sleep(800);
-  await main.locator('text=Style my dictation').first().scrollIntoViewIfNeeded();
+  await main.locator('text=Rewrite shortcut').first().scrollIntoViewIfNeeded();
   await sleep(1200);
   await main.screenshot({ path: path.join(OUT, 'settings-rewrite.png') });
   check('Settings shows the shortcut and the style', (await main.locator('text=⌃⌥F').count()) > 0 && (await main.locator('text=Polished and professional').count()) > 0);
@@ -217,7 +183,7 @@ try {
   await main.locator('[role="option"]:has-text("Custom")').click();
   await sleep(500);
   await main.locator('[aria-label="Custom rewrite instructions"]').fill('Make it sound warm but professional.');
-  await main.locator('text=Style my dictation').first().click();
+  await main.locator('text=Rewrite shortcut').first().click();
   await sleep(800);
   await main.screenshot({ path: path.join(OUT, 'settings-rewrite-custom.png') });
   const saved = await main.evaluate(() => window.tellaflow.rewriteGetSettings());

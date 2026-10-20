@@ -105,8 +105,6 @@ export interface RewriteSettings {
   style: RewriteStyle;
   /** The user's own instructions, for the 'custom' style. */
   instructions: string;
-  /** Every dictation is pasted in this style. */
-  dictation: boolean;
 }
 
 /** One of bb's providers and whether it can run here. */

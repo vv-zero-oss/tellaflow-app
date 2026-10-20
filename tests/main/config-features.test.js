@@ -39,8 +39,7 @@ describe('feature settings defaults', () => {
 describe('rewrite settings', () => {
   it('defaults to fixing grammar on ⌃⌥F, and can be turned off', () => {
     const config = freshConfig();
-    expect(config.getRewriteSettings()).toEqual({ style: 'grammar', instructions: '', dictation: true });
-    expect(config.setRewriteSettings({ dictation: false }).dictation).toBe(false);
+    expect(config.getRewriteSettings()).toEqual({ style: 'grammar', instructions: '' });
     expect(config.getRewriteHotkey()).toEqual({ names: ['LEFT CTRL', 'LEFT ALT', 'F'], label: '⌃⌥F' });
     config.setRewriteHotkey(null);
     expect(config.getRewriteHotkey()).toBeNull();
