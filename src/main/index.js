@@ -845,13 +845,22 @@ function openPage(page) {
 }
 
 /** Paste the newest dictation into the app in front (menu item and ⌃⌘V). */
+let pastingLast = false;
 async function pasteLastTranscript() {
+  // ⌃⌘V auto-repeats while held, and the paste waits for ⌃⌘ to be let go:
+  // one press, one paste.
+  if (pastingLast) return;
   const entry = lastDictation();
   if (!entry?.text) return;
-  const front = await getFrontmostApp();
-  const target = isOwnApp(front) ? null : front;
-  pasteText(entry.text, target);
-  lastPaste = { app: target };
+  pastingLast = true;
+  try {
+    const front = await getFrontmostApp();
+    const target = isOwnApp(front) ? null : front;
+    lastPaste = { app: target };
+    await pasteText(entry.text, target);
+  } finally {
+    pastingLast = false;
+  }
 }
 
 function registerPasteLastShortcut() {
