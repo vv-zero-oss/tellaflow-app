@@ -57,7 +57,7 @@ function fakeDesktop() {
   };
 }
 
-function setup({ replies, settings = {}, onShow, extra = {}, os: osOverride } = {}) {
+function setup({ replies, settings = {}, onShow, extra = {}, os: osOverride, bbExtra = {} } = {}) {
   const brain = scriptedThreads(replies);
   const desk = fakeDesktop();
   const shown = [];
@@ -74,6 +74,7 @@ function setup({ replies, settings = {}, onShow, extra = {}, os: osOverride } = 
       ensureServer: async () => { throw new Error('no bb in unit tests'); },
       createThreads: (emit) => { brain.bind(emit); return brain.threads; },
       workspace: { listWorkspaceThreads: async () => [] },
+      ...bbExtra,
     },
     log: () => {},
   });
@@ -234,5 +235,131 @@ describe('assistant controller', () => {
     expect(card).toMatchObject({ title: 'Sign in to your AI', primaryAction: 'sign-in', secondaryAction: 'open-settings' });
     brain.j.action('sign-in');
     expect(signIns).toEqual([1]);
+  });
+});
+
+describe('instant commands', () => {
+  const quick = (over = {}) => {
+    const ran = [];
+    return {
+      ran,
+      quick: {
+        match: (t) => (/screenshot/.test(t) ? { id: 'screenshot' } : /^open (\w+)$/.test(t) ? { id: 'open-app', app: /^open (\w+)$/.exec(t)[1] } : null),
+        run: async (m) => { ran.push(m); return m.app === 'nothing' ? { ok: false, error: 'no such app' } : { ok: true, text: m.id === 'screenshot' ? 'Screenshot saved to your Desktop.' : `Opened ${m.app}.` }; },
+        ...over,
+      },
+    };
+  };
+
+  it('runs a simple command at once, without the AI, and remembers it', async () => {
+    const q = quick();
+    const { j, brain, shown } = setup({ replies: [], extra: { quick: q.quick } });
+    await j.ask('take a screenshot');
+    expect(brain.prompts).toEqual([]);
+    expect(q.ran).toEqual([{ id: 'screenshot' }]);
+    // The island steps aside for the screenshot, then confirms.
+    expect(shown[0].state).toBe('rest');
+    const last = shown.filter((s) => s.state === 'reply').at(-1).content.reply;
+    expect(last).toMatchObject({ text: 'Screenshot saved to your Desktop.', done: true, working: false, canInsert: false });
+    expect(j.transcript()).toMatchObject([
+      { role: 'user', text: 'take a screenshot' },
+      { role: 'mascot', text: 'Screenshot saved to your Desktop.', actions: ['instant screenshot → done'] },
+    ]);
+  });
+
+  it('hands the request to the AI when the command fails', async () => {
+    const q = quick();
+    const { j, brain } = setup({ replies: ['I could not find an app called nothing.'], extra: { quick: q.quick } });
+    await j.ask('open nothing');
+    expect(q.ran).toHaveLength(1);
+    expect(brain.prompts).toHaveLength(1);
+    expect(brain.prompts[0]).toMatch(/USER MESSAGE:\nopen nothing/);
+  });
+
+  it('is skipped when switched off in Settings', async () => {
+    const q = quick();
+    const { j, brain } = setup({ replies: ['Done.'], settings: { instantCommands: false }, extra: { quick: q.quick } });
+    await j.ask('open Notes');
+    expect(q.ran).toEqual([]);
+    expect(brain.prompts).toHaveLength(1);
+  });
+
+  it('anything else goes to the AI as before', async () => {
+    const q = quick();
+    const { j, brain } = setup({ replies: ['It is 31 degrees in Mumbai.'], extra: { quick: q.quick } });
+    await j.ask('what is the weather in mumbai');
+    expect(q.ran).toEqual([]);
+    expect(brain.prompts).toHaveLength(1);
+  });
+});
+
+describe('chats talking back on the island (the bridge)', () => {
+  function bridged(opts = {}) {
+    let send = null;
+    const answers = [];
+    const s = setup({
+      ...opts,
+      bbExtra: {
+        ensureServer: async () => ({ client: { origin: 'http://bb' } }),
+        createBridge: (onEvent) => { send = onEvent; return { ensure: async () => true, start() {}, stop() {}, answer: async (id, a) => { answers.push([id, a]); return true; } }; },
+        workspace: { listWorkspaceThreads: async () => [{ id: 'thr_chat', title: 'Trip plan', createdAt: 0 }], threadUrl: (o, p, t) => `${o}/projects/${p}/threads/${t}` },
+      },
+    });
+    return { ...s, send: (e) => send(e), answers };
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+
+  it("shows a chat's answer as a reply, remembers it, and can open the chat", async () => {
+    const opened = [];
+    const { j, send, shown } = bridged({ extra: { openChat: (u) => opened.push(u) } });
+    send({ seq: 1, type: 'say', kind: 'answer', text: 'Your 3-day Goa plan is ready.', threadId: 'thr_chat', projectId: 'proj_1' });
+    await settle();
+    const card = shown.filter((s) => s.state === 'reply').at(-1).content.reply;
+    expect(card).toMatchObject({ title: 'Trip plan', text: 'Your 3-day Goa plan is ready.', done: true });
+    expect(j.transcript().at(-1).text).toMatch(/the chat "Trip plan" reported back\) Your 3-day Goa plan is ready\./);
+    expect(j.action('open-chat')).toBe(true);
+    expect(opened).toEqual(['http://bb/projects/proj_1/threads/thr_chat']);
+  });
+
+  it("asks the chat's question on the island and posts the answer back", async () => {
+    const { send, shown, answers } = bridged({
+      onShow: (state, _o, j) => { if (state === 'ask') setTimeout(() => j.action('answer:1'), 1); },
+    });
+    send({ seq: 1, type: 'ask', id: 'ask_1', question: 'Beach or hills?', options: ['Beach', 'Hills'], threadId: 'thr_chat' });
+    await settle();
+    expect(shown.find((s) => s.state === 'ask').content.ask).toEqual({ question: 'Trip plan asks: Beach or hills?', options: ['Beach', 'Hills'] });
+    expect(answers).toEqual([['ask_1', 'Hills']]);
+  });
+
+  it('a spoken answer answers the chat too', async () => {
+    const { j, send, answers } = bridged();
+    send({ seq: 1, type: 'ask', id: 'ask_2', question: 'How many days?', options: [], threadId: 'thr_chat' });
+    await settle();
+    await j.ask('four days');
+    expect(answers).toEqual([['ask_2', 'four days']]);
+  });
+
+  it('waits for a turn in flight before taking the island', async () => {
+    let release;
+    const { j, send, shown, brain } = bridged({ replies: ['Fine.'] });
+    const turn = brain.threads.turn;
+    brain.threads.turn = async (req) => { await new Promise((r) => { release = r; }); return turn(req); };
+    const asking = j.ask('how are you');
+    await settle();
+    send({ seq: 1, type: 'say', kind: 'answer', text: 'The report is done.', threadId: 'thr_chat' });
+    await settle();
+    expect(shown.some((s) => s.content?.reply?.text === 'The report is done.')).toBe(false);
+    release();
+    await asking;
+    await new Promise((r) => setTimeout(r, 1700));
+    expect(shown.filter((s) => s.state === 'reply').at(-1).content.reply.text).toBe('The report is done.');
+  });
+
+  it("the island's own thread is part of the turn, not a report", async () => {
+    const { send, shown, brain } = bridged({ replies: [] });
+    brain.threads.owns = (id) => id === 'thr_mascot';
+    send({ seq: 1, type: 'say', kind: 'answer', text: 'should not show', threadId: 'thr_mascot' });
+    await settle();
+    expect(shown).toEqual([]);
   });
 });

@@ -1,11 +1,11 @@
-import { useEffect } from 'react';
-import { CheckCircle2, CircleDashed, Download, Loader2, RefreshCw } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { CheckCircle2, ChevronDown, CircleDashed, Download, Loader2, RefreshCw, Zap } from 'lucide-react';
 import { Well, WellHeader, WellTitle, WellCard, WellItem } from '@/components/ui/well';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAssistant } from '@/hooks/use-assistant';
-import type { AssistantProvider } from '@/lib/ipc';
+import { ipc, type AssistantProvider, type AssistantQuickCommand } from '@/lib/ipc';
 
 /** What a provider's state means to the person, in their words. */
 function providerLine(p: AssistantProvider): string {
@@ -30,6 +30,9 @@ export function AssistantSettings() {
   } = useAssistant();
 
   useEffect(() => { refreshProviders(); refreshDesktop(); }, [refreshProviders, refreshDesktop]);
+  const [commands, setCommands] = useState<AssistantQuickCommand[]>([]);
+  const [showCommands, setShowCommands] = useState(false);
+  useEffect(() => { ipc?.assistantQuickCommands?.().then(setCommands).catch(() => {}); }, []);
 
   if (!settings) return null;
   const usable = (providers ?? []).filter((p) => p.status !== 'not_installed');
@@ -149,6 +152,41 @@ export function AssistantSettings() {
             </div>
             <Switch checked={settings.screenVision} onCheckedChange={(v) => updateSettings({ screenVision: v })} />
           </div>
+        </WellItem>
+        <WellItem>
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <span className="text-sm">Instant commands</span>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">
+                Simple requests run the moment you let go of the key — no AI, no waiting.{' '}
+                {commands.length > 0 && (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowCommands((v) => !v)}
+                    aria-expanded={showCommands}
+                  >
+                    {showCommands ? 'Hide list' : 'What can I say?'}
+                    <ChevronDown className={`w-3 h-3 transition-transform ${showCommands ? 'rotate-180' : ''}`} />
+                  </button>
+                )}
+              </p>
+            </div>
+            <Switch checked={settings.instantCommands} onCheckedChange={(v) => updateSettings({ instantCommands: v })} />
+          </div>
+          {showCommands && (
+            <ul className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1.5 text-xs sm:grid-cols-2" data-quick-commands="">
+              {commands.map((c) => (
+                <li key={c.say} className="flex min-w-0 items-start gap-2">
+                  <Zap className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground/60" />
+                  <div className="min-w-0">
+                    <span className="text-foreground">“{c.say}”</span>
+                    <p className="text-muted-foreground/70">{c.does}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </WellItem>
         <WellItem>
           <div className="flex items-center justify-between gap-4">

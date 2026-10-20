@@ -37,11 +37,22 @@ const { isOsAction, TERMINAL_ACTIONS } = require('./mascot-actions');
 const { runMascotActions } = require('./mascot-dispatch');
 const { buildMascotStanding, buildMascotTurn } = require('./mascot-prompt');
 const loopParts = require('./desktop-loop');
+const { HIDES_ISLAND } = require('./quick-commands');
+const { createIslandBridge } = require('./bb/island-bridge');
 
 /** Turns of conversation kept for re-seeding a rotated thread. */
 const MAX_TRANSCRIPT = 40;
 /** A still older than this is not "the screen right now". */
 const SCREEN_SHOT_TTL_MS = 12_000;
+/** How long a turn waits for the screen still and the desktop look before it
+ *  is sent without them. A look of a busy window can take seconds; the brain
+ *  can always look itself (os_see), so the user's words are not held for it.
+ *  The look carries on and serves the next step. */
+const CAPTURE_BUDGET_MS = 1500;
+/** An instant command's confirmation rests after this. */
+const QUICK_REST_MS = 4000;
+/** How often a chat's report waiting for a busy island tries again. */
+const INBOX_RETRY_MS = 1500;
 /** Island answers rest after a reading time of their length. */
 function readingTime(text) {
   const words = String(text || '').split(/\s+/).filter(Boolean).length;
@@ -95,13 +106,23 @@ function confirmCard(action, seen, reason) {
  * @param {(threadUrl: string) => void} [deps.openChat]      show a bb chat on the Assistant page
  * @param {() => void} [deps.openAccessibility]              System Settings › Accessibility
  * @param {() => void} [deps.openSettings]                   Tellaflow › Settings › Assistant
- * @param {object} [deps.bb]                                 test seams: { ensureServer, createThreads(emit), workspace }
+ * @param {object} [deps.quick]                              quick-commands.js — instant commands, no AI
+ * @param {() => boolean} [deps.islandFree]                  whether a chat's report may take the island now
+ * @param {object} [deps.bb]                                 test seams: { ensureServer, createThreads(emit), workspace, createBridge(onEvent) }
  */
 function createJarvis(deps) {
   const log = deps.log || ((...a) => console.log('[assistant]', ...a));
   const island = deps.island;
   const os = deps.os;
-  const ensureServer = deps.bb?.ensureServer || ((o) => ensureBbServer({ log: (m) => log(m), ...o }));
+  const rawEnsureServer = deps.bb?.ensureServer || ((o) => ensureBbServer({ log: (m) => log(m), ...o }));
+  // Every way into bb goes through here, so the island bridge's plugin is in
+  // bb before any thread starts (a thread gets its tools when it is made).
+  const ensureServer = async (o) => {
+    const server = await rawEnsureServer(o);
+    await bridge.ensure(server.client).catch(() => false);
+    bridge.start();
+    return server;
+  };
   const ws = deps.bb?.workspace || workspace;
   const settings = () => deps.getSettings() || {};
   const wsDeps = () => ({
@@ -133,6 +154,7 @@ function createJarvis(deps) {
   let pending = null;       // { kind: 'confirm'|'ask', resolve, options? }
   let lastChat = null;      // the visible chat work last went into
   let lastChatUrl = null;
+  const chatTasks = new Map(); // chat id → the task it was handed
   const transcript = [];    // { role: 'user'|'mascot', text, actions? }
   let seenHeld = null;      // { result, at }
   let shot = null;          // { path, at }
@@ -166,7 +188,19 @@ function createJarvis(deps) {
     fallbackCwd: () => workspaceDir(),
     emit: emitBrain,
     log: (m, d) => log(m, d ?? ''),
+    onRotate: () => { void warm(); },
   });
+
+  // ── The island bridge (resources/bb-plugin-tellaflow) ────────────────────
+  // Chats the assistant started talk back here: a result, a milestone, or a
+  // question the user answers on the island.
+  const bridge = deps.bb?.createBridge ? deps.bb.createBridge((event) => onBridgeEvent(event)) : createIslandBridge({
+    client: async () => (await rawEnsureServer()).client,
+    onEvent: (event) => onBridgeEvent(event),
+    log: (m, d) => log(m, d ?? ''),
+  });
+  const inbox = [];         // bridge events waiting for a free island
+  let inboxTimer = null;
 
   /** Start bb and make the thread before the user's first words arrive: a cold
    *  thread is ~14 s to its first token, a warm one ~1.5 s (canvas measured). */
@@ -224,6 +258,122 @@ function createJarvis(deps) {
     active.answer = text;
     try { deps.saveAnswer?.({ request: active.request, text }); } catch {}
     showReply(gen, { autoRestMs: readingTime(text), done: !!active.done });
+    scheduleDrain();
+  }
+
+  // ── Chats talking back (the island bridge) ───────────────────────────────
+
+  function onBridgeEvent(event) {
+    if (!event || typeof event !== 'object') return;
+    if (event.type === 'ask-closed') {
+      // Timed out, or the chat was stopped: a question still up goes away.
+      const queued = inbox.findIndex((e) => e.type === 'ask' && e.id === event.id);
+      if (queued >= 0) inbox.splice(queued, 1);
+      if (pending?.kind === 'ask' && pending.bridgeId === event.id) {
+        pending = null;
+        if (active?.report) { active = null; island.rest(); }
+      }
+      return;
+    }
+    if (event.type !== 'say' && event.type !== 'ask') return;
+    // The island's own thread: its reply already streams here, so what it says
+    // through the bridge is part of the turn in flight.
+    if (event.threadId && threads.owns?.(event.threadId)) {
+      if (event.type === 'say' && active?.working) {
+        active.status = clip(event.text, 140);
+        showReply(generation);
+      } else if (event.type === 'ask') {
+        void bridge.answer(event.id, null);
+      }
+      return;
+    }
+    inbox.push(event);
+    drainInbox();
+  }
+
+  function scheduleDrain() {
+    if (inboxTimer || inbox.length === 0) return;
+    inboxTimer = setTimeout(() => { inboxTimer = null; drainInbox(); }, INBOX_RETRY_MS);
+    inboxTimer.unref?.();
+  }
+
+  /** The island is free for a chat's report: no turn working, no question or
+   *  confirmation up, no setup card, and nothing else (a dictation) on it. */
+  function islandFreeForReport() {
+    if (pending) return false;
+    if (active && (active.working || active.setup)) return false;
+    return deps.islandFree ? !!deps.islandFree() : true;
+  }
+
+  function drainInbox() {
+    if (inbox.length === 0) return;
+    if (!islandFreeForReport()) { scheduleDrain(); return; }
+    const event = inbox.shift();
+    void showReport(event).finally(() => scheduleDrain());
+  }
+
+  /** Which chat said it, in the user's words, and where it is. */
+  async function chatInfo(threadId, projectId) {
+    const chats = await agentChats();
+    const chat = chats.find((c) => c.id === threadId);
+    let url = threadId && threadId === lastChat ? lastChatUrl : null;
+    if (!url && threadId && projectId && ws.threadUrl) {
+      try { url = ws.threadUrl((await rawEnsureServer()).client.origin, projectId, threadId); } catch {}
+    }
+    return { title: clip(chat?.title || chatTasks.get(threadId) || 'Your chat', 48), url };
+  }
+
+  async function showReport(event) {
+    const info = await chatInfo(event.threadId, event.projectId);
+    if (!islandFreeForReport()) { inbox.unshift(event); return; }
+    const gen = ++generation;
+    const text = clip(event.text || event.question, 600);
+    active = {
+      gen, request: info.title, prose: event.type === 'say' ? text : '', said: [], status: null, working: false,
+      latch: false, source: 'chat', report: true, chatUrl: info.url, delegated: !!info.url,
+    };
+    if (event.type === 'say') {
+      const progress = event.kind === 'progress';
+      if (!progress) {
+        pushTranscript({ role: 'mascot', text: `(the chat "${info.title}" reported back) ${text}`, actions: [], at: Date.now() });
+        active.answer = text;
+        try { deps.saveAnswer?.({ request: info.title, text }); } catch {}
+      }
+      island.show('reply', {
+        content: {
+          reply: {
+            title: info.title,
+            text,
+            status: null,
+            working: false,
+            chat: !!info.url,
+            canInsert: !progress && !!deps.insertText,
+            done: !progress,
+          },
+        },
+        autoRestMs: progress ? QUICK_REST_MS : readingTime(text),
+      });
+      return;
+    }
+    // A question from the chat: answered by a tap or by voice, sent back.
+    const options = (Array.isArray(event.options) ? event.options : []).slice(0, 4);
+    await new Promise((resolve) => {
+      pending = {
+        kind: 'ask',
+        bridgeId: event.id,
+        options,
+        resolve: (answer) => {
+          void bridge.answer(event.id, answer);
+          pushTranscript({ role: 'mascot', text: `(the chat "${info.title}" asked: ${text}) → ${answer ?? 'no answer'}`, actions: [], at: Date.now() });
+          if (gen === generation && answer) {
+            active = { ...active, prose: `Got it — told ${info.title}: “${clip(answer, 80)}”.`, working: false };
+            showReply(gen, { autoRestMs: 2500 });
+          }
+          resolve();
+        },
+      };
+      island.show('ask', { content: { ask: { question: `${info.title} asks: ${text}`, options } } });
+    });
   }
 
   // ── The desktop capability the dispatcher drives ─────────────────────────
@@ -323,6 +473,9 @@ function createJarvis(deps) {
         : await ws.startWorkspaceThread(workspaceDir(), task, wsDeps());
       lastChat = r.threadId;
       lastChatUrl = r.url;
+      // bb titles a new thread a little later; until then the island names
+      // the chat by the job it was given.
+      chatTasks.set(r.threadId, task);
       return { ok: true, chat: r.threadId, created: !chat };
     } catch (err) {
       return { ok: false, error: String(err?.message || err) };
@@ -373,11 +526,15 @@ function createJarvis(deps) {
     active.working = true;
     showReply(gen);
 
+    const t0 = Date.now();
     const capture = precapture();
     const chatsP = agentChats();
     let context = null;
     try { context = deps.getContext ? await deps.getContext() : null; } catch {}
-    await capture;
+    let budget = null;
+    await Promise.race([capture, new Promise((r) => { budget = setTimeout(r, CAPTURE_BUDGET_MS); budget.unref?.(); })]);
+    clearTimeout(budget);
+    const tPrompt = Date.now();
     if (!live()) return;
     const chats = await chatsP;
     const held = heldSeen();
@@ -400,6 +557,7 @@ function createJarvis(deps) {
 
     const turnId = `t${nextTurn++}`;
     active.turnId = turnId;
+    let tFirst = 0;
     const finished = new Promise((resolve) => {
       // Stop settles the wait too: a stopped turn's brain goes silent, and a
       // promise left waiting on it would hold this request open forever.
@@ -412,6 +570,7 @@ function createJarvis(deps) {
             showReply(gen);
             break;
           case 'text': {
+            if (!tFirst) tFirst = Date.now();
             if (active.fresh) { active.fresh = false; active.said = []; }
             active.prose = splitMascotReply(event.text).prose;
             active.status = null;
@@ -441,6 +600,14 @@ function createJarvis(deps) {
     });
     const outcome = await finished;
     listeners.delete(turnId);
+    // Where a slow answer's time went: the look before the prompt, the model
+    // to its first word, and the rest of the reply.
+    log('turn timing', {
+      step: !!opts.step,
+      beforePromptMs: tPrompt - t0,
+      firstTextMs: tFirst ? tFirst - tPrompt : null,
+      totalMs: Date.now() - t0,
+    });
     if (settleTurn === null || !live()) return;
     settleTurn = null;
     if (!live()) return;
@@ -635,6 +802,14 @@ function createJarvis(deps) {
     settle?.({ ok: false, message: 'superseded' });
     await threads.stop().catch(() => {});
     if (gen !== generation) return;
+    // Simple requests ("take a screenshot", "pause the music") are done here,
+    // at once, without the AI. Not while a desktop task runs: there, anything
+    // said is a redirect of the task.
+    if (!loop && deps.quick && settings().instantCommands !== false) {
+      const match = deps.quick.match(text);
+      if (match && await runQuick(gen, text, match, source)) return;
+      if (gen !== generation) return;
+    }
     // A new request while a task runs is handled inside runTurn as a redirect;
     // after a finished task it starts fresh.
     active = { gen, request: text, prose: '', said: [], status: 'Thinking…', working: true, latch: false, source };
@@ -645,6 +820,38 @@ function createJarvis(deps) {
       log('turn failed:', err);
       showError(gen, String(err?.message || err));
     }
+  }
+
+  /**
+   * An instant command (quick-commands.js). Returns false when it could not be
+   * done — an app `open` does not know — and the AI then takes the request.
+   * What it did goes into the transcript like any reply, so "and turn it up"
+   * next has the context it needs.
+   */
+  async function runQuick(gen, text, match, source) {
+    active = { gen, request: text, prose: '', said: [], status: null, working: true, latch: false, source, quick: match.id };
+    const t0 = Date.now();
+    if (HIDES_ISLAND.has(match.id)) {
+      // The screenshot is of the user's screen, not of our island over it.
+      island.rest();
+      await new Promise((r) => setTimeout(r, 400));
+      if (gen !== generation) return true;
+    }
+    const r = await deps.quick.run(match);
+    if (gen !== generation) return true;
+    log('instant command', { id: match.id, ok: r.ok, ms: Date.now() - t0, ...(r.ok ? {} : { error: r.error }) });
+    if (!r.ok) return false;
+    pushTranscript({ role: 'user', text, at: Date.now() });
+    pushTranscript({ role: 'mascot', text: r.text, actions: [`instant ${match.id} → done`], at: Date.now() });
+    active.prose = r.text;
+    active.working = false;
+    // A confirmation of something done is not text to insert; an answer
+    // (the time, the date) is.
+    if (match.id !== 'time' && match.id !== 'date') active.ranOs = true;
+    active.answer = r.text;
+    showReply(gen, { autoRestMs: QUICK_REST_MS, done: true });
+    scheduleDrain();
+    return true;
   }
 
   /** Stop everything: the turn, the loop, any open question. */
@@ -679,7 +886,7 @@ function createJarvis(deps) {
         island.rest();
         return true;
       case 'open-chat':
-        if (lastChatUrl) deps.openChat?.(lastChatUrl);
+        if (active.chatUrl || lastChatUrl) deps.openChat?.(active.chatUrl || lastChatUrl);
         island.rest();
         return true;
       case 'retry': {
@@ -793,6 +1000,8 @@ function createJarvis(deps) {
   }
 
   async function dispose() {
+    bridge.stop();
+    clearTimeout(inboxTimer);
     await stop();
     await stopBbServer().catch(() => {});
   }

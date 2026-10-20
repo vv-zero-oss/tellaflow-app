@@ -37,6 +37,7 @@ const { createMeetingDetector } = require('./meeting-detector');
 const { createMeetingNotes } = require('./meeting-notes');
 const macAutomation = require('./mac-automation');
 const { createJarvis } = require('./jarvis');
+const { createQuickCommands, QUICK_COMMANDS } = require('./jarvis/quick-commands');
 const osActions = require('./jarvis/desktop/os-actions');
 const { setPeekabooDownloadRoot, resolvePeekaboo } = require('./jarvis/desktop/peekaboo');
 const { installPeekaboo } = require('./jarvis/desktop/peekaboo-install');
@@ -594,6 +595,11 @@ function initCoreServices() {
   });
 
   setPeekabooDownloadRoot(path.join(userData, 'tools', 'peekaboo'));
+  // e2e on Linux: a pretend desktop (scripts/e2e-fake-desktop.js), since
+  // Peekaboo is macOS-only. Never set outside the test run.
+  const fakeDesktop = process.env.TELLAFLOW_E2E === '1' && process.env.TELLAFLOW_E2E_DESKTOP === 'fake'
+    ? require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js'))
+    : null;
   assistant = createJarvis({
     island: {
       show: (state, opts) => island('assistant', state, opts),
@@ -606,11 +612,23 @@ function initCoreServices() {
       const c = await peekRecordingContext();
       return c?.ctx ? { app: c.ctx.app, windowTitle: c.ctx.windowTitle } : null;
     },
-    // e2e on Linux: a pretend desktop (scripts/e2e-fake-desktop.js), since
-    // Peekaboo is macOS-only. Never set outside the test run.
-    os: process.env.TELLAFLOW_E2E === '1' && process.env.TELLAFLOW_E2E_DESKTOP === 'fake'
-      ? require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js'))
-      : osActions,
+    os: fakeDesktop || osActions,
+    // Instant commands ("take a screenshot", "pause the music"): done here,
+    // without the AI. Values reach osascript as argv, never as source.
+    quick: createQuickCommands(fakeDesktop?.quickRunners || {
+      exec: (file, args) => new Promise((resolve, reject) => {
+        require('child_process').execFile(file, args, { timeout: 60_000 }, (err, stdout, stderr) => {
+          if (err) reject(new Error(String(stderr || err.message).trim() || `${file} failed`));
+          else resolve(stdout);
+        });
+      }),
+      appleScript: (body, argv) => macAutomation.runAppleScript(body, argv),
+      jxa: (source, argv = []) => macAutomation.runOsascript(['-l', 'JavaScript', '-e', source, ...argv.map(String)]),
+      runningApps: () => macAutomation.listRunningApps(),
+      homeDir: app.getPath('home'),
+    }),
+    // A chat's report waits while the island is busy with something else.
+    islandFree: () => isResting() || islandOwner === 'assistant',
     workspaceDir: path.join(userData, 'assistant', 'workspace'),
     record: (entry) => {
       if (entry.role !== 'mascot' || !entry.text) return;
@@ -720,7 +738,7 @@ function initCoreServices() {
       },
       // What reached the pretend desktop (TELLAFLOW_E2E_DESKTOP=fake).
       fakeDesktop: () => (process.env.TELLAFLOW_E2E_DESKTOP === 'fake'
-        ? (({ front, doc, acts }) => ({ front, doc, acts }))(require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js')).state)
+        ? (({ front, doc, acts, quick }) => ({ front, doc, acts, quick }))(require(path.join(__dirname, '..', '..', 'scripts', 'e2e-fake-desktop.js')).state)
         : null),
       learn: (corrections) => {
         const added = config.addLearnedEntries(corrections);
@@ -1982,6 +2000,7 @@ function registerIPC() {
   });
   ipcMain.handle('assistant-reset', () => assistant.reset());
   ipcMain.handle('assistant-get-settings', () => config.getAssistantSettings());
+  ipcMain.handle('assistant-quick-commands', () => QUICK_COMMANDS.map(({ say, does }) => ({ say, does })));
   ipcMain.handle('assistant-set-settings', (_, patch) => config.setAssistantSettings(patch || {}));
   // The desktop helper (Peekaboo), downloaded on request — pinned and checksummed.
   ipcMain.handle('assistant-install-helper', async () => {
