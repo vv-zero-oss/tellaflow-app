@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createEngineHost, computeAudioCtx, buildWhisperOptions, whisperResultToText } from '../../src/main/engines/engine-host.js';
+import { createEngineHost, computeAudioCtx, buildWhisperOptions, whisperResultToText, hasRepetitionLoop, collapseRepetitions } from '../../src/main/engines/engine-host.js';
 
 describe('computeAudioCtx', () => {
   it('uses the full context for ≥28 s and 0 for empty input', () => {
@@ -66,5 +66,57 @@ describe('engine host', () => {
   it('fails clearly when the whisper model path is missing', async () => {
     const host = createEngineHost({ loadWhisperAddon: () => async () => ({}), loadSherpa: () => ({}) });
     await expect(host.transcribe({ engine: 'whisper', addonDir: '/a' }, new Float32Array(10))).rejects.toThrow(/model not found/i);
+  });
+});
+
+describe('Whisper repetition loops', () => {
+  const loop = 'The army found the people in poverty and left them in comparative wealth. The army found the people in poverty and left them in comparative wealth.';
+
+  it('detects a sentence written twice, or a long run repeated', () => {
+    expect(hasRepetitionLoop(loop)).toBe(true);
+    expect(hasRepetitionLoop('Thank you for watching. Thank you for watching.')).toBe(true);
+    expect(hasRepetitionLoop("So Ali related all that had passed, and the caliph said, 'I had not thought that thou wouldst kill him.' Ali was a sorcerer, and the caliph said, 'I had not thought that thou wouldst kill him.'")).toBe(true);
+  });
+
+  it('leaves ordinary dictation alone', () => {
+    expect(hasRepetitionLoop('Pray, pray, pray, say you will not.')).toBe(false);
+    expect(hasRepetitionLoop('No, no. I said send it today, not tomorrow, and send it to Jane.')).toBe(false);
+    expect(hasRepetitionLoop('')).toBe(false);
+  });
+
+  it('collapses back-to-back copies to one', () => {
+    expect(collapseRepetitions(loop)).toBe('The army found the people in poverty and left them in comparative wealth.');
+    expect(collapseRepetitions('Hello there. One two three four five six seven one two three four five six seven one two three four five six seven end.'))
+      .toBe('Hello there. One two three four five six seven end.');
+    expect(collapseRepetitions('Pray, pray, pray, say you will not.')).toBe('Pray, pray, pray, say you will not.');
+  });
+
+  function fakeWhisper(calls, answer) {
+    return () => async (opts) => { calls.push(opts.audio_ctx); return { transcription: [['', '', answer(opts)]] }; };
+  }
+  const spec = { engine: 'whisper', modelPath: '/m', addonDir: '/a' };
+
+  it('re-runs a looping short clip with the full encoder window', async () => {
+    const calls = [];
+    const host = createEngineHost({ loadWhisperAddon: fakeWhisper(calls, (o) => (o.audio_ctx ? loop : 'The army found the people.')), loadSherpa: () => ({}) });
+    expect(await host.transcribe(spec, new Float32Array(5 * 16000))).toBe('The army found the people.');
+    expect(calls).toEqual([512, 0]);
+  });
+
+  it('does not re-run a clean clip', async () => {
+    const calls = [];
+    const host = createEngineHost({ loadWhisperAddon: fakeWhisper(calls, () => 'Hello world.'), loadSherpa: () => ({}) });
+    expect(await host.transcribe(spec, new Float32Array(5 * 16000))).toBe('Hello world.');
+    expect(calls).toEqual([512]);
+  });
+
+  it('collapses a loop that survives the full window', async () => {
+    const calls = [];
+    const host = createEngineHost({ loadWhisperAddon: fakeWhisper(calls, () => loop), loadSherpa: () => ({}) });
+    expect(await host.transcribe(spec, new Float32Array(5 * 16000))).toBe('The army found the people in poverty and left them in comparative wealth.');
+    expect(calls).toEqual([512, 0]);
+    calls.length = 0; // a long window already ran full: no second pass
+    await host.transcribe(spec, new Float32Array(30 * 16000));
+    expect(calls).toEqual([0]);
   });
 });

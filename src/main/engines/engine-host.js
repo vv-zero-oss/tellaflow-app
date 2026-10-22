@@ -56,6 +56,60 @@ function buildWhisperOptions(spec, pcm) {
   return opts;
 }
 
+// A shrunk encoder window makes Whisper loop on some short clips: it writes
+// the sentence, then writes it again ("The army found… The army found…").
+// Any 8-word run that appears twice is taken as that loop (real dictation
+// rarely repeats that much) and the clip is transcribed again with the full
+// window, which fixes it. A loop that survives the full window is cut back to
+// one copy — only back-to-back repeats, so a phrase said twice apart is kept.
+const LOOP_NGRAM = 8;
+const MIN_COLLAPSE_SPAN = 6;
+const MIN_WHOLE_REPEAT_SPAN = 3;
+
+const normWord = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
+
+function hasRepetitionLoop(text) {
+  const words = String(text || '').split(/\s+/).map(normWord).filter(Boolean);
+  if (words.length >= 2 * MIN_WHOLE_REPEAT_SPAN && wholeTextRepeatSpan(words) > 0) return true;
+  const firstAt = new Map();
+  for (let i = 0; i + LOOP_NGRAM <= words.length; i++) {
+    const key = words.slice(i, i + LOOP_NGRAM).join(' ');
+    const prev = firstAt.get(key);
+    if (prev === undefined) firstAt.set(key, i);
+    else if (i - prev >= LOOP_NGRAM) return true; // non-overlapping second copy
+  }
+  return false;
+}
+
+// The span length if the whole text is one span written two or more times.
+function wholeTextRepeatSpan(words) {
+  for (let span = MIN_WHOLE_REPEAT_SPAN; span <= words.length / 2; span++) {
+    if (words.length % span) continue;
+    if (words.every((w, i) => w === words[i % span])) return span;
+  }
+  return 0;
+}
+
+function collapseRepetitions(text) {
+  const tokens = String(text || '').split(/\s+/).filter(Boolean);
+  const words = tokens.map(normWord);
+  const same = (a, b, n) => {
+    for (let k = 0; k < n; k++) if (!words[a + k] || words[a + k] !== words[b + k]) return false;
+    return true;
+  };
+  const whole = wholeTextRepeatSpan(words);
+  if (whole) return tokens.slice(0, whole).join(' ');
+  for (let i = 0; i < tokens.length; i++) {
+    for (let span = Math.floor((tokens.length - i) / 2); span >= MIN_COLLAPSE_SPAN; span--) {
+      while (same(i, i + span, span)) {
+        tokens.splice(i + span, span);
+        words.splice(i + span, span);
+      }
+    }
+  }
+  return tokens.join(' ');
+}
+
 function whisperResultToText(result) {
   let text = '';
   if (result && Array.isArray(result.transcription)) {
@@ -146,7 +200,14 @@ function createEngineHost({ loadWhisperAddon, loadSherpa, now = () => Date.now()
       }
     }
     const fn = ensureWhisper(spec);
-    return whisperResultToText(await fn(buildWhisperOptions(spec, pcm)));
+    const opts = buildWhisperOptions(spec, pcm);
+    let text = whisperResultToText(await fn(opts));
+    if (!hasRepetitionLoop(text)) return text;
+    if (opts.audio_ctx !== 0) {
+      text = whisperResultToText(await fn({ ...opts, audio_ctx: 0 }));
+      if (!hasRepetitionLoop(text)) return text;
+    }
+    return collapseRepetitions(text);
   }
 
   async function handle(msg, send) {
@@ -174,4 +235,6 @@ module.exports = {
   computeAudioCtx,
   buildWhisperOptions,
   whisperResultToText,
+  hasRepetitionLoop,
+  collapseRepetitions,
 };
