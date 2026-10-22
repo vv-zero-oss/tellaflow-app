@@ -64,9 +64,14 @@ function buildEngineSpec({ prompt } = {}) {
   const prompts = [];
   if (config.getProgrammingMode()) prompts.push('Technical dictation with programming terminology.');
   if (prompt) prompts.push(prompt);
+  const modelPath = models.getModelPath(config.getModel());
+  let modelBytes = 0;
+  try { modelBytes = modelPath ? fs.statSync(modelPath).size : 0; } catch {}
   return {
     engine,
-    modelPath: models.getModelPath(config.getModel()),
+    modelPath,
+    // The worker's memory ceiling sits on top of this (transcription-service).
+    modelBytes,
     addonDir: getWhisperAddonDir(),
     numThreads: perf,
     language: translate ? config.getTranslationLanguage() : 'en',

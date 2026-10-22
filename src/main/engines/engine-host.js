@@ -9,7 +9,8 @@
  *
  * Message protocol (parent → worker):
  *   { type: 'load', spec }                    preload the engine/model
- *   { type: 'transcribe', id, spec, pcm }     transcribe Float32Array PCM
+ *   { type: 'transcribe', id, spec, pcm, attempt }  transcribe Float32Array PCM
+ *                                              (attempt > 1 = retry after a crash)
  *   { type: 'ping', id }
  * Worker → parent:
  *   { type: 'ready' }
@@ -24,17 +25,26 @@ const SAMPLE_RATE = 16000;
 // second). Shrinking it for short clips cuts encoder time roughly in
 // proportion. Below ~10 s of context Whisper starts hallucinating, so we keep
 // a floor and add one second of headroom.
+//
+// The window must be a multiple of 8: whisper.cpp's Metal backend aborts the
+// whole process with GGML_ASSERT(nb01 % 8 == 0) on any other size (every
+// model, every clip between ~9 and 28 s that lands on an odd size). The
+// default window (0 → 1500) is padded internally and always safe.
 const FULL_AUDIO_CTX = 1500;
 const MIN_AUDIO_CTX = 512;
+const AUDIO_CTX_ALIGN = 8;
 
 function computeAudioCtx(numSamples) {
   const seconds = numSamples / SAMPLE_RATE;
   if (!isFinite(seconds) || seconds <= 0 || seconds >= 28) return 0; // 0 = model default
-  const ctx = Math.ceil((seconds + 1) * 50);
-  return Math.min(FULL_AUDIO_CTX, Math.max(MIN_AUDIO_CTX, ctx));
+  const ctx = Math.ceil(((seconds + 1) * 50) / AUDIO_CTX_ALIGN) * AUDIO_CTX_ALIGN;
+  if (ctx >= FULL_AUDIO_CTX) return 0;
+  return Math.max(MIN_AUDIO_CTX, ctx);
 }
 
-function buildWhisperOptions(spec, pcm) {
+// `fullWindow` (a retry after the worker crashed) skips the shortened window
+// so the retry never repeats the exact native call that just aborted.
+function buildWhisperOptions(spec, pcm, { fullWindow = false } = {}) {
   const opts = {
     model: spec.modelPath,
     pcmf32: pcm,
@@ -46,7 +56,7 @@ function buildWhisperOptions(spec, pcm) {
     translate: !!spec.translate,
     no_timestamps: true,
     detect_language: false,
-    audio_ctx: computeAudioCtx(pcm.length),
+    audio_ctx: fullWindow ? 0 : computeAudioCtx(pcm.length),
     max_len: 0,
   };
   if (spec.numThreads > 0) opts.n_threads = spec.numThreads;
@@ -130,7 +140,7 @@ function createEngineHost({ loadWhisperAddon, loadSherpa, now = () => Date.now()
     return { engine: spec.engine, ms: now() - t0, rss: rss() };
   }
 
-  async function transcribe(spec, pcm) {
+  async function transcribe(spec, pcm, { fullWindow = false } = {}) {
     if (!(pcm instanceof Float32Array)) pcm = new Float32Array(pcm || []);
     if (pcm.length === 0) return '';
     if (spec.engine === 'parakeet') {
@@ -146,7 +156,7 @@ function createEngineHost({ loadWhisperAddon, loadSherpa, now = () => Date.now()
       }
     }
     const fn = ensureWhisper(spec);
-    return whisperResultToText(await fn(buildWhisperOptions(spec, pcm)));
+    return whisperResultToText(await fn(buildWhisperOptions(spec, pcm, { fullWindow })));
   }
 
   async function handle(msg, send) {
@@ -156,7 +166,7 @@ function createEngineHost({ loadWhisperAddon, loadSherpa, now = () => Date.now()
         send({ type: 'loaded', ...r });
       } else if (msg.type === 'transcribe') {
         const t0 = now();
-        const text = await transcribe(msg.spec, msg.pcm);
+        const text = await transcribe(msg.spec, msg.pcm, { fullWindow: msg.attempt > 1 });
         send({ type: 'result', id: msg.id, text, ms: now() - t0, rss: rss() });
       } else if (msg.type === 'ping') {
         send({ type: 'pong', id: msg.id, rss: rss() });

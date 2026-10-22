@@ -101,13 +101,14 @@ describe('transcription service', () => {
   });
 
   it('restarts a crashed worker and retries the job once', async () => {
-    let calls = 0;
+    const attempts = [];
     const { service, spawner } = make((msg) => {
       if (msg.type !== 'transcribe') return null;
-      calls++;
-      return calls === 1 ? 'crash' : { text: 'recovered' };
+      attempts.push(msg.attempt);
+      return attempts.length === 1 ? 'crash' : { text: 'recovered' };
     });
     expect(await service.transcribe(pcm())).toBe('recovered');
+    expect(attempts).toEqual([1, 2]); // the worker uses a safer config on attempt 2
     expect(spawner.workers).toHaveLength(2);
     expect(service.getStats().crashes).toBe(1);
     expect(service.getStats().retries).toBe(1);
@@ -187,6 +188,15 @@ describe('transcription service', () => {
     await flush();
     await service.transcribe(pcm());
     expect(spawner.workers.length).toBe(2);
+  });
+
+  it('keeps a big model warm: the ceiling sits on top of the model size', async () => {
+    const { service, spawner } = make((msg) => (msg.type === 'transcribe' ? { text: 't', rss: 5_000 } : null), { maxRssBytes: 1_000 });
+    const spec = { engine: 'whisper', modelPath: '/large', modelBytes: 4_500 };
+    await service.transcribe(pcm(), { spec });
+    await flush();
+    await service.transcribe(pcm(), { spec });
+    expect(spawner.workers.length).toBe(1);
   });
 
   it('releases an idle worker and respawns on demand', async () => {

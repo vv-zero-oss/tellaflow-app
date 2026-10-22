@@ -11,6 +11,14 @@ describe('computeAudioCtx', () => {
     expect(computeAudioCtx(15 * 16000)).toBe(800); // (15+1)*50
     expect(computeAudioCtx(27 * 16000)).toBe(1400);
   });
+  it('is always a multiple of 8 (Metal aborts on any other window size)', () => {
+    expect(computeAudioCtx(22.5 * 16000)).toBe(1176); // 1175 aborted the worker
+    for (let n = 1; n < 28 * 16000; n += 997) {
+      const ctx = computeAudioCtx(n);
+      expect(ctx % 8).toBe(0);
+      expect(ctx).toBeLessThan(1500);
+    }
+  });
 });
 
 describe('buildWhisperOptions', () => {
@@ -20,6 +28,10 @@ describe('buildWhisperOptions', () => {
     expect(o.prompt).toBe('Names: Jane Doe.');
     expect(o).not.toHaveProperty('initial_prompt');
     expect(o.audio_ctx).toBe(512);
+  });
+  it('uses the full default window on a retry after a crash', () => {
+    const pcm = new Float32Array(16000);
+    expect(buildWhisperOptions({ modelPath: '/m' }, pcm, { fullWindow: true }).audio_ctx).toBe(0);
   });
   it('sets translation language when translating', () => {
     const o = buildWhisperOptions({ modelPath: '/m', translate: true, language: 'ja' }, new Float32Array(10));
