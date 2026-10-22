@@ -6,8 +6,10 @@
  *     retried once; a second crash rejects with `WorkerCrashError` so the
  *     caller can park the audio in the "Needs attention" list.
  *   - The worker is recycled between jobs after a fixed number of jobs, when
- *     its RSS grows past a ceiling, or after an idle period, so native memory
- *     pools (ONNX BFCArena, ggml/Metal buffers) are returned to the OS.
+ *     its RSS grows past a ceiling (headroom on top of the model's own size,
+ *     `spec.modelBytes`, so a 3 GB model isn't reloaded after every job), or
+ *     after an idle period, so native memory pools (ONNX BFCArena, ggml/Metal
+ *     buffers) are returned to the OS.
  *   - Repeated crashes back off exponentially instead of spinning.
  *
  * Process creation is injected (`spawn`) so the logic is testable with fakes.
@@ -86,7 +88,7 @@ function createTranscriptionService({
 
   function spawnWorker() {
     const id = nextWorkerId++;
-    const w = { id, jobs: 0, rss: 0, loadedKey: null, retiring: false, handle: null };
+    const w = { id, jobs: 0, rss: 0, modelBytes: 0, loadedKey: null, retiring: false, handle: null };
     stats.spawned++;
     w.handle = spawn({
       onMessage: (msg) => onWorkerMessage(w, msg),
@@ -114,7 +116,7 @@ function createTranscriptionService({
   function shouldRecycle(w) {
     if (!w) return null;
     if (w.jobs >= opts.maxJobsPerWorker) return 'job-count';
-    if (opts.maxRssBytes && w.rss > opts.maxRssBytes) return 'memory';
+    if (opts.maxRssBytes && w.rss > opts.maxRssBytes + w.modelBytes) return 'memory';
     return null;
   }
 
@@ -239,6 +241,7 @@ function createTranscriptionService({
     }
     job.attempts++;
     job.worker = w;
+    w.modelBytes = spec.modelBytes || 0;
     job.key = specKey(spec);
     job.timedOut = false;
     inflight = job;
@@ -250,7 +253,7 @@ function createTranscriptionService({
       try { w.handle.kill(); } catch {}
     }, timeout);
     try {
-      w.handle.send({ type: 'transcribe', id: job.id, spec, pcm: job.pcm });
+      w.handle.send({ type: 'transcribe', id: job.id, spec, pcm: job.pcm, attempt: job.attempts });
     } catch (err) {
       // Channel already dead — the exit handler will requeue the job.
       log.warn?.('[transcription] send failed:', err.message);
