@@ -29,6 +29,9 @@ const DEFAULTS = {
   meetingNotesEnabled: false,
   meetingBrowserDetection: true,
   audioRetentionDays: 30,
+  // Check for, download and install app updates on its own. Off, updates
+  // come only from Check for Updates.
+  autoUpdateEnabled: true,
   // The assistant is opt-in (Settings › Assistant): off, there is no command
   // key, no Assistant page and nothing of bb's on disk.
   assistantEnabled: false,
@@ -173,6 +176,9 @@ function setFloatingBarEnabled(enabled) { setSetting('floatingBarEnabled', enabl
 
 function getSoundsEnabled() { return getSetting('soundsEnabled'); }
 function setSoundsEnabled(enabled) { setSetting('soundsEnabled', enabled); }
+
+function getAutoUpdateEnabled() { return getSetting('autoUpdateEnabled') !== false; }
+function setAutoUpdateEnabled(enabled) { setSetting('autoUpdateEnabled', !!enabled); }
 
 function getMuteWhileDictating() { return getSetting('muteWhileDictating'); }
 function setMuteWhileDictating(enabled) { setSetting('muteWhileDictating', enabled); }
@@ -462,6 +468,8 @@ module.exports = {
   getFloatingBarEnabled,
   setFloatingBarEnabled,
   getSoundsEnabled,
+  getAutoUpdateEnabled,
+  setAutoUpdateEnabled,
   setSoundsEnabled,
   getMuteWhileDictating,
   setMuteWhileDictating,

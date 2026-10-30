@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { WellItem } from '@/components/ui/well';
-import type { UpdateStatus } from '@/lib/ipc';
+import { Switch } from '@/components/ui/switch';
+import { ipc, type AppConfig, type UpdateStatus } from '@/lib/ipc';
 
 function formatBytes(n: number) {
   if (!n || n < 1024) return `${n} B`;
@@ -66,6 +67,26 @@ export function UpdateRow() {
             {checking ? 'Checking…' : downloading ? 'Downloading…' : 'Check for Updates'}
           </Button>
         )}
+      </div>
+    </WellItem>
+  );
+}
+
+export function AutoUpdateRow({ config, refreshConfig }: { config: AppConfig; refreshConfig: () => Promise<void> }) {
+  const onChange = async (v: boolean) => {
+    await ipc.setFeatureSetting('autoUpdateEnabled', v);
+    await refreshConfig();
+  };
+  return (
+    <WellItem>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <span className="text-sm">Update automatically</span>
+          <p className="text-xs text-muted-foreground/60 mt-0.5">
+            Download new versions in the background and install them when you quit. Off, Tellaflow only updates when you check.
+          </p>
+        </div>
+        <Switch checked={config.autoUpdateEnabled ?? true} onCheckedChange={onChange} />
       </div>
     </WellItem>
   );

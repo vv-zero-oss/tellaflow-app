@@ -16,7 +16,7 @@ import { IslandSettings } from './SystemSettings';
 import { SmartDictationSettings, MeetingSettings, RetentionRow } from './SmartFeaturesSettings';
 import { AssistantSettings, BetaFeatures } from './AssistantSettings';
 import { RewriteSettings } from './RewriteSettings';
-import { UpdateRow } from './UpdateRow';
+import { UpdateRow, AutoUpdateRow } from './UpdateRow';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useAssistantRuntime } from '@/hooks/use-assistant-runtime';
 import type { AppConfig, Theme } from '@/lib/ipc';
@@ -334,6 +334,7 @@ export function SettingsPage({
                 </div>
               </WellItem>
               <UpdateRow />
+              <AutoUpdateRow config={config} refreshConfig={refreshConfig} />
               <WellItem>
                 <div className="flex items-center justify-between">
                   <span className="text-sm">Help &amp; Support</span>

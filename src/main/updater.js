@@ -31,6 +31,9 @@ let beforeQuitForUpdateHook = null;
 let periodicTimer = null;
 let initialized = false;
 let installInProgress = false;
+// Settings › About › "Update automatically". Off, nothing is checked,
+// downloaded or installed unless the user asks (Check for Updates).
+let autoUpdate = true;
 
 const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
 
@@ -43,8 +46,22 @@ function getStatus() {
   return state;
 }
 
-function initAutoUpdater({ broadcast, beforeQuitForUpdate } = {}) {
+function applyAutoUpdate() {
+  autoUpdater.autoDownload = autoUpdate;
+  autoUpdater.autoInstallOnAppQuit = autoUpdate;
+}
+
+function setAutoUpdateEnabled(enabled) {
+  const turnedOn = !!enabled && !autoUpdate;
+  autoUpdate = !!enabled;
+  if (!initialized) return;
+  applyAutoUpdate();
+  if (turnedOn) checkForUpdates({ silent: true });
+}
+
+function initAutoUpdater({ broadcast, beforeQuitForUpdate, autoUpdate: enabled = true } = {}) {
   if (initialized) return;
+  autoUpdate = !!enabled;
   if (!app.isPackaged) {
     console.log('[updater] Skipping autoUpdater in dev (app is not packaged).');
     return;
@@ -63,8 +80,7 @@ function initAutoUpdater({ broadcast, beforeQuitForUpdate } = {}) {
     app.isQuitting = true;
   });
 
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  applyAutoUpdate();
   autoUpdater.logger = {
     info: (msg) => console.log('[updater]', msg),
     warn: (msg) => console.warn('[updater]', msg),
@@ -82,6 +98,12 @@ function initAutoUpdater({ broadcast, beforeQuitForUpdate } = {}) {
       updateVersion: info && info.version ? info.version : null,
       error: null,
     });
+    // With automatic updates off, a check the user asked for still downloads.
+    if (!autoUpdater.autoDownload && state.userInitiated) {
+      autoUpdater.downloadUpdate().catch((err) => {
+        console.error('[updater] downloadUpdate rejected:', err && err.message ? err.message : err);
+      });
+    }
   });
 
   autoUpdater.on('update-not-available', (info) => {
@@ -135,7 +157,9 @@ function initAutoUpdater({ broadcast, beforeQuitForUpdate } = {}) {
       type: 'info',
       title: 'Update Ready',
       message: `Tellaflow ${info && info.version ? info.version : ''} is ready to install.`,
-      detail: 'Restart now to apply the update, or it will install automatically the next time you quit.',
+      detail: autoUpdater.autoInstallOnAppQuit
+        ? 'Restart now to apply the update, or it will install automatically the next time you quit.'
+        : 'Restart now to apply the update, or later from Settings › About.',
       buttons: ['Restart Now', 'Later'],
       defaultId: 0,
       cancelId: 1,
@@ -166,9 +190,11 @@ function initAutoUpdater({ broadcast, beforeQuitForUpdate } = {}) {
   });
 
   // First silent check ~30s after launch so it never competes with startup work,
-  // then every 4 hours while the app stays running.
-  setTimeout(() => { checkForUpdates({ silent: true }); }, 30 * 1000);
-  periodicTimer = setInterval(() => { checkForUpdates({ silent: true }); }, FOUR_HOURS_MS);
+  // then every 4 hours while the app stays running — only while automatic
+  // updates are on.
+  const silentCheck = () => { if (autoUpdate) checkForUpdates({ silent: true }); };
+  setTimeout(silentCheck, 30 * 1000);
+  periodicTimer = setInterval(silentCheck, FOUR_HOURS_MS);
   if (periodicTimer.unref) periodicTimer.unref();
 }
 
@@ -250,4 +276,5 @@ module.exports = {
   quitAndInstall,
   getStatus,
   isUpdateDownloaded,
+  setAutoUpdateEnabled,
 };
