@@ -27,6 +27,7 @@ export interface AppConfig {
   muteWhileDictating?: boolean;
   showInDock?: boolean;
   launchAtLogin?: boolean;
+  autoUpdateEnabled?: boolean;
   translationEnabled?: boolean;
   translationLanguage?: string;
   transcriptionEngine?: TranscriptionEngine;
@@ -54,7 +55,8 @@ export type FeatureSettingKey =
   | 'contextAwarenessEnabled'
   | 'meetingNotesEnabled'
   | 'meetingBrowserDetection'
-  | 'audioRetentionDays';
+  | 'audioRetentionDays'
+  | 'autoUpdateEnabled';
 
 export interface FailedJob {
   id: string;

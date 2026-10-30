@@ -1182,6 +1182,7 @@ async function startApp() {
   // in dev (app is not packaged), and the first silent check is delayed 30s
   // internally so it never competes with startup work.
   updater.initAutoUpdater({
+    autoUpdate: config.getAutoUpdateEnabled(),
     broadcast: (status) => {
       sendToMainWindow('update-status', status);
       // Rebuild the app menu so the item flips between "Check for Updates…"
@@ -1678,6 +1679,7 @@ function registerIPC() {
       meetingNotesEnabled: config.getMeetingNotesEnabled(),
       meetingBrowserDetection: config.getMeetingBrowserDetection(),
       audioRetentionDays: config.getAudioRetentionDays(),
+      autoUpdateEnabled: config.getAutoUpdateEnabled(),
       commandHotkey: config.getCommandHotkey(),
       rewriteHotkey: config.getRewriteHotkey(),
       islandPlacement: config.getIslandPlacement(),
@@ -1696,6 +1698,7 @@ function registerIPC() {
     },
     islandPlacement: (v) => { config.setIslandPlacement(v); refreshPlacement(); },
     islandMaterial: (v) => { config.setIslandMaterial(v); refreshPlacement(); },
+    autoUpdateEnabled: (v) => { config.setAutoUpdateEnabled(!!v); updater.setAutoUpdateEnabled(!!v); },
     commandHotkey: (v) => config.setCommandHotkey(v),
     rewriteHotkey: (v) => config.setRewriteHotkey(v),
     meetingNotesEnabled: (v) => {

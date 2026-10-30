@@ -118,6 +118,13 @@ describe('config get/set round-trips', () => {
     expect(config.getSoundsEnabled()).toBe(false);
   });
 
+  it('auto-update is on by default and can be switched off', () => {
+    const { config } = freshConfig();
+    expect(config.getAutoUpdateEnabled()).toBe(true);
+    config.setAutoUpdateEnabled(false);
+    expect(config.getAutoUpdateEnabled()).toBe(false);
+  });
+
   it('setMuteWhileDictating / getMuteWhileDictating', () => {
     const { config } = freshConfig();
     config.setMuteWhileDictating(true);
